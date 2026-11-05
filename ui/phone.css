@@ -2775,3 +2775,154 @@ summary:has(.fold-note):after{margin-left:8px;flex-shrink:0}
 .water-tube.picked{transform:translateY(-12px)}
 .water-tube.full{border-color:#51cf66}
 @media (prefers-reduced-motion:reduce){.parking-car,.water-tube{transition:none}.parking-car.bump{animation:none}}
+
+/* ---------- 异构终端 (xeno) / 衣柜 (wardrobe) / 购物商城 (mall) ---------- */
+.xeno-status-card,.xeno-module-card,.xeno-settings-drawer{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px;margin:0 0 10px;box-shadow:0 2px 8px rgba(0,0,0,.04);box-sizing:border-box;max-width:100%;overflow:hidden}
+.xeno-status-card.prot{border-left:3.5px solid var(--accent)}
+.xeno-status-card.target{border-left:3.5px solid #e04f8b}
+.xeno-status-head,.xeno-sec-title,.xeno-row-between{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.xeno-status-head{margin-bottom:8px}
+.xeno-status-title{display:flex;align-items:center;gap:6px;font-size:14px;flex-wrap:wrap;min-width:0}
+.xeno-status-actions,.xeno-anchor-btns,.slot-btns,.xeno-target-btns{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.xeno-badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:99px;font-size:10.5px;font-weight:800;letter-spacing:.03em;background:var(--card2);color:var(--ink2)}
+.xeno-badge.prot{background:rgba(120,90,255,.15);color:var(--accent)}
+.xeno-badge.target{background:rgba(224,79,139,.15);color:#e04f8b}
+.xeno-gender-tag{display:inline-block;font-style:normal;font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:99px;background:var(--card2);color:var(--ink)}
+.xeno-gender-tag[data-gender="扶她"]{background:rgba(180,70,240,.16);color:#b038e8}
+.xeno-gender-tag[data-gender="女"]{background:rgba(235,85,145,.16);color:#d9387a}
+.xeno-gender-tag[data-gender="男"]{background:rgba(65,135,245,.16);color:#2c74e8}
+.xeno-target-bar{display:flex;align-items:center;gap:6px;margin:0 0 8px;flex-wrap:wrap}
+.xeno-target-bar>.xeno-select{flex:1 1 130px;min-width:0}
+.xeno-select,.xeno-input,.xeno-textarea{width:100%;max-width:100%;min-width:0;font:inherit;font-size:12.5px;color:var(--ink);background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:7px 9px;box-sizing:border-box}
+.xeno-select.compact{width:auto;max-width:155px;padding:4px 8px;font-size:12px}
+.xeno-textarea{resize:vertical;line-height:1.45}
+.xeno-vertical-list,.xeno-detail-list{display:grid;gap:5px}
+.xeno-detail-list{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+.xeno-detail-divider{font-size:11px;font-weight:700;color:var(--ink2);margin-bottom:2px}
+.xeno-kv{display:grid;grid-template-columns:5.2em minmax(0,1fr);gap:8px;align-items:baseline;font-size:12.5px;line-height:1.45;padding:4px 7px;border-radius:8px;background:var(--card2)}
+.xeno-kv.detail{grid-template-columns:6.4em minmax(0,1fr);background:rgba(120,130,160,.07)}
+.xeno-kv .k{font-weight:700;color:var(--ink2);font-size:11.5px}
+.xeno-kv .v{color:var(--ink);word-break:break-word}
+.xeno-mini-btn{border:1px solid var(--line);background:var(--card2);color:var(--ink);font:inherit;font-size:11.5px;font-weight:600;padding:4px 8px;border-radius:8px;cursor:pointer;white-space:nowrap;max-width:100%}
+.xeno-mini-btn.primary,.xeno-mini-btn.active{background:var(--accent);color:var(--on-accent);border-color:transparent}
+.xeno-mini-btn.accent{background:#b038e8;color:#fff;border-color:transparent}
+.xeno-mini-btn.warn{background:#e67700;color:#fff;border-color:transparent}
+.xeno-mini-btn.danger{color:var(--danger)}
+/* 自适应网格导航：不再横向溢出切掉最右侧按钮 */
+.xeno-module-tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(56px,1fr));gap:5px;padding:2px 0 8px;width:100%;box-sizing:border-box}
+.xeno-module-tabs.cols-5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.xeno-module-tabs.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.xeno-module-tabs.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.xeno-subtabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:2px 0 8px;width:100%;box-sizing:border-box}
+.xeno-tab,.xeno-subtab{min-width:0;width:100%;border:1px solid var(--line);background:var(--card);color:var(--ink2);font:inherit;font-size:12px;font-weight:700;padding:7px 4px;border-radius:11px;cursor:pointer;text-align:center;line-height:1.25;word-break:keep-all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:all .15s;box-sizing:border-box}
+.xeno-tab.active,.xeno-subtab.active{background:var(--accent);color:var(--on-accent);border-color:transparent;box-shadow:0 2px 6px rgba(0,0,0,.12)}
+.xeno-switch-btn{position:relative;width:42px;height:24px;border-radius:99px;border:1px solid var(--line);background:var(--card2);padding:2px;cursor:pointer;transition:background .18s,border-color .18s;flex:none;box-sizing:border-box}
+.xeno-switch-btn i{display:block;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.28);transition:transform .18s}
+.xeno-switch-btn.on{background:var(--accent);border-color:var(--accent)}
+.xeno-switch-btn.on i{transform:translateX(18px)}
+.xeno-state-pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--card2);color:var(--ink2)}
+.xeno-state-pill.on{background:rgba(45,185,115,.16);color:#1f9d60}
+.xeno-label{font-size:12px;font-weight:800;color:var(--ink);margin:8px 0 5px}
+.xeno-chip-group{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
+.xeno-chip{border:1px solid var(--line);background:var(--card2);color:var(--ink);font:inherit;font-size:11.5px;font-weight:600;padding:5px 10px;border-radius:99px;cursor:pointer;max-width:100%}
+.xeno-chip.active{background:var(--accent);color:var(--on-accent);border-color:transparent}
+.xeno-row-controls{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;min-width:0}
+.xeno-row-controls .xeno-input{flex:1 1 130px;min-width:0}
+.xeno-btn{border:1px solid var(--line);background:var(--card2);color:var(--ink);font:inherit;font-size:12px;font-weight:700;padding:8px 10px;border-radius:10px;cursor:pointer;box-sizing:border-box;max-width:100%}
+.xeno-btn.primary{background:var(--accent);color:var(--on-accent);border-color:transparent}
+.xeno-btn.accent{background:#b038e8;color:#fff;border-color:transparent}
+.xeno-btn.warn{background:#e67700;color:#fff;border-color:transparent}
+.xeno-btn.danger{background:var(--danger);color:#fff;border-color:transparent}
+.xeno-btn.full{width:100%;text-align:center}
+.xeno-active-banner,.xeno-swap-box,.xeno-insight-box,.xeno-sub-box,.xeno-reserved-box{background:var(--card2);border-radius:12px;padding:10px;margin-top:8px;font-size:12.5px;box-sizing:border-box;max-width:100%;overflow:hidden}
+.xeno-active-banner p,.xeno-report-card p{margin:0 0 5px;line-height:1.45}
+.xeno-active-banner .sub,.xeno-reserved-box .sub,.xeno-hint,.xeno-empty-note{font-size:11.5px;color:var(--ink2);line-height:1.45;margin:4px 0}
+.xeno-report-list,.xeno-anchor-list,.xeno-vore-list,.xeno-rule-list,.wardrobe-slot-list,.wardrobe-grid{display:grid;gap:8px;margin-top:8px}
+.xeno-report-card,.xeno-vore-item,.wardrobe-slot-row,.wardrobe-item-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;font-size:12.5px;box-sizing:border-box;min-width:0;max-width:100%}
+.wardrobe-slot-row.equipped,.wardrobe-item-card.equipped{border-color:var(--accent)}
+.xeno-report-head,.wardrobe-item-head,.slot-head{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;margin-bottom:5px}
+.xeno-score,.mall-price-tag{font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:99px;background:rgba(240,123,63,.16);color:#d95b16}
+.mall-price-tag.owned{background:rgba(45,185,115,.16);color:#1f9d60}
+.xeno-anchor-row,.xeno-rule-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:6px 8px;border-radius:9px;background:var(--card);border:1px solid var(--line);font-size:12px;min-width:0}
+.xeno-anchor-row small{display:block;color:var(--ink2);font-size:11px}
+.xeno-grid-2{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:6px 0}
+.xeno-field-inline{display:grid;gap:4px;font-size:12px;margin:6px 0;min-width:0}
+.xeno-field-inline>span{font-weight:700;color:var(--ink2)}
+.xeno-preset-rules{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:6px 0;font-size:11.5px;color:var(--ink2)}
+.xeno-pending-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 10px;margin-bottom:8px;border-radius:12px;background:rgba(176,56,232,.14);border:1px solid rgba(176,56,232,.35);font-size:12px}
+.slot-tag{font-size:11px;font-weight:800;color:var(--ink2);background:var(--card2);padding:2px 7px;border-radius:6px}
+.slot-desc,.wardrobe-summary,.wardrobe-detail{font-size:12px;line-height:1.45;margin:4px 0;color:var(--ink)}
+.slot-empty{font-size:11.5px;color:var(--ink2)}
+.wardrobe-prompt{font-size:11px;color:var(--ink2);background:var(--card2);padding:4px 7px;border-radius:7px;margin:4px 0;word-break:break-all}
+.wardrobe-thumb,.wardrobe-sheet-img{width:100%;max-height:180px;object-fit:cover;border-radius:10px;margin-bottom:6px;display:block}
+.xeno-sheet-form{display:grid;gap:8px;font-size:12.5px}
+
+/* ---------- 淘宝/京东风格商城头部与商品卡 (tb-*) ---------- */
+.tb-header-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:11px;margin:0 0 10px;display:grid;gap:8px;box-sizing:border-box;max-width:100%;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.tb-search-row{display:flex;align-items:center;gap:6px;min-width:0}
+.tb-search-box{flex:1;min-width:0;display:flex;align-items:center;gap:6px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+.tb-search-ico{font-size:12px;flex:none}
+.tb-search-input{border:0;background:transparent;color:var(--ink);font:inherit;font-size:12px;width:100%;min-width:0;outline:none}
+.tb-restock-trigger{flex:none;border:1px solid transparent;border-radius:10px;background:var(--accent);color:var(--on-accent);font:inherit;font-size:12px;font-weight:700;padding:7px 11px;cursor:pointer;white-space:nowrap}
+.tb-wallet-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:6px 9px;border-radius:11px;background:var(--card2)}
+.tb-wallet-left{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.tb-wallet-label{font-size:11.5px;font-weight:700;color:var(--ink2)}
+.tb-wallet-num{font-size:14px;font-weight:900;color:var(--ink);font-variant-numeric:tabular-nums}
+.tb-free-pill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--card);color:var(--ink2);border-radius:99px;padding:4px 10px;font:inherit;font-size:11.5px;font-weight:800;cursor:pointer;transition:all .16s}
+.tb-free-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--ink2);transition:background .16s,transform .16s}
+.tb-free-pill.on{background:var(--accent);color:var(--on-accent);border-color:transparent}
+.tb-free-pill.on .dot{background:var(--on-accent);transform:scale(1.15)}
+.tb-wearer-row{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px;font-size:12px;color:var(--ink2)}
+.tb-wearer-row span{font-weight:700;white-space:nowrap}
+
+.tb-product-list{display:grid;gap:10px;margin-top:8px}
+.tb-card{display:grid;grid-template-columns:104px minmax(0,1fr);gap:10px;padding:10px;border-radius:14px;background:var(--card2);border:1px solid var(--line);box-sizing:border-box;min-width:0;max-width:100%;overflow:hidden;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.tb-card:hover{border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+.tb-card.equipped{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.tb-card.owned{border-color:rgba(45,185,115,.45)}
+.tb-img-box{position:relative;width:104px;height:132px;border-radius:11px;overflow:hidden;background:var(--card);border:1px solid var(--line);display:flex;flex-direction:column;justify-content:space-between;flex:none}
+.tb-img-box>img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.tb-img-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;text-align:center;color:var(--ink2);background:radial-gradient(circle at 50% 35%,color-mix(in srgb,var(--accent) 12%,var(--card)),var(--card2))}
+.tb-img-cat{font-size:11px;font-weight:800;color:var(--ink)}
+.tb-img-empty small{font-size:10px;color:var(--ink2);line-height:1.2}
+.tb-img-actions{position:absolute;left:3px;right:3px;bottom:3px;display:grid;grid-template-columns:1fr 1fr;gap:3px}
+.tb-img-btn{border:0;border-radius:6px;background:rgba(18,20,28,.74);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);color:#fff;font:inherit;font-size:10px;font-weight:700;padding:3px 2px;cursor:pointer;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-img-btn:hover{background:rgba(255,80,0,.88)}
+.tb-img-btn:disabled{opacity:.55;cursor:default}
+
+.tb-info{display:flex;flex-direction:column;justify-content:space-between;gap:4px;min-width:0}
+.tb-title-row{display:flex;align-items:flex-start;gap:4px;min-width:0}
+.tb-mall-tag{flex:none;font-size:10px;font-weight:900;padding:1.5px 5px;border-radius:4px;background:linear-gradient(90deg,#ff5000,#ff0036);color:#fff;line-height:1.3;margin-top:1px}
+.tb-mall-tag.new{background:linear-gradient(90deg,#9c27b0,#e91e63)}
+.tb-title{flex:1;min-width:0;font-size:13px;font-weight:800;color:var(--ink);line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.tb-del-btn{flex:none;border:0;background:transparent;color:var(--ink2);font-size:15px;font-weight:900;line-height:1;padding:0 3px;cursor:pointer}
+.tb-del-btn:hover{color:var(--danger)}
+.tb-tags-row{display:flex;flex-wrap:wrap;gap:4px}
+.tb-mini-tag{font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--card);color:var(--ink2);border:1px solid var(--line)}
+.tb-mini-tag.gender[data-gender="扶她"]{color:#b038e8;border-color:rgba(176,56,232,.35)}
+.tb-mini-tag.gender[data-gender="女"]{color:#d9387a;border-color:rgba(217,56,122,.35)}
+.tb-mini-tag.gender[data-gender="男"]{color:#2c74e8;border-color:rgba(44,116,232,.35)}
+.tb-mini-tag.equipped{color:var(--accent);border-color:var(--accent)}
+.tb-desc,.tb-spec{margin:0;font-size:11.5px;color:var(--ink2);line-height:1.38;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.tb-spec b{color:var(--ink)}
+.tb-price-row{display:flex;align-items:baseline;justify-content:space-between;gap:6px;flex-wrap:wrap;margin-top:2px}
+.tb-price-box{display:flex;align-items:baseline;gap:4px;flex-wrap:wrap}
+.tb-price{font-size:16px;font-weight:900;color:#ff4400;line-height:1;font-variant-numeric:tabular-nums}
+.tb-price i{font-style:normal;font-size:11px;margin-right:1px}
+.tb-free-badge{font-size:10px;font-weight:800;padding:1px 5px;border-radius:4px;background:rgba(255,68,0,.14);color:#ff4400}
+.tb-orig-price{font-size:11px;color:var(--ink2)}
+.tb-stock-tag{font-size:10.5px;font-weight:700;color:var(--ink2)}
+.tb-stock-tag.owned{color:#1f9d60}
+.tb-bottom-row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:3px;min-width:0}
+.tb-btn-detail{flex:none;border:1px solid var(--line);background:var(--card);color:var(--ink2);font:inherit;font-size:11px;font-weight:700;padding:5px 8px;border-radius:99px;cursor:pointer}
+.tb-buy-group{flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:4px}
+.tb-btn-cart,.tb-btn-buy{flex:1;min-width:0;border:0;font:inherit;font-size:11px;font-weight:800;padding:6px 6px;border-radius:99px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
+.tb-btn-cart{background:linear-gradient(90deg,#ffbe00,#ff9402);color:#fff}
+.tb-btn-cart:disabled{background:var(--card);color:var(--ink2);border:1px solid var(--line);cursor:default}
+.tb-btn-buy{background:linear-gradient(90deg,#ff6000,#ff0036);color:#fff}
+.tb-btn-buy.full{width:100%}
+
+/* 进货工坊图片与描述并排区 */
+.tb-restock-media{display:grid;grid-template-columns:104px minmax(0,1fr);gap:10px;align-items:stretch;margin:8px 0}
+.tb-img-box.restock-preview{height:122px}
+.tb-restock-fields{display:flex;flex-direction:column;justify-content:space-between;min-width:0}

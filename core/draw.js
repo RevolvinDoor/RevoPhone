@@ -18,6 +18,7 @@ import {tokenBudget, counterNow, estimateTokens, countField, tagCost} from './to
 import {strength as vibeStrength} from './vibes.js';
 import {DRAW_ENGINES, DRAW_ENGINE_NAMES, defaultGpt, normalizeGpt, defaultComfy, normalizeComfy} from './image-engines.js';
 import {escapeHTML, isPlaceholderRole} from './protocol.js';
+import {xenoDrawTagsFor} from './xeno.js';
 
 const BLOCK = ['<img>', '画幅：竖 / 横 / 方', '场景：英文 tag', '角色：名字｜这一刻的 tag｜不要出现的 tag｜站位（画面里每个人单独一行，每一行都以「角色：」开头）', '新外貌：名字｜固定外貌 tag（只在名单外的新角色第一次出现时写）', '</img>'];
 export const PIC_TAG_FORMAT = BLOCK.join('\n');
@@ -977,7 +978,8 @@ export function pictureInputs(settings, tag, text = '') {
   };
   const characters = spec.cast.map(c => {
     const fixed = roles.find(r => sameName(r.name, c.name))?.appearance || spec.register.find(x => sameName(x.name, c.name))?.appearance || '';
-    return {prompt: [mergeTags(soloTags(fixed), c.tags), c.nl].filter(Boolean).join(', '), negative: many ? mergeTags(withoutPeopleTags(c.negative), 'fused bodies') : c.negative || '', position: place(c.position)};
+    const xenoTags = xenoDrawTagsFor(settings?.xeno, c.name);
+    return {prompt: [mergeTags(soloTags(fixed), xenoTags, c.tags), c.nl].filter(Boolean).join(', '), negative: many ? mergeTags(withoutPeopleTags(c.negative), 'fused bodies') : c.negative || '', position: place(c.position)};
   });
   return {prompt: [...head, sceneTags(spec.tags, spec.cast.length), spec.nl].filter(Boolean).join(', '), negative: style.negative.trim(), characters, names: spec.cast.map(c => c.name), params};
 }

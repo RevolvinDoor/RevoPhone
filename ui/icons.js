@@ -8,6 +8,9 @@ const gear = (() => {
 })();
 
 const GLYPHS = {
+  xeno: '<circle cx="32" cy="32" r="22" fill="var(--t2)"/><path d="M32 10c7 8 11 15 11 22s-4 14-11 22c-7-8-11-15-11-22s4-14 11-22z" fill="currentColor"/><circle cx="32" cy="32" r="6.5" fill="var(--tac)"/><path d="M13 32h9M42 32h9" stroke="var(--tac)" stroke-width="3.5" stroke-linecap="round"/>',
+  wardrobe: '<path d="M32 18c0-4 3-7 6.5-7a5.5 5.5 0 0 1 4 9.2L32 27 11 39a4 4 0 0 0 2 7.5h38a4 4 0 0 0 2-7.5L32 27z" fill="currentColor"/><path d="M18 46.5l4 10h20l4-10z" fill="var(--t2)"/><circle cx="32" cy="37" r="4" fill="var(--tac)"/>',
+  mall: '<path d="M12 22h40l-4 32H16z" fill="currentColor"/><path d="M22 22v-5a10 10 0 0 1 20 0v5" fill="none" stroke="var(--t2)" stroke-width="4.5" stroke-linecap="round"/><circle cx="25" cy="34" r="3.5" fill="var(--tac)"/><circle cx="39" cy="34" r="3.5" fill="var(--tac)"/><path d="M25 42q7 5 14 0" fill="none" stroke="var(--t2)" stroke-width="3" stroke-linecap="round"/>',
   indie: '<g transform="translate(0 -2)"><path d="M18 24h28c6 0 10 5 11 11l3 15c1 6-5 9-9 5l-9-9H22l-9 9c-4 4-10 1-9-5l3-15c1-6 5-11 11-11z"/><path d="M18 30v12M12 36h12" fill="none" stroke="var(--t2)" stroke-width="4" stroke-linecap="round"/><circle cx="43" cy="32" r="3" fill="var(--tac)"/><circle cx="50" cy="39" r="3" fill="var(--tac)"/><path d="m34 5 2.4 6.6L43 14l-6.6 2.4L34 23l-2.4-6.6L25 14l6.6-2.4z" fill="var(--tac)"/><path d="m16 8 1.2 3.8L21 13l-3.8 1.2L16 18l-1.2-3.8L11 13l3.8-1.2z"/></g>',
   logs: '<rect x="7" y="10" width="50" height="44" rx="7"/><path d="m17 23 8 7-8 7M32 39h14" fill="none" stroke="var(--t2)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="48" cy="19" r="3" fill="var(--tac)"/>',
   assistant: '<path d="M9 12h46v33H32L19 55V45H9z"/><path d="M23 26v5M41 26v5M27 36q5 4 10 0" fill="none" stroke="var(--t2)" stroke-width="3" stroke-linecap="round"/><path d="M48 5l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="var(--tac)"/>',

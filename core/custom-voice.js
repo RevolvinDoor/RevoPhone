@@ -6,7 +6,13 @@
 // link to it or the audio in base64. The voices are the user's own list (parameters.js, 自己的接口 → 音色).
 import {proxyAddress} from './proxy-url.js';
 import {languageCode} from './languages.js';
-import {pick} from './music.js';
+
+function pick(value, dotted) {
+  if (!dotted) return value;
+  let at = value;
+  for (const key of String(dotted).replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)) { if (at == null) return undefined; at = at[key]; }
+  return at;
+}
 
 /** One-click formats of well-known self-hosted services: only the user's own address goes in. */
 export const CUSTOM_TEMPLATES = Object.freeze([

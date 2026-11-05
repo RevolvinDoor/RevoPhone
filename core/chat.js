@@ -4,7 +4,6 @@
 // A chat preset holds the rules the model follows when it answers in the phone, how many recent story messages
 // and chat messages it sees, and the template used when a chat is brought into the story.
 import {promptText, promptOn} from './prompt-rules.js';
-import {songOf, listeningNote} from './music.js';
 import {normalizeWallet, defaultWallet, PREMIUM, guessEmoji, yuan} from './wallet.js';
 import {parseDialogue, isPlaceholderRole} from './protocol.js';
 import {cardRoutes} from './routes.js';
@@ -12,6 +11,14 @@ import {money} from './chats.js';
 import {callSummary} from './call.js';
 import {languageName} from './languages.js';
 import {normalizeMemory} from './memory.js';
+
+export function songOf(text) {
+  const raw = String(text ?? '').replace(/\s+/g, ' ').trim();
+  const book = raw.match(/^《([^》]+)》\s*[-—–·|｜/、]?\s*(.*)$/);
+  if (book) return {title: book[1].trim(), artist: book[2].trim()};
+  const [title, ...rest] = raw.split(/\s+[-—–]+\s+|\s*[|｜]\s*|——/);
+  return {title: String(title ?? '').slice(0, 120).trim(), artist: String(rest.join(' ').trim()).slice(0, 120)};
+}
 
 // loreMax, storyEach, storyTotal: characters (0: no limit of the phone's own; the tavern's World Info budget still applies).
 export const CHAT_LIMITS = Object.freeze({contacts: 200, persona: 4000, story: 100, history: 500, chars: 2_000_000});
@@ -403,7 +410,7 @@ export function knowsRule(names, user, {prompts = {}, group = false} = {}) {
   const one = names.length === 1 ? names[0] : '';
   return promptText(prompts, 'knows', 'text', {'谁': one || '各人', '每个人': one || '每个人', '用户': user, '告诉': one ? ' TA ' : '自己', '某人': one || '一个人', '那人': one || '这个人', '群聊': group});
 }
-export function buildChatRequest({prompts = {}, preset, thread, members, story = [], user = '我', userPersona = '', voiceFormat, lore = '', memory = '', earlier = '', images = false, stickers = [], asking = '', music = null, forum = '', nudge = false, pictures = []}) {
+export function buildChatRequest({prompts = {}, preset, thread, members, story = [], user = '我', userPersona = '', voiceFormat, lore = '', memory = '', earlier = '', images = false, stickers = [], asking = '', forum = '', nudge = false, pictures = []}) {
   const group = thread.type === 'group';
   const partner = group ? thread.name : members[0]?.name || thread.name;
   const speakers = members.filter(m => m.voice);
@@ -423,8 +430,8 @@ export function buildChatRequest({prompts = {}, preset, thread, members, story =
     '知情范围': story.length || earlier.trim() ? knowsRule(group ? members.map(m => m.name) : [partner], user, {group, prompts}) : '',
     '名单': members.map(m => m.name).join('、'),
     '语音': speakers.length > 0, '语音格式': voiceFormat, '语音语言': speakers.map(m => `${m.name}：${languageName(m.language || 'zh')}`).join('，'),
-    '出图': images, '表情包': stickers.slice(-80).map(s => s.name ?? s).join('、'), '打电话': dialing, '朋友圈': posting, '分享歌曲': !!music?.share, '删好友': !group && !asking,
-    '正在听': music?.listening ? listeningNote(music.listening, user, prompts) : '', '好友申请': asking, '看图': pictures.length > 0});
+    '出图': images, '表情包': stickers.slice(-80).map(s => s.name ?? s).join('、'), '打电话': dialing, '朋友圈': posting, '分享歌曲': false, '删好友': !group && !asking,
+    '正在听': '', '好友申请': asking, '看图': pictures.length > 0});
   // pictures: [{id, url}] — photos sent along for a model that sees; the record numbers them [图片1], [图片2]… in order.
   const seen = new Map(pictures.map((p, i) => [p.id, i + 1]));
   const history = thread.messages.filter(m => m.kind !== 'system').slice(-preset.history).map(m => seen.has(m.id) ? {...m, seen: seen.get(m.id)} : m);

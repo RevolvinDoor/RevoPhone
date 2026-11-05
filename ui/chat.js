@@ -1,7 +1,6 @@
 import {currentDm, chatWindows, currentWindow, groupKey} from '../core/chats.js';
 import {swipeRow, mountSwipeList} from './swipe-list.js';
 import {createView, esc, btn, field, input, textArea, toggle, heading, groupTitle, avatar, avatarPicture, empty, help, copyText} from './common.js';
-import {songOf} from '../core/music.js';
 import {icon} from './icons.js';
 import {fly} from './carry.js';
 import {openImageViewer} from '../image-viewer.js';
@@ -267,7 +266,6 @@ export function chatApp(ctx) {
       <div class="actions">${btn('profile-chat', icon('chat') + '发消息', 'primary')}${api.callDial ? btn('profile-call', icon('phone') + '打电话', 'secondary') : ''}${btn('profile-moments', icon('moments') + 'TA 的动态', 'secondary')}</div>
       <div class="group">${btn('remark', `${icon('edit')}<span><strong>设置备注</strong><small>${esc(remarks()[c.name] || '只有你看得到，聊天里显示这个名字')}</small></span>`, 'list-row')}${btn('avatar-pick', `${icon('image')}<span><strong>换头像</strong><small>${esc(avatarState(c.name))}</small></span>`, 'list-row', `data-key="${esc(c.name)}"`)}${btn('star', `<span>${star ? '★ 取消特别关心' : '☆ 设为特别关心'}</span>`, 'list-row')}${manual ? `<button class="list-row" data-action="contact-edit" data-id="${esc(manual.id)}">${icon('edit')}<span><strong>编辑资料和人设</strong></span></button>` : ''}</div>
       <div class="actions">${btn('unfriend', '删除好友', 'danger')}</div>`);
-    listeningOf(c.name).then(song => { const box = v.root.querySelector('.qq-card'); if (!song || !box || profileOf !== c.name || mode !== 'profile') return; box.insertAdjacentHTML('beforeend', `<button type="button" class="qq-listening" data-action="play-song" data-title="${esc(song.title)}" data-artist="${esc(song.artist)}">${icon('music')}<span>最近在听：${esc(song.title)}${song.artist ? ' - ' + esc(song.artist) : ''}</span></button>`); }).catch(() => {});
   }
   /** 新的朋友: contacts the user deleted, with what they sent since (好友申请); 添加 brings them and the chat back. */
   async function renderFriends(ticket) {
@@ -277,12 +275,6 @@ export function chatApp(ctx) {
     v.draw(heading('新的朋友', '', 'New Friends')
       + `<p class="hint">删掉的好友在这里。TA 们这段时间发来的消息会变成好友申请；点「添加」就加回来，聊天记录和申请里的话都会回到聊天里。</p>`
       + `<div class="group">${cut.map(t => { const name = t.members[0], asks = t.friend.requests || [], last = asks.at(-1); return `<div class="list-row friend-row">${avatar(name, engine(name), 42)}<span><strong>${esc(shown(name))}</strong><small>${last ? `${asks.length > 1 ? `${asks.length} 条申请 · ` : ''}「${esc(last.text)}」` : '已删除 · 还没有发来申请'}</small></span>${btn('refriend', asks.length ? '通过' : '添加', 'chip-button', `data-id="${esc(t.id)}" aria-label="把 ${esc(name)} 加回好友"`)}</div>`; }).join('')}</div>`);
-  }
-  /** 最近在听: the last song this contact shared in your private chat. */
-  async function listeningOf(name) {
-    const t = currentDm(await api.listThreads(), name);
-    if (!t) return null;
-    return (await api.getThread(t.id))?.messages.findLast(m => m.kind === 'song' && m.from === name)?.song || null;
   }
   /** The looks of one kind (气泡, 挂件, 背景): the free ones, then the shop's (one not bought yet shows its price). */
   function decoChips(key, list, value) {
@@ -405,7 +397,7 @@ export function chatApp(ctx) {
   function toolsHTML() {
     const group = thread.type === 'group';
     const tools = [['photo', 'image', '照片'], ['emoji', 'smile', '表情'], ['redpacket', 'packet', '红包'], ...(group ? [] : [['transfer', 'swap', '转账'], ['gift', 'gift', '礼物']]),
-      ['file', 'file', '文件'], ['location', 'pin', '位置'], ['song', 'music', '分享歌'], ['pat', 'hand', '拍一拍'], ['dice', 'dice', '骰子']];
+      ['file', 'file', '文件'], ['location', 'pin', '位置'], ['pat', 'hand', '拍一拍'], ['dice', 'dice', '骰子']];
     const tabs = `<div class="emoji-tabs" role="tablist">${[['emoji', '表情'], ['stickers', '表情包']].map(([k, t]) => `<button type="button" role="tab" data-action="panel-${k}" aria-selected="${panel === k}">${t}</button>`).join('')}</div>`;
     if (panel === 'stickers') {
       const list = api.getState().chat.stickers || [];
@@ -740,25 +732,6 @@ export function chatApp(ctx) {
         const detail = value(d, 'detail');
         d.close();
         await post([{from: 'me', kind: 'location', text, detail}]);
-      }
-    });
-  }
-  /** 分享歌: what is playing, a song of the 歌单, or any song typed in; it shows as a card they can play too. */
-  async function shareSong() {
-    const playing = (() => { try { const t = api.musicStatus?.()?.track; return t?.title && t.from !== 'bgm' ? t : null; } catch { return null; } })();
-    const mine = (await api.listSongs?.().catch(() => []) || []).filter(x => x.title).slice(0, 60);
-    const name = s => s.artist ? `${s.title} - ${s.artist}` : s.title;
-    const row = (s, note = '') => `<button type="button" class="list-row" data-action="song-pick" data-title="${esc(s.title)}" data-artist="${esc(s.artist || '')}">${icon('music')}<span><strong>${esc(s.title)}</strong><small>${esc([s.artist, note].filter(Boolean).join(' · '))}</small></span></button>`;
-    const d = sheet('分享歌', `${field('歌', input('song', playing ? name(playing) : '', 'text', 'maxlength="200" placeholder="歌名 - 歌手，比如：晴天 - 周杰伦"'))}${field('想说的话', input('note', '', 'text', 'maxlength="200" placeholder="可以不写"'))}
-      <div class="actions">${btn('song-send', icon('send') + '发送', 'primary')}</div>
-      ${playing || mine.length ? `<div class="pick-list">${playing ? row(playing, '正在听') : ''}${mine.map(s => row(s)).join('')}</div>` : '<p class="hint">「音乐」里的歌单和正在听的歌会列在这里；也可以直接写歌名。</p>'}`, {
-      'song-pick': b => { const box = d.body.querySelector('[data-field=song]'); box.value = name({title: b.dataset.title, artist: b.dataset.artist}); box.focus(); },
-      'song-send': async () => {
-        const song = songOf(value(d, 'song'));
-        if (!song.title) throw Error('写一下歌名');
-        const text = value(d, 'note');
-        d.close();
-        await post([{from: 'me', kind: 'song', song, ...(text ? {text} : {})}]);
       }
     });
   }
@@ -1400,8 +1373,7 @@ export function chatApp(ctx) {
       case 'dm-open': await openDm(el.dataset.name); break;
       case 'profile': profileOf = el.dataset.name; mode = 'profile'; render(); break;
       case 'profile-chat': await openDm(profileOf); break;
-      case 'song': { const m = thread?.messages.find(x => x.id === el.dataset.mid); if (m?.song) { ctx.notify(`正在找「${m.song.title}」……`); api.musicPlay?.({...m.song, from: 'share'}).catch(error => ctx.notify(error.message, {error: true})); } break; }
-      case 'play-song': api.musicPlay?.({title: el.dataset.title, artist: el.dataset.artist, from: 'share'}).catch(error => ctx.notify(error.message, {error: true})); break;
+      case 'song': { const m = find(); if (m) messageMenu(m); break; }
       case 'unfriend': {
         const name = profileOf;
         if (!await ctx.confirm(`删除好友「${name}」？`, `和 TA 的聊天会从消息列表收起来（记录还在），TA 也不在好友列表里了。之后 TA 给你发的消息会变成好友申请，在「联系人 → 新的朋友」里随时可以加回来。`)) break;
@@ -1471,7 +1443,6 @@ export function chatApp(ctx) {
       case 'tool-transfer': panel = null; syncPanel(); sendTransfer(); break;
       case 'tool-gift': panel = null; syncPanel(); sendGift(); break;
       case 'tool-location': panel = null; syncPanel(); sendLocation(); break;
-      case 'tool-song': panel = null; syncPanel(); await shareSong(); break;
       case 'tool-page': { const box = el.closest('.chat-panel')?.querySelector('.tool-pages'); box?.scrollTo({left: Number(el.dataset.page) * box.clientWidth, behavior: 'smooth'}); break; }
       case 'tool-pat': panel = null; syncPanel(); await choosePat(); break;
       case 'tool-dice': panel = null; syncPanel(); await rollDice(); break;

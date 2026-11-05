@@ -16,8 +16,7 @@
 //   【日程】时间｜事情               one thing on the calendar
 //   【音乐】歌名 - 歌手              one song listened to lately
 import {promptText} from './prompt-rules.js';
-import {messageLine} from './chat.js';
-import {songOf} from './music.js';
+import {messageLine, songOf} from './chat.js';
 
 export const PEEK_LIMITS = Object.freeze({chats: 5, lines: 24, searches: 12, notes: 5, photos: 9, cart: 8, calls: 10, events: 6, songs: 10, knows: 10, text: 600});
 

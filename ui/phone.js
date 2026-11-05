@@ -18,13 +18,10 @@ import {peekApp} from './peek.js';
 import {chatApp} from './chat.js';
 import {soundsApp} from './sounds.js';
 import {assistantApp} from './assistant.js';
-import {musicApp} from './music.js';
-import {gamesApp} from './games.js';
-import {bookApp} from './book.js';
-import {indieApp} from './indie.js';
-import {paintApp} from './paint.js';
-import {vnApp} from './vn.js';
 import {logsApp} from './logs.js';
+import {xenoApp} from './xeno.js';
+import {wardrobeApp} from './wardrobe.js';
+import {mallApp} from './mall.js';
 import {momentsNew, momentsSeen} from './moments.js';
 import {callScreen} from './call.js';
 import {installMotion} from './motion.js';
@@ -33,7 +30,7 @@ import {grow, launch, nudge, within, visible, islandIn, moving} from './carry.js
 import {todayPage} from './today.js';
 
 // App factories, keyed by the ids in apps.js.
-const FACTORIES = {roles: rolesApp, engines: enginesApp, presets: presetsApp, library: libraryApp, gallery: galleryApp, notes: notesApp, listen: listenApp, settings: settingsApp, draw: drawApp, chat: chatApp, forum: forumApp, peek: peekApp, sounds: soundsApp, assistant: assistantApp, music: musicApp, games: gamesApp, picbook: bookApp, indie: indieApp, paint: paintApp, vn: vnApp, logs: logsApp};
+const FACTORIES = {xeno: xenoApp, wardrobe: wardrobeApp, mall: mallApp, roles: rolesApp, engines: enginesApp, presets: presetsApp, library: libraryApp, gallery: galleryApp, notes: notesApp, listen: listenApp, settings: settingsApp, draw: drawApp, chat: chatApp, forum: forumApp, peek: peekApp, sounds: soundsApp, assistant: assistantApp, logs: logsApp};
 const ACTIVE_PHASES = ['playing', 'paused', 'generating', 'waiting'];
 
 // Network and battery in the status bar come from the user's own device (where the browser tells them).
@@ -488,53 +485,10 @@ export function createPhoneApp({window: win, api, mount = win.document.getElemen
         : `<span class="widget-line">还没有角色</span><button class="chip-button" data-app="roles">新增角色</button>`}`;
     }
   }
-  // ---------- 音乐 on the lock screen and in the control center ----------
-  const musicNow = () => { try { return api.musicStatus?.() || null; } catch { return null; } };
-  const musicLine = s => { const t = s?.track; return !t ? '点这里打开音乐' : s.phase === 'loading' ? '正在找这首歌……' : s.phase === 'error' ? s.message : s.lyric || (t.artist || (t.from === 'bgm' ? '背景音乐' : '')); };
-  /** The song playing (cover, song, its lyric line, previous / play / next); a tap on the song opens 音乐. */
-  function musicTile(where) {
-    const s = musicNow(), t = s?.track, playing = s?.phase === 'playing';
-    if (!t && where === 'lock') return '';
-    const line = musicLine(s);
-    return `<div class="${where === 'lock' ? 'widget' : 'control-tile wide'} music-tile" data-music-tile data-song="${esc(t ? t.title + '|' + t.artist : '')}" data-has="${!!t}" data-playing="${playing ? '1' : ''}">
-      <button type="button" class="music-tile-open" data-app="music" aria-label="打开音乐"><span class="music-tile-disc" aria-hidden="true">${icon('music')}</span><span class="music-tile-text"><strong>${esc(t ? t.title : '音乐')}</strong><small data-music-line>${esc(line)}</small></span></button>
-      ${t ? `<span class="music-tile-buttons"><button type="button" data-music="prev" aria-label="上一首">${icon('prev', true)}</button><button type="button" data-music="toggle" data-on="${playing}" aria-label="${playing ? '暂停' : '播放'}">${icon(playing ? 'pause' : 'play', true)}</button><button type="button" data-music="next" aria-label="下一首">${icon('skip', true)}</button></span>` : ''}</div>`;
-  }
-  /** The song changed, or its lyric line: every music tile on screen follows — patched in place while the same song
-   *  plays (rebuilt each second, its turning disc would start over), rebuilt for another song. */
-  function paintMusic() {
-    const s = musicNow(), t = s?.track, songKey = t ? t.title + '|' + t.artist : '';
-    for (const el of mount.querySelectorAll('[data-music-tile]')) {
-      const where = el.classList.contains('widget') ? 'lock' : 'control';
-      if (el.dataset.song === songKey && el.dataset.has === String(!!t)) {
-        const playing = s?.phase === 'playing';
-        el.dataset.playing = playing ? '1' : '';
-        const line = el.querySelector('[data-music-line]'), text = musicLine(s);
-        if (line && line.textContent !== text) line.textContent = text;
-        const b = el.querySelector('[data-music=toggle]');
-        if (b && b.dataset.on !== String(playing)) { b.dataset.on = String(playing); b.innerHTML = icon(playing ? 'pause' : 'play', true); b.setAttribute('aria-label', playing ? '暂停' : '播放'); }
-        continue;
-      }
-      const html = musicTile(where);
-      if (!html) { el.remove(); continue; }
-      const tpl = doc.createElement('template'); tpl.innerHTML = html;
-      el.replaceWith(tpl.content.firstElementChild);
-    }
-    // A song started while the lock screen shows and it had no music widget yet.
-    if (locked && !lockscreen.querySelector('[data-music-tile]')) { const html = musicTile('lock'); if (html) lockscreen.querySelector('.lock-bottom')?.insertAdjacentHTML('beforebegin', html); }
-  }
-  mount.addEventListener('click', e => {
-    const b = e.target.closest('[data-music]');
-    if (!b) return;
-    e.stopPropagation();
-    const go = {prev: api.musicPrev, toggle: api.musicToggle, next: api.musicNext}[b.dataset.music];
-    if (go) run(() => go());
-  }, {signal, capture: true});
   function renderLock() {
     const on = ACTIVE_PHASES.includes(playback.phase) && playback.speaker;
     lockscreen.innerHTML = `${icon('lock')}<p class="home-date" data-clock="date"></p><p class="home-clock" data-clock="large"></p>
       <div class="widget live-wave" data-engine="${on ? engineOf(playback.speaker) : 'none'}"><span class="widget-head"><span class="eyebrow">Now Playing</span>${wave}</span>${on ? `<span class="who">${avatar(playback.speaker, engineOf(playback.speaker), 30)}${plate(playback.speaker)}</span>` : ''}<span class="widget-line" data-playing-message>${esc(playback.line?.translation || playback.message || '点击台词开始')}</span></div>
-      ${musicTile('lock')}
       <div class="lock-bottom"><button class="primary" data-system="unlock">点这里进入</button><button class="chip-button" data-system="unlock">跳过锁屏</button></div>`;
     clock();
   }
@@ -721,7 +675,6 @@ export function createPhoneApp({window: win, api, mount = win.document.getElemen
     const d = dialog('控制中心', `<div class="control-grid">
       <div class="control-tile wide cc-device"><span class="net" data-net></span><span data-net-label></span><span class="cc-battery"><span class="battery" data-battery aria-hidden="true"></span><span data-battery-label></span></span></div>
       <div class="control-tile wide live-wave" data-engine="${on ? engineOf(playback.speaker) : 'none'}">${on ? avatar(playback.speaker, engineOf(playback.speaker), 42) : wave}<div><strong data-playing-speaker></strong><small data-playing-message></small></div><button class="play-round" data-system="toggle" aria-label="暂停或继续">${icon('play', true)}</button></div>
-      ${musicTile('control')}
       <div class="control-tile wide" style="flex-direction:column;align-items:stretch"><div class="meter-label"><span>播放音量</span><output>${Math.round(p.volume * 100)}%</output></div><input class="slider" data-control="volume" type="range" min="0" max="100" value="${Math.round(p.volume * 100)}" aria-label="播放音量"></div>
       <div class="control-tile wide cc-toggles">${toggles.map(([key, glyphKey, label, value]) => `<button class="cc-toggle" data-control="${key}" aria-pressed="${value}"><span class="bubble">${icon(glyphKey)}</span>${label}</button>`).join('')}<button class="cc-toggle" data-system="power" aria-pressed="true"><span class="bubble">${icon('lock')}</span>锁屏</button></div>
       <div class="control-tile wide" style="flex-direction:column;align-items:stretch"><span>主题</span><div class="segmented">${[['system', '跟随系统'], ['light', '日间'], ['dark', '夜间']].map(([key, label]) => `<button data-theme="${key}" aria-pressed="${p.theme === key}">${label}</button>`).join('')}</div></div>
@@ -904,14 +857,13 @@ export function createPhoneApp({window: win, api, mount = win.document.getElemen
     if (event.type === 'phone') run(() => appearance(event.preferences));
     if (['chat', 'library', 'space'].includes(event.type)) todayLater();
     if (event.type === 'library') {
-      const key = ({favorites: 'library', cache: 'library', photos: 'gallery', notes: 'notes', books: 'picbook'})[event.collection];
+      const key = ({favorites: 'library', cache: 'library', photos: 'gallery', notes: 'notes'})[event.collection];
       if (active === key) run(() => views.get(key)?.refresh());
     }
     if (event.type === 'audio-ready') views.get('listen')?.onPlayback?.(api.status());
     if (event.type === 'draw') views.get('draw')?.onDraw?.(event);
     if (event.type === 'logs') views.get('logs')?.onLogs?.();
     if (event.type === 'assistant') run(() => views.get('assistant')?.onAssistant?.(event));
-    if (event.type === 'music') { run(() => views.get('music')?.onMusic?.(event)); paintMusic(); }
     if (event.type === 'balance') run(() => views.get('engines')?.onBalance?.(event));
     if (event.type === 'chat') { run(() => views.get('chat')?.onChat?.(event)); countUnread(); if (event.incoming && !(active === 'chat' && views.get('chat')?.showing?.() === event.threadId)) notify(`${event.incoming.from}：${event.incoming.kind === 'text' ? event.incoming.text : '发来' + (event.incoming.count > 1 ? ` ${event.incoming.count} 条` : '一条') + '消息'}`.slice(0, 80)); }
     if (event.type === 'moments') { views.get('chat')?.onMoments?.(event); countMoments(); }

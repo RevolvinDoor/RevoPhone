@@ -3,6 +3,7 @@
 import {parseDialogue} from './protocol.js';
 import {withoutPictures} from './draw.js';
 import {withoutSounds} from './sounds.js';
+import {stripXenoUpdate} from './xeno.js';
 
 /**
  * A message of the story: also one hidden from the model (/hide, or a summary plugin hiding old floors marks it
@@ -43,6 +44,7 @@ export function outgoingChat(chat, {pictures = true, voice = true, keepLatest = 
     let mes = m.mes;
     if (pictures && /<img\b/i.test(mes)) mes = withoutPictures(mes);
     if (sounds && /<(?:sfx|ambience)\b/i.test(mes)) mes = withoutSounds(mes);
+    if (/<xeno_update\b/i.test(mes)) mes = stripXenoUpdate(mes);
     if (voice && formats.length && i !== keep) mes = withoutVoice(mes, formats);
     if (mes !== m.mes) chat[i] = {...m, mes};
   }

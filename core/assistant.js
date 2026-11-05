@@ -232,13 +232,3 @@ export function assistantWantsImage(messages) {
   }
   return false;
 }
-
-// ---------- 放歌 ----------
-/** The user asked for music to be played now (not only talked about songs). */
-export const ASSISTANT_WANTS_MUSIC = /播放|放(?:一?首|一下|点|些|个)?(?:歌|音乐|曲子)|(?:来|放)一?首|来点(?:歌|音乐)|想听|听听|点(?:一?首)?歌|换一?首|放.{0,20}的歌|放[「『《“"]/;
-/** Songs the reply may put on: 「[放歌] 歌名 - 歌手」 lines become cards the user taps (the first one plays at once when asked). */
-export function assistantMusicRule({prompts = {}, ready = false, library = [], listening = null, asked = false} = {}) {
-  return promptText(prompts, 'assistant', 'music', {'有音源': ready,
-    '正在听': listening?.title ? `${listening.title}${listening.artist ? ' - ' + listening.artist : ''}` : '',
-    '歌单': asked ? library.slice(0, 40).map(x => x.artist ? `${x.title} - ${x.artist}` : x.title).join('、') : ''});
-}
