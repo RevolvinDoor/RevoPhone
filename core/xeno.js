@@ -3,7 +3,7 @@
 // Replaces TavernDB with zero-latency local actions, on-demand rule injection, and automatic story state sync.
 
 import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS} from './xeno-catalog.js';
-import {roleTypeOf} from './routes.js';
+import {roleTypeOf, isValidRoleName} from './routes.js';
 
 export const GENDERS = Object.freeze(['男', '女', '扶她']);
 export const POSSESSION_MODES = Object.freeze(['浅层共鸣', '意识共存', '完全占据', '认知覆盖']);
@@ -245,9 +245,12 @@ export function normalizeXeno(raw) {
   for (const builtin of INITIAL_MALL_ITEMS) {
     if (!byId.has(builtin.id)) existingItems.push(normalizeCatalogItem(structuredClone(builtin)));
   }
-  const targets = Array.isArray(raw.targets) ? raw.targets.slice(0, 60).map(t => normalizeEntity(t, false)) : [];
+  const targets = Array.isArray(raw.targets)
+    ? raw.targets.filter(t => isValidRoleName(t?.name)).slice(0, 60).map(t => normalizeEntity(t, false))
+    : [];
   const poolMap = new Map();
   for (const t of Array.isArray(raw.targetPool) ? raw.targetPool : []) {
+    if (!isValidRoleName(t?.name)) continue;
     const norm = normalizeEntity(t, false);
     poolMap.set(norm.name, norm);
   }
@@ -288,7 +291,7 @@ export function normalizeXeno(raw) {
             name: clip(a?.name, 80),
             note: clip(a?.note, 200),
             createdAt: Number(a?.createdAt) || Date.now()
-          })).filter(a => a.name)
+          })).filter(a => a.name && isValidRoleName(a.name))
         : [],
       insightReports: Array.isArray(raw.possession?.insightReports)
         ? raw.possession.insightReports.slice(0, 12).map(r => ({
@@ -323,7 +326,7 @@ export function normalizeXeno(raw) {
 /** Finds or creates a target entity by name. */
 export function ensureTarget(xeno, name, patch = {}) {
   const clean = clip(name, 80);
-  if (!clean) throw Error('请先选择或填写目标姓名');
+  if (!clean || !isValidRoleName(clean)) throw Error('请先选择或填写有效的目标角色姓名');
   let target = xeno.targets.find(t => t.name === clean);
   const poolTarget = (xeno.targetPool || []).find(t => t.name === clean);
   if (!target) {
@@ -369,7 +372,7 @@ export function syncXenoWithRoutes(xeno, routes = []) {
     }
   }
 
-  const normalRoutes = list.filter(r => r?.name?.trim() && roleTypeOf(r) === 'normal' && (!out.protagonist.name || r.name.trim() !== out.protagonist.name));
+  const normalRoutes = list.filter(r => r?.name?.trim() && isValidRoleName(r.name) && roleTypeOf(r) === 'normal' && (!out.protagonist.name || r.name.trim() !== out.protagonist.name));
   const activeTargets = [];
   const seen = new Set();
   for (const r of normalRoutes) {
@@ -1205,10 +1208,9 @@ export function xenoPromptPlan(xeno) {
   if (state.autoUpdateTag) {
     statusLines.push(
       '',
-      '【状态自动同步协议】当本轮剧情中出现新女性角色登场、角色换装/爆衣、或发生身体/状态变化时，请在正文最末尾附带一个隐藏状态更新块（正文中不要提及该标签）：',
-      '<xeno_update>',
-      '角色名|身份|性别(男/女/扶她)|外貌特征|体型身材|生理特征|外搭衣物|内衣裤装',
-      '</xeno_update>'
+      '【状态自动同步协议】',
+      '1. 当且仅当本轮剧情中【已登记的目标角色或主角】发生换装/爆衣或身体特征变化时，在最终正文彻底结束后的最末尾输出一次完整闭合的状态块：<xeno_update>姓名|身份|性别(男/女/扶她)|外貌特征|体型身材|生理特征|外搭衣物|内衣裤装</xeno_update>（若有多名已登记角色变化则一行一人，每行固定8列）。',
+      '2. 思考过程/思维链中在心里核对即可，严禁在思维链内预演或写出 xeno_update 标签字样，严禁产生半截未闭合标签，也严禁将 tts 台词写进状态块内。'
     );
   }
 
@@ -1231,16 +1233,24 @@ export function xenoPromptPlan(xeno) {
   return blocks;
 }
 
-const XENO_UPDATE_RE = /<xeno_update\b[^>]*>([\s\S]*?)<\/xeno_update\s*>/gi;
+// Matches only the innermost paired <xeno_update>...</xeno_update> block, never spanning across another <xeno_update>, <think>, or <tts>
+const XENO_UPDATE_RE = /<xeno_update\b[^>]*>((?:(?!<\/?(?:xeno_update|think|thinking|tts)\b)[\s\S])*?)<\/xeno_update\s*>/gi;
+const THINK_BLOCK_RE = /<(?:think|thinking)\b[^>]*>[\s\S]*?<\/(?:think|thinking)\s*>/gi;
 
 /** Strips `<xeno_update>...</xeno_update>` blocks from rendered/outgoing story text so the chat stays clean. */
 export function stripXenoUpdate(text) {
-  return String(text ?? '').replace(XENO_UPDATE_RE, '').trimEnd();
+  return String(text ?? '')
+    .replace(XENO_UPDATE_RE, '')
+    .replace(/<\/?xeno_update\b[^>]*>/gi, '')
+    .trimEnd();
 }
 
 /** Parses `<xeno_update>` blocks from a story reply and merges any new/updated character rows into `xeno`. */
 export function applyXenoUpdateFromText(state, text) {
-  const source = String(text ?? '');
+  // Strip thinking chains and <tts> tags first so CoT mentions or dialogue lines are never parsed
+  const source = String(text ?? '')
+    .replace(THINK_BLOCK_RE, '')
+    .replace(/<tts\b[^>]*>[\s\S]*?<\/tts\s*>/gi, '');
   const matches = [...source.matchAll(XENO_UPDATE_RE)];
   if (!matches.length) return null;
   const next = normalizeXeno(state);
@@ -1248,12 +1258,15 @@ export function applyXenoUpdateFromText(state, text) {
   for (const m of matches) {
     const lines = String(m[1] || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     for (const line of lines) {
+      if (/<\/?tts\b|<\/?xeno_update\b|[<>“”"]/i.test(line)) continue;
       const parts = line.split(/[|｜]/).map(s => s.trim());
-      if (parts.length < 3) continue;
+      if (parts.length < 6) continue;
       const [name, identity, gender, appearance, bodyBuild, physiology, outerwear, underwear] = parts;
-      if (!name || name === '角色名') continue;
+      if (!isValidRoleName(name) || name === '角色名' || name === '角色姓名' || name === '旁白') continue;
+      if (!GENDERS.includes(gender)) continue;
       const isProt = name === next.protagonist.name || name === '主角';
-      const ent = isProt ? next.protagonist : ensureTarget(next, name);
+      const ent = isProt ? next.protagonist : next.targets.find(t => t.name === name);
+      if (!ent) continue;
       if (identity) ent.identity = clip(identity, 300);
       if (GENDERS.includes(gender)) ent.gender = gender;
       if (appearance) ent.appearance = clip(appearance, 1000);
