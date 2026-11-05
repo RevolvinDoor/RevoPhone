@@ -633,12 +633,15 @@ export class TTSBackend {
                     xeno.targetPool = (xeno.targetPool || []).filter(t => t.name !== p.name);
                     if (xeno.selectedTarget === p.name) xeno.selectedTarget = xeno.targets[0]?.name || '';
                     if (xeno.wardrobeTarget === p.name) xeno.wardrobeTarget = '__protagonist__';
-                    if (xeno.modTarget === p.name) xeno.modTarget = '__protagonist__';
+                    if (xeno.bodyModTarget === p.name) xeno.bodyModTarget = '__protagonist__';
+                    if (xeno.cogModTarget === p.name) xeno.cogModTarget = xeno.selectedTarget || '__protagonist__';
                     return xeno;
                 }
                 case 'selectTarget': xeno.selectedTarget = String(p.name || ''); return xeno;
                 case 'selectWardrobeTarget': xeno.wardrobeTarget = String(p.key || '__protagonist__'); return xeno;
-                case 'selectModTarget': xeno.modTarget = String(p.key || '__protagonist__'); return xeno;
+                case 'selectBodyModTarget':
+                case 'selectModTarget': xeno.bodyModTarget = String(p.key || '__protagonist__'); return xeno;
+                case 'selectCogModTarget': xeno.cogModTarget = String(p.key || '__protagonist__'); return xeno;
                 case 'deleteAnchor': xeno.possession.anchors = xeno.possession.anchors.filter(a => a.name !== p.name); return xeno;
                 case 'saveItem': {
                     const item = normalizeCatalogItem(p);

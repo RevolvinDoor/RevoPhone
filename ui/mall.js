@@ -124,7 +124,7 @@ export function mallApp(ctx) {
     const targetKey = xeno.wardrobeTarget || '__protagonist__';
     const wearer = getEntity(xeno, targetKey) || xeno.protagonist;
     const allPeople = [
-      ['__protagonist__', `主角：${xeno.protagonist.name}`],
+      ['__protagonist__', `主角${xeno.protagonist.name ? '：' + xeno.protagonist.name : ''}`],
       ...xeno.targets.map(t => [t.name, `目标：${t.name}`])
     ];
     const q = searchQuery.trim().toLowerCase();

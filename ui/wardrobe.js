@@ -33,8 +33,8 @@ export function wardrobeApp(ctx) {
 
   function renderOverview(xeno, entity, targetKey) {
     const allPeople = [
-      ['__protagonist__', `👤 主角：${xeno.protagonist.name}（${xeno.protagonist.gender}）`],
-      ...xeno.targets.map(t => [t.name, `🎯 目标：${t.name}（${t.identity} · ${t.gender}）`])
+      ['__protagonist__', `👤 主角${xeno.protagonist.name ? '：' + xeno.protagonist.name : ''}${xeno.protagonist.gender ? `（${xeno.protagonist.gender}）` : ''}`],
+      ...xeno.targets.map(t => [t.name, `🎯 目标：${t.name}${t.identity || t.gender ? `（${[t.identity, t.gender].filter(Boolean).join(' · ')}）` : ''}`])
     ];
     const items = xeno.items || [];
     const skin = entity.livingMount.skinSuitId ? items.find(i => i.id === entity.livingMount.skinSuitId) : null;

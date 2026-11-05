@@ -42,6 +42,29 @@ export const PRESET_COGNITION_RULES = Object.freeze([
 ]);
 
 const clip = (val, max = 1200) => String(val ?? '').trim().slice(0, max);
+const LEGACY_PRESETS = new Set([
+  '主角',
+  '未命名目标',
+  '异构能力持有者',
+  '登场角色',
+  '五官端正，眼神深邃',
+  '待从剧情同步或手动填写外貌特征',
+  '身高178cm，匀称挺拔',
+  '待从剧情同步或手动填写体型身材数据',
+  '正常男性生理构造（20cm）',
+  '正常女性生理构造',
+  '主角的原始肉体',
+  '未命名目标的原始肉体',
+  '初始',
+  '未离体',
+  '本人意识主导',
+  '日常便服',
+  '常规内衣裤'
+]);
+const cleanField = (val, max = 1200) => {
+  const s = clip(val, max);
+  return LEGACY_PRESETS.has(s) ? '' : s;
+};
 
 export function normalizeLivingMount(raw = {}) {
   return {
@@ -55,10 +78,10 @@ export function normalizeLivingMount(raw = {}) {
 
 export function normalizeOutfit(raw = {}) {
   return {
-    outerwear: clip(raw?.outerwear, 500) || '日常便服',
-    underwear: clip(raw?.underwear, 500) || '常规内衣裤',
-    privacyCover: clip(raw?.privacyCover, 500) || '无',
-    accessories: clip(raw?.accessories, 500) || '无',
+    outerwear: cleanField(raw?.outerwear, 500),
+    underwear: cleanField(raw?.underwear, 500),
+    privacyCover: cleanField(raw?.privacyCover, 500) === '无' ? '' : cleanField(raw?.privacyCover, 500),
+    accessories: cleanField(raw?.accessories, 500) === '无' ? '' : cleanField(raw?.accessories, 500),
     coatPose: raw?.coatPose === 'open' ? 'open' : 'cover', // For trench coat: 'cover' = 遮蔽形态, 'open' = 展开姿态
     outerwearItemId: clip(raw?.outerwearItemId, 120),
     underwearItemId: clip(raw?.underwearItemId, 120),
@@ -106,22 +129,26 @@ export function normalizeOrificeMods(raw = {}) {
 }
 
 export function normalizeEntity(raw = {}, isProtagonist = false) {
-  const name = clip(raw?.name, 80) || (isProtagonist ? '主角' : '未命名目标');
-  const defaultBody = `${name}的原始肉体`;
+  const isLegacyDefaultProt = isProtagonist
+    && (!raw?.name || raw?.name === '主角')
+    && (!raw?.appearance || raw?.appearance === '五官端正，眼神深邃')
+    && (!raw?.bodyBuild || raw?.bodyBuild === '身高178cm，匀称挺拔');
+  const name = cleanField(raw?.name, 80);
+  const gender = isLegacyDefaultProt ? '' : (GENDERS.includes(raw?.gender) ? raw.gender : '');
   return {
     id: clip(raw?.id, 80) || (isProtagonist ? '__protagonist__' : crypto.randomUUID()),
-    // === 常驻竖排 6 项（不含性格） ===
+    // === 常驻竖排 6 项（不含性格，默认留空） ===
     name,
-    identity: clip(raw?.identity, 300) || (isProtagonist ? '异构能力持有者' : '登场角色'),
-    gender: GENDERS.includes(raw?.gender) ? raw.gender : (isProtagonist ? '男' : '女'),
-    appearance: clip(raw?.appearance, 1000) || (isProtagonist ? '五官端正，眼神深邃' : '待从剧情同步或手动填写外貌特征'),
-    bodyBuild: clip(raw?.bodyBuild, 1000) || (isProtagonist ? '身高178cm，匀称挺拔' : '待从剧情同步或手动填写体型身材数据'),
-    physiology: clip(raw?.physiology, 1000) || (isProtagonist ? '正常男性生理构造（20cm）' : '正常女性生理构造'),
+    identity: cleanField(raw?.identity, 300),
+    gender,
+    appearance: cleanField(raw?.appearance, 1000),
+    bodyBuild: cleanField(raw?.bodyBuild, 1000),
+    physiology: cleanField(raw?.physiology, 1000),
     // === 点击【详情】展示的 8 项 ===
-    originalBody: clip(raw?.originalBody, 160) || defaultBody,
-    currentBody: clip(raw?.currentBody, 160) || defaultBody,
-    changeReason: clip(raw?.changeReason, 200) || '初始',
-    hostingState: clip(raw?.hostingState, 200) || (isProtagonist ? '未离体' : '本人意识主导'),
+    originalBody: cleanField(raw?.originalBody, 160),
+    currentBody: cleanField(raw?.currentBody, 160),
+    changeReason: cleanField(raw?.changeReason, 200),
+    hostingState: cleanField(raw?.hostingState, 200),
     livingMount: normalizeLivingMount(raw?.livingMount),
     outfit: normalizeOutfit(raw?.outfit),
     voreStorage: Array.isArray(raw?.voreStorage) ? raw.voreStorage.slice(0, 20).map(normalizeVoreEntry) : [],
@@ -131,7 +158,7 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
     orificeMods: normalizeOrificeMods(raw?.orificeMods),
     // Snapshot of original body parameters before possession/fusion so returning restores them cleanly
     baseSnapshot: raw?.baseSnapshot && typeof raw.baseSnapshot === 'object' ? {
-      gender: GENDERS.includes(raw.baseSnapshot.gender) ? raw.baseSnapshot.gender : '男',
+      gender: GENDERS.includes(raw.baseSnapshot.gender) ? raw.baseSnapshot.gender : '',
       appearance: clip(raw.baseSnapshot.appearance, 1000),
       bodyBuild: clip(raw.baseSnapshot.bodyBuild, 1000),
       physiology: clip(raw.baseSnapshot.physiology, 1000)
@@ -178,8 +205,9 @@ export function defaultXeno() {
     freeShop: false,
     selectedTarget: '',
     wardrobeTarget: '__protagonist__',
-    modTarget: '__protagonist__',
-    protagonist: normalizeEntity({name: '主角'}, true),
+    bodyModTarget: '__protagonist__',
+    cogModTarget: '',
+    protagonist: normalizeEntity({}, true),
     targets: [],
     targetPool: [],
     possession: {
@@ -229,6 +257,14 @@ export function normalizeXeno(raw) {
   const selectedTarget = targets.some(t => t.name === raw.selectedTarget)
     ? raw.selectedTarget
     : (targets[0]?.name || '');
+  const rawBodyTarget = raw.bodyModTarget ?? raw.modTarget;
+  const bodyModTarget = rawBodyTarget === '__protagonist__' || targets.some(t => t.name === rawBodyTarget)
+    ? rawBodyTarget
+    : '__protagonist__';
+  const rawCogTarget = raw.cogModTarget ?? (raw.modTarget && raw.modTarget !== '__protagonist__' ? raw.modTarget : '');
+  const cogModTarget = targets.some(t => t.name === rawCogTarget)
+    ? rawCogTarget
+    : (selectedTarget || '__protagonist__');
   return {
     enabled: raw.enabled !== false,
     autoUpdateTag: raw.autoUpdateTag !== false,
@@ -236,7 +272,8 @@ export function normalizeXeno(raw) {
     freeShop: raw.freeShop === true,
     selectedTarget,
     wardrobeTarget: raw.wardrobeTarget === '__protagonist__' || targets.some(t => t.name === raw.wardrobeTarget) ? raw.wardrobeTarget : '__protagonist__',
-    modTarget: raw.modTarget === '__protagonist__' || targets.some(t => t.name === raw.modTarget) ? raw.modTarget : '__protagonist__',
+    bodyModTarget,
+    cogModTarget,
     protagonist: normalizeEntity(raw.protagonist, true),
     targets,
     targetPool: [...poolMap.values()].slice(0, 120),
@@ -324,21 +361,15 @@ export function syncXenoWithRoutes(xeno, routes = []) {
     } else {
       out.protagonist.name = pName;
     }
-    if (out.protagonist.originalBody === `${prevName}的原始肉体` || out.protagonist.originalBody === '主角的原始肉体') {
-      out.protagonist.originalBody = `${pName}的原始肉体`;
-    }
-    if (!out.possession.active && !out.fusion.active && (out.protagonist.currentBody === `${prevName}的原始肉体` || out.protagonist.currentBody === '主角的原始肉体')) {
-      out.protagonist.currentBody = `${pName}的原始肉体`;
-    }
-    if (protRoute.persona?.trim() && (!out.protagonist.identity || out.protagonist.identity === '异构能力持有者')) {
+    if (protRoute.persona?.trim() && !out.protagonist.identity) {
       out.protagonist.identity = clip(protRoute.persona, 300);
     }
-    if (protRoute.appearance?.trim() && (!out.protagonist.appearance || out.protagonist.appearance === '五官端正，眼神深邃')) {
+    if (protRoute.appearance?.trim() && !out.protagonist.appearance) {
       out.protagonist.appearance = clip(protRoute.appearance, 1000);
     }
   }
 
-  const normalRoutes = list.filter(r => r?.name?.trim() && roleTypeOf(r) === 'normal' && r.name.trim() !== out.protagonist.name);
+  const normalRoutes = list.filter(r => r?.name?.trim() && roleTypeOf(r) === 'normal' && (!out.protagonist.name || r.name.trim() !== out.protagonist.name));
   const activeTargets = [];
   const seen = new Set();
   for (const r of normalRoutes) {
@@ -349,14 +380,14 @@ export function syncXenoWithRoutes(xeno, routes = []) {
     if (!ent) {
       ent = normalizeEntity({
         name,
-        identity: clip(r.persona, 300) || '登场角色',
+        identity: clip(r.persona, 300),
         appearance: clip(r.appearance, 1000) || ''
       }, false);
     } else {
-      if (r.persona?.trim() && (!ent.identity || ent.identity === '登场角色')) {
+      if (r.persona?.trim() && !ent.identity) {
         ent.identity = clip(r.persona, 300);
       }
-      if (r.appearance?.trim() && (!ent.appearance || ent.appearance.startsWith('待从剧情同步'))) {
+      if (r.appearance?.trim() && !ent.appearance) {
         ent.appearance = clip(r.appearance, 1000);
       }
     }
@@ -372,8 +403,11 @@ export function syncXenoWithRoutes(xeno, routes = []) {
   if (out.wardrobeTarget !== '__protagonist__' && !out.targets.some(t => t.name === out.wardrobeTarget)) {
     out.wardrobeTarget = '__protagonist__';
   }
-  if (out.modTarget !== '__protagonist__' && !out.targets.some(t => t.name === out.modTarget)) {
-    out.modTarget = '__protagonist__';
+  if (out.bodyModTarget !== '__protagonist__' && !out.targets.some(t => t.name === out.bodyModTarget)) {
+    out.bodyModTarget = '__protagonist__';
+  }
+  if (out.cogModTarget !== '__protagonist__' && !out.targets.some(t => t.name === out.cogModTarget)) {
+    out.cogModTarget = out.selectedTarget || '__protagonist__';
   }
   return out;
 }
@@ -472,7 +506,7 @@ export function effectiveEntityView(xeno, entity) {
     changeReason: e.changeReason,
     hostingState: e.hostingState,
     livingMountText: `皮躯：${skinText} ｜ 肉躯：${ringText}`,
-    outfitText: `外搭：${e.outfit.outerwear}${/风衣/.test(e.outfit.outerwear) ? (e.outfit.coatPose === 'open' ? '（展开姿态）' : '（遮蔽形态）') : ''} ｜ 内衣：${e.outfit.underwear} ｜ 遮挡：${e.outfit.privacyCover} ｜ 饰品：${e.outfit.accessories}`,
+    outfitText: `外搭：${e.outfit.outerwear || '无'}${/风衣/.test(e.outfit.outerwear) ? (e.outfit.coatPose === 'open' ? '（展开姿态）' : '（遮蔽形态）') : ''} ｜ 内衣：${e.outfit.underwear || '无'} ｜ 遮挡：${e.outfit.privacyCover || '无'} ｜ 饰品：${e.outfit.accessories || '无'}`,
     voreText,
     cognitionText: rebuildCognitionSummary(e.cognitionState)
   };
@@ -907,14 +941,14 @@ export function xenoRemoveVore(state, {predatorKey = '__protagonist__', entryId,
   return next;
 }
 
-// ==================== 4. 改造（肉体改造 & 认知修改） Operations ====================
+// ==================== 4. 肉体改造（针对肉体） & 5. 认知修改（针对角色本身） ====================
 
 export function xenoApplyBodyMod(state, {targetKey = '__protagonist__', patch = {}}) {
   const next = normalizeXeno(state);
   const entity = getEntity(next, targetKey) || next.protagonist;
-  if (patch.name !== undefined && clip(patch.name, 80)) entity.name = clip(patch.name, 80);
+  if (patch.name !== undefined) entity.name = clip(patch.name, 80);
   if (patch.identity !== undefined) entity.identity = clip(patch.identity, 300);
-  if (patch.gender && GENDERS.includes(patch.gender)) entity.gender = patch.gender;
+  if (patch.gender !== undefined) entity.gender = GENDERS.includes(patch.gender) ? patch.gender : '';
   if (patch.appearance !== undefined) entity.appearance = clip(patch.appearance, 1000);
   if (patch.bodyBuild !== undefined) entity.bodyBuild = clip(patch.bodyBuild, 1000);
   if (patch.physiology !== undefined) entity.physiology = clip(patch.physiology, 1000);
@@ -926,13 +960,28 @@ export function xenoApplyBodyMod(state, {targetKey = '__protagonist__', patch = 
   if (patch.orificeMods && typeof patch.orificeMods === 'object') {
     entity.orificeMods = normalizeOrificeMods({...entity.orificeMods, ...patch.orificeMods});
   }
-  next.pendingActionNote = `【本轮异构终端操作：肉体改造】已对「${entity.name}」执行肉体改造（性别：${entity.gender}；体型：${entity.bodyBuild}；生理：${entity.physiology}${entity.predatorTail !== 'none' ? `；丸吞尾：${entity.predatorTail === 'deployed' ? '展开态' : '隐蔽态'}` : ''}）。`;
+  // If protagonist is currently possessing this target's body, sync the physical body fields between target and protagonist
+  if (next.possession.active && next.possession.targetName) {
+    const possTarget = next.targets.find(t => t.name === next.possession.targetName);
+    if (possTarget && entity === possTarget) {
+      syncPossessionEntities(next, possTarget);
+    } else if (possTarget && entity === next.protagonist) {
+      if (patch.gender && GENDERS.includes(patch.gender)) possTarget.gender = patch.gender;
+      if (patch.appearance !== undefined) possTarget.appearance = entity.appearance;
+      if (patch.bodyBuild !== undefined) possTarget.bodyBuild = entity.bodyBuild;
+      if (patch.physiology !== undefined) possTarget.physiology = entity.physiology;
+      if (patch.predatorTail) possTarget.predatorTail = entity.predatorTail;
+      if (patch.orificeMods) possTarget.orificeMods = normalizeOrificeMods(entity.orificeMods);
+    }
+  }
+  const bodyLabel = entity.currentBody || entity.originalBody || `${entity.name || '主角'}的肉体`;
+  next.pendingActionNote = `【本轮异构终端操作：肉体改造】已对「${bodyLabel}」执行物理肉体改造（性别：${entity.gender || '未定'}；体型：${entity.bodyBuild || '默认'}；生理：${entity.physiology || '默认'}${entity.predatorTail !== 'none' ? `；丸吞尾：${entity.predatorTail === 'deployed' ? '展开态' : '隐蔽态'}` : ''}）。`;
   return next;
 }
 
 export function xenoApplyCognitionMod(state, {targetKey, relationOverride, fakeMemory, addRule, toggleRuleId, removeRuleId}) {
   const next = normalizeXeno(state);
-  const entity = getEntity(next, targetKey) || ensureTarget(next, next.selectedTarget || '目标');
+  const entity = getEntity(next, targetKey || next.cogModTarget || next.selectedTarget) || next.targets[0] || next.protagonist;
   const cog = entity.cognitionState;
   if (relationOverride !== undefined) cog.relationOverride = clip(relationOverride, 200);
   if (fakeMemory !== undefined) cog.fakeMemory = clip(fakeMemory, 600);
@@ -947,7 +996,7 @@ export function xenoApplyCognitionMod(state, {targetKey, relationOverride, fakeM
     cog.rules = cog.rules.filter(x => x.id !== removeRuleId);
   }
   rebuildCognitionSummary(cog);
-  next.pendingActionNote = `【本轮异构终端操作：认知修改】已覆写「${entity.name}」的潜意识认知状态（${cog.summary}）。`;
+  next.pendingActionNote = `【本轮异构终端操作：认知修改】已直接修改角色「${entity.name || '目标'}」本身的灵魂潜意识与认知状态（${cog.summary}）。`;
   return next;
 }
 

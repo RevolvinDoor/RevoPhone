@@ -12,8 +12,7 @@ export function xenoApp(ctx) {
   const {api} = ctx, v = createView(ctx, 'xeno');
   let showProtDetail = false;
   let showTargetDetail = false;
-  let activeTab = 'possession'; // 'possession' | 'fusion' | 'parasite' | 'vore' | 'mod'
-  let modSubTab = 'body'; // 'body' | 'cognition'
+  let activeTab = 'possession'; // 'possession' | 'fusion' | 'parasite' | 'vore' | 'body_mod' | 'cognition_mod'
   let entryWay = '近距锁定';
   let chosenPossMode = '浅层共鸣';
   let chosenFusionMode = '共存融合';
@@ -50,7 +49,7 @@ export function xenoApp(ctx) {
           <div class="xeno-target-bar">
             <select class="xeno-select" data-change="select-target" aria-label="选择目标角色">
               ${targetList.length
-                ? targetList.map(t => `<option value="${esc(t.name)}" ${t.name === selectedTarget ? 'selected' : ''}>🎯 目标：${esc(t.name)}（${esc(t.identity)} · ${esc(t.gender)}）</option>`).join('')
+                ? targetList.map(t => `<option value="${esc(t.name)}" ${t.name === selectedTarget ? 'selected' : ''}>🎯 目标：${esc(t.name)}${t.identity || t.gender ? `（${esc([t.identity, t.gender].filter(Boolean).join(' · '))}）` : ''}</option>`).join('')
                 : '<option value="">（暂无普通角色目标，请从「角色」添加或从剧情同步）</option>'}
             </select>
             <div class="xeno-target-btns">
@@ -64,7 +63,7 @@ export function xenoApp(ctx) {
           <div class="xeno-vertical-list">
             <div class="xeno-kv"><span class="k">姓名</span><span class="v"><b>${esc(view.name)}</b></span></div>
             <div class="xeno-kv"><span class="k">身份</span><span class="v">${esc(view.identity)}</span></div>
-            <div class="xeno-kv"><span class="k">性别</span><span class="v"><i class="xeno-gender-tag" data-gender="${esc(view.gender)}">${esc(view.gender)}</i></span></div>
+            <div class="xeno-kv"><span class="k">性别</span><span class="v">${view.gender ? `<i class="xeno-gender-tag" data-gender="${esc(view.gender)}">${esc(view.gender)}</i>` : ''}</span></div>
             <div class="xeno-kv"><span class="k">外貌特征</span><span class="v">${esc(view.appearance)}</span></div>
             <div class="xeno-kv"><span class="k">体型身材</span><span class="v">${esc(view.bodyBuild)}</span></div>
             <div class="xeno-kv"><span class="k">生理特征</span><span class="v">${esc(view.physiology)}</span></div>
@@ -274,7 +273,7 @@ export function xenoApp(ctx) {
 
   function renderVoreModule(xeno, curTarget) {
     const allPeople = [
-      ['__protagonist__', `主角：${xeno.protagonist.name}`],
+      ['__protagonist__', `主角${xeno.protagonist.name ? '：' + xeno.protagonist.name : ''}`],
       ...xeno.targets.map(t => [t.name, `目标：${t.name}`])
     ];
     const predator = getEntity(xeno, vorePredatorKey) || xeno.protagonist;
@@ -355,104 +354,126 @@ export function xenoApp(ctx) {
     `;
   }
 
-  function renderModModule(xeno) {
-    const allPeople = [
-      ['__protagonist__', `主角肉体：${xeno.protagonist.name}`],
-      ...xeno.targets.map(t => [t.name, `目标肉体：${t.name}`])
+  function renderBodyModModule(xeno) {
+    const protBodyName = xeno.protagonist.currentBody || xeno.protagonist.originalBody || (xeno.protagonist.name ? `${xeno.protagonist.name}的肉体` : '主角当前肉体');
+    const bodyChoices = [
+      ['__protagonist__', `🧬 主角肉体：${protBodyName}`],
+      ...xeno.targets.map(t => {
+        const bName = t.currentBody || t.originalBody || `${t.name}的肉体`;
+        return [t.name, `🧬 角色肉体：${bName}（${t.name}）`];
+      })
     ];
-    const targetKey = xeno.modTarget || '__protagonist__';
+    const targetKey = xeno.bodyModTarget || '__protagonist__';
     const entity = getEntity(xeno, targetKey) || xeno.protagonist;
-    const cog = entity.cognitionState;
+    const curBodyLabel = entity.currentBody || entity.originalBody || (entity.name ? `${entity.name}的肉体` : '主角肉体');
     return `
       <div class="xeno-module-card">
         <div class="xeno-sec-title">
-          <strong>改造（肉体改造 & 认知修改）</strong>
-          <select class="xeno-select compact" data-change="mod-select-target" aria-label="选择改造对象">
-            ${allPeople.map(([k, label]) => `<option value="${esc(k)}" ${targetKey === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+          <strong>🧬 肉体改造（改造角色的物理躯体）</strong>
+          <select class="xeno-select compact" data-change="select-body-mod-target" aria-label="选择要改造的肉体">
+            ${bodyChoices.map(([k, label]) => `<option value="${esc(k)}" ${targetKey === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}
           </select>
         </div>
-        <div class="xeno-subtabs">
-          <button type="button" class="xeno-subtab ${modSubTab === 'body' ? 'active' : ''}" data-action="mod-subtab" data-sub="body">🧬 肉体改造（含丸吞尾）</button>
-          <button type="button" class="xeno-subtab ${modSubTab === 'cognition' ? 'active' : ''}" data-action="mod-subtab" data-sub="cognition">🧠 认知修改</button>
-        </div>
-        ${modSubTab === 'body' ? `
-          <div class="xeno-form-block">
-            <div class="xeno-label">基础性别改造</div>
-            <div class="xeno-chip-group">
-              ${GENDERS.map(g => `<button type="button" class="xeno-chip ${entity.gender === g ? 'active' : ''}" data-action="mod-gender" data-gender="${esc(g)}">${esc(g)}</button>`).join('')}
-            </div>
-            <label class="xeno-field-inline">
-              <span>外貌特征改造</span>
-              <textarea class="xeno-textarea" id="xeno-mod-appearance" rows="2">${esc(entity.appearance)}</textarea>
-            </label>
-            <label class="xeno-field-inline">
-              <span>体型身材改造（胸围/腰臀/身高）</span>
-              <textarea class="xeno-textarea" id="xeno-mod-body" rows="2">${esc(entity.bodyBuild)}</textarea>
-            </label>
-            <label class="xeno-field-inline">
-              <span>生理特征改造（器官尺寸/敏感度/体质）</span>
-              <textarea class="xeno-textarea" id="xeno-mod-phys" rows="2">${esc(entity.physiology)}</textarea>
-            </label>
-            <div class="xeno-label">🦎 丸吞尾（异化捕食尾 · 挂载于尾椎）</div>
-            <div class="xeno-chip-group">
-              ${TAIL_STATES.map(([val, label]) => `<button type="button" class="xeno-chip ${entity.predatorTail === val ? 'active' : ''}" data-action="mod-tail" data-tail="${esc(val)}">${esc(label)}</button>`).join('')}
-            </div>
-            <div class="xeno-label">🌺 吞噬孔洞活性异化（局部微操）</div>
-            <div class="xeno-grid-2">
-              ${ORIFICE_SLOTS.map(([slotKey, slotLabel]) => `
-                <label class="xeno-field-inline">
-                  <span>${esc(slotLabel)}</span>
-                  <select class="xeno-select" data-change="mod-orifice" data-slot="${esc(slotKey)}">
-                    ${ORIFICE_MOD_TYPES.map(t => `<option value="${esc(t)}" ${entity.orificeMods[slotKey] === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}
-                  </select>
-                </label>
-              `).join('')}
+        <p class="xeno-hint">当前改造躯体：<b>${esc(curBodyLabel)}</b>（直接改造该具肉体的性别、外貌、三围、生理构造与丸吞尾/孔洞异化）</p>
+        <div class="xeno-form-block">
+          <div class="xeno-label">肉体基础性别改造</div>
+          <div class="xeno-chip-group">
+            ${GENDERS.map(g => `<button type="button" class="xeno-chip ${entity.gender === g ? 'active' : ''}" data-action="mod-gender" data-gender="${esc(g)}">${esc(g)}</button>`).join('')}
+          </div>
+          <label class="xeno-field-inline">
+            <span>肉体外貌特征改造</span>
+            <textarea class="xeno-textarea" id="xeno-mod-appearance" rows="2" placeholder="改造该肉体的发色、瞳色、五官气质…">${esc(entity.appearance)}</textarea>
+          </label>
+          <label class="xeno-field-inline">
+            <span>肉体体型身材改造（胸围/腰臀/身高）</span>
+            <textarea class="xeno-textarea" id="xeno-mod-body" rows="2" placeholder="改造该肉体的身高、三围罩杯、腰臀腿曲线…">${esc(entity.bodyBuild)}</textarea>
+          </label>
+          <label class="xeno-field-inline">
+            <span>肉体生理特征改造（器官尺寸/敏感度/体质）</span>
+            <textarea class="xeno-textarea" id="xeno-mod-phys" rows="2" placeholder="改造该肉体的生殖器官构造、敏感度、特殊体质…">${esc(entity.physiology)}</textarea>
+          </label>
+          <div class="xeno-label">🦎 丸吞尾（异化捕食尾 · 挂载于该肉体尾椎）</div>
+          <div class="xeno-chip-group">
+            ${TAIL_STATES.map(([val, label]) => `<button type="button" class="xeno-chip ${entity.predatorTail === val ? 'active' : ''}" data-action="mod-tail" data-tail="${esc(val)}">${esc(label)}</button>`).join('')}
+          </div>
+          <div class="xeno-label">🌺 吞噬孔洞活性异化（局部微操）</div>
+          <div class="xeno-grid-2">
+            ${ORIFICE_SLOTS.map(([slotKey, slotLabel]) => `
               <label class="xeno-field-inline">
-                <span>生物侵入针注入液</span>
-                <select class="xeno-select" data-change="mod-venom">
-                  ${VENOM_TYPES.map(vt => `<option value="${esc(vt)}" ${entity.orificeMods.venomType === vt ? 'selected' : ''}>${esc(vt)}</option>`).join('')}
+                <span>${esc(slotLabel)}</span>
+                <select class="xeno-select" data-change="mod-orifice" data-slot="${esc(slotKey)}">
+                  ${ORIFICE_MOD_TYPES.map(t => `<option value="${esc(t)}" ${entity.orificeMods[slotKey] === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}
                 </select>
               </label>
-            </div>
-            <div class="xeno-row-controls">
-              <button type="button" class="xeno-btn primary full" data-action="mod-save-body">💾 保存并应用对【${esc(entity.name)}】的肉体改造</button>
-            </div>
-          </div>
-        ` : `
-          <div class="xeno-form-block">
+            `).join('')}
             <label class="xeno-field-inline">
-              <span>对主角关系与身份认知覆写</span>
-              <input type="text" class="xeno-input" id="xeno-cog-relation" value="${esc(cog.relationOverride)}" placeholder="例如：坚信主角是自己绝对服从的唯一主人 / 挚爱丈夫">
+              <span>生物侵入针注入液</span>
+              <select class="xeno-select" data-change="mod-venom">
+                ${VENOM_TYPES.map(vt => `<option value="${esc(vt)}" ${entity.orificeMods.venomType === vt ? 'selected' : ''}>${esc(vt)}</option>`).join('')}
+              </select>
             </label>
-            <label class="xeno-field-inline">
-              <span>植入虚假记忆</span>
-              <textarea class="xeno-textarea" id="xeno-cog-memory" rows="2" placeholder="例如：深信自己从小就习惯在主角面前裸露侍奉…">${esc(cog.fakeMemory)}</textarea>
-            </label>
-            <div class="xeno-row-controls">
-              <button type="button" class="xeno-btn primary full" data-action="mod-save-cog">💾 保存关系认知与虚假记忆</button>
-            </div>
-            <div class="xeno-label">📜 常识改写词条（潜意识法则覆写）</div>
-            <div class="xeno-row-controls">
-              <input type="text" class="xeno-input" id="xeno-cog-new-rule" placeholder="输入一条新的常识改写规则…">
-              <button type="button" class="xeno-btn secondary" data-action="mod-add-rule">+ 添加词条</button>
-            </div>
-            <div class="xeno-preset-rules">
-              <small>快捷植入预设常识：</small>
-              ${PRESET_COGNITION_RULES.map(r => `<button type="button" class="xeno-mini-btn" data-action="mod-preset-rule" data-rule="${esc(r)}">+ ${esc(r.slice(0, 18))}…</button>`).join('')}
-            </div>
-            ${cog.rules.length ? `
-              <div class="xeno-rule-list">
-                ${cog.rules.map(r => `
-                  <div class="xeno-rule-row ${r.enabled ? 'on' : 'off'}">
-                    <button type="button" role="switch" aria-checked="${r.enabled}" class="xeno-switch-btn ${r.enabled ? 'on' : ''}" data-action="mod-toggle-rule" data-id="${esc(r.id)}"><i></i></button>
-                    <span>${esc(r.text)}</span>
-                    <button type="button" class="xeno-mini-btn danger" data-action="mod-del-rule" data-id="${esc(r.id)}">×</button>
-                  </div>
-                `).join('')}
-              </div>
-            ` : '<p class="xeno-hint">当前尚未植入常识改写词条。</p>'}
           </div>
-        `}
+          <div class="xeno-row-controls">
+            <button type="button" class="xeno-btn primary full" data-action="mod-save-body">💾 保存并应用对【${esc(curBodyLabel)}】的肉体改造</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCognitionModModule(xeno) {
+    const personChoices = [
+      ...xeno.targets.map(t => [t.name, `🧠 角色本身：${t.name}${t.identity ? `（${t.identity}）` : ''}`]),
+      ['__protagonist__', `🧠 主角本身${xeno.protagonist.name ? `：${xeno.protagonist.name}` : ''}`]
+    ];
+    const targetKey = (xeno.cogModTarget && personChoices.some(([k]) => k === xeno.cogModTarget))
+      ? xeno.cogModTarget
+      : (xeno.selectedTarget || personChoices[0]?.[0] || '__protagonist__');
+    const entity = getEntity(xeno, targetKey) || xeno.targets[0] || xeno.protagonist;
+    const cog = entity.cognitionState;
+    const personName = entity.name || '当前角色';
+    return `
+      <div class="xeno-module-card">
+        <div class="xeno-sec-title">
+          <strong>🧠 认知修改（修改角色本身的灵魂与潜意识）</strong>
+          <select class="xeno-select compact" data-change="select-cog-mod-target" aria-label="选择要修改认知的角色本身">
+            ${personChoices.map(([k, label]) => `<option value="${esc(k)}" ${targetKey === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+          </select>
+        </div>
+        <p class="xeno-hint">当前修改对象：<b>【${esc(personName)}】角色本身</b>（直接作用于该角色的自我意识、对主角关系认知、常识法则与虚假记忆，不受肉体变更影响）</p>
+        <div class="xeno-form-block">
+          <label class="xeno-field-inline">
+            <span>对主角关系与身份认知覆写</span>
+            <input type="text" class="xeno-input" id="xeno-cog-relation" value="${esc(cog.relationOverride)}" placeholder="例如：坚信主角是自己绝对服从的唯一主人 / 挚爱丈夫">
+          </label>
+          <label class="xeno-field-inline">
+            <span>植入虚假记忆</span>
+            <textarea class="xeno-textarea" id="xeno-cog-memory" rows="2" placeholder="例如：深信自己从小就习惯在主角面前裸露侍奉…">${esc(cog.fakeMemory)}</textarea>
+          </label>
+          <div class="xeno-row-controls">
+            <button type="button" class="xeno-btn primary full" data-action="mod-save-cog" data-target="${esc(targetKey)}">💾 保存对【${esc(personName)}】的关系认知与虚假记忆</button>
+          </div>
+          <div class="xeno-label">📜 常识改写词条（潜意识法则覆写）</div>
+          <div class="xeno-row-controls">
+            <input type="text" class="xeno-input" id="xeno-cog-new-rule" placeholder="输入一条针对该角色本身的常识改写规则…">
+            <button type="button" class="xeno-btn secondary" data-action="mod-add-rule" data-target="${esc(targetKey)}">+ 添加词条</button>
+          </div>
+          <div class="xeno-preset-rules">
+            <small>快捷植入预设常识：</small>
+            ${PRESET_COGNITION_RULES.map(r => `<button type="button" class="xeno-mini-btn" data-action="mod-preset-rule" data-target="${esc(targetKey)}" data-rule="${esc(r)}">+ ${esc(r.slice(0, 18))}…</button>`).join('')}
+          </div>
+          ${cog.rules.length ? `
+            <div class="xeno-rule-list">
+              ${cog.rules.map(r => `
+                <div class="xeno-rule-row ${r.enabled ? 'on' : 'off'}">
+                  <button type="button" role="switch" aria-checked="${r.enabled}" class="xeno-switch-btn ${r.enabled ? 'on' : ''}" data-action="mod-toggle-rule" data-target="${esc(targetKey)}" data-id="${esc(r.id)}"><i></i></button>
+                  <span>${esc(r.text)}</span>
+                  <button type="button" class="xeno-mini-btn danger" data-action="mod-del-rule" data-target="${esc(targetKey)}" data-id="${esc(r.id)}">×</button>
+                </div>
+              `).join('')}
+            </div>
+          ` : '<p class="xeno-hint">当前尚未对该角色植入常识改写词条。</p>'}
+        </div>
       </div>
     `;
   }
@@ -513,18 +534,20 @@ export function xenoApp(ctx) {
         targetList: xeno.targets,
         selectedTarget: curTarget?.name || ''
       })}
-      <nav class="xeno-module-tabs cols-5" aria-label="五大异构模块">
+      <nav class="xeno-module-tabs cols-3" aria-label="六大异构模块">
         <button type="button" class="xeno-tab ${activeTab === 'possession' ? 'active' : ''}" data-action="switch-tab" data-tab="possession">附身之术</button>
         <button type="button" class="xeno-tab ${activeTab === 'fusion' ? 'active' : ''}" data-action="switch-tab" data-tab="fusion">融合之术</button>
         <button type="button" class="xeno-tab ${activeTab === 'parasite' ? 'active' : ''}" data-action="switch-tab" data-tab="parasite">寄生之术</button>
         <button type="button" class="xeno-tab ${activeTab === 'vore' ? 'active' : ''}" data-action="switch-tab" data-tab="vore">丸吞之术</button>
-        <button type="button" class="xeno-tab ${activeTab === 'mod' ? 'active' : ''}" data-action="switch-tab" data-tab="mod">改造</button>
+        <button type="button" class="xeno-tab ${activeTab === 'body_mod' ? 'active' : ''}" data-action="switch-tab" data-tab="body_mod">肉体改造</button>
+        <button type="button" class="xeno-tab ${activeTab === 'cognition_mod' ? 'active' : ''}" data-action="switch-tab" data-tab="cognition_mod">认知修改</button>
       </nav>
       ${activeTab === 'possession' ? renderPossessionModule(xeno, curTarget) : ''}
       ${activeTab === 'fusion' ? renderFusionModule(xeno, curTarget) : ''}
       ${activeTab === 'parasite' ? renderParasiteModule() : ''}
       ${activeTab === 'vore' ? renderVoreModule(xeno, curTarget) : ''}
-      ${activeTab === 'mod' ? renderModModule(xeno) : ''}
+      ${activeTab === 'body_mod' ? renderBodyModModule(xeno) : ''}
+      ${activeTab === 'cognition_mod' ? renderCognitionModModule(xeno) : ''}
     `);
   };
 
@@ -535,6 +558,7 @@ export function xenoApp(ctx) {
         <label class="xeno-field-inline"><span>身份</span><input class="xeno-input" data-edit="identity" value="${esc(entity.identity)}"></label>
         <label class="xeno-field-inline"><span>性别</span>
           <select class="xeno-select" data-edit="gender">
+            <option value="" ${!entity.gender ? 'selected' : ''}>（留空）</option>
             ${GENDERS.map(g => `<option value="${esc(g)}" ${entity.gender === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}
           </select>
         </label>
@@ -556,7 +580,7 @@ export function xenoApp(ctx) {
         api.xenoAct('applyBodyMod', {
           targetKey: isProt ? '__protagonist__' : entity.name,
           patch: {
-            name: read('name') || entity.name,
+            name: read('name'),
             identity: read('identity'),
             gender: read('gender'),
             appearance: read('appearance'),
@@ -761,14 +785,13 @@ export function xenoApp(ctx) {
       return;
     }
 
-    if (act === 'mod-subtab') { modSubTab = el.dataset.sub; v.refresh(); return; }
     if (act === 'mod-gender') {
-      api.xenoAct('applyBodyMod', {targetKey: xeno.modTarget, patch: {gender: el.dataset.gender}});
-      ctx.notify(`性别已改造为：${el.dataset.gender}`);
+      api.xenoAct('applyBodyMod', {targetKey: xeno.bodyModTarget, patch: {gender: el.dataset.gender}});
+      ctx.notify(`肉体性别已改造为：${el.dataset.gender}`);
       return;
     }
     if (act === 'mod-tail') {
-      api.xenoAct('applyBodyMod', {targetKey: xeno.modTarget, patch: {predatorTail: el.dataset.tail}});
+      api.xenoAct('applyBodyMod', {targetKey: xeno.bodyModTarget, patch: {predatorTail: el.dataset.tail}});
       ctx.notify('丸吞尾状态已更新');
       return;
     }
@@ -777,7 +800,7 @@ export function xenoApp(ctx) {
       const bodyBuild = v.root.querySelector('#xeno-mod-body')?.value?.trim() ?? '';
       const physiology = v.root.querySelector('#xeno-mod-phys')?.value?.trim() ?? '';
       api.xenoAct('applyBodyMod', {
-        targetKey: xeno.modTarget,
+        targetKey: xeno.bodyModTarget,
         patch: {appearance, bodyBuild, physiology}
       });
       ctx.notify('肉体改造已生效');
@@ -787,7 +810,7 @@ export function xenoApp(ctx) {
       const relationOverride = v.root.querySelector('#xeno-cog-relation')?.value?.trim() ?? '';
       const fakeMemory = v.root.querySelector('#xeno-cog-memory')?.value?.trim() ?? '';
       api.xenoAct('applyCognitionMod', {
-        targetKey: xeno.modTarget,
+        targetKey: el.dataset.target || xeno.cogModTarget,
         relationOverride,
         fakeMemory
       });
@@ -797,21 +820,21 @@ export function xenoApp(ctx) {
     if (act === 'mod-add-rule') {
       const text = v.root.querySelector('#xeno-cog-new-rule')?.value?.trim() || '';
       if (!text) { ctx.notify('请先输入常识改写词条内容', {error: true}); return; }
-      api.xenoAct('applyCognitionMod', {targetKey: xeno.modTarget, addRule: text});
+      api.xenoAct('applyCognitionMod', {targetKey: el.dataset.target || xeno.cogModTarget, addRule: text});
       ctx.notify('已添加常识改写词条');
       return;
     }
     if (act === 'mod-preset-rule') {
-      api.xenoAct('applyCognitionMod', {targetKey: xeno.modTarget, addRule: el.dataset.rule});
+      api.xenoAct('applyCognitionMod', {targetKey: el.dataset.target || xeno.cogModTarget, addRule: el.dataset.rule});
       ctx.notify('已植入预设常识词条');
       return;
     }
     if (act === 'mod-del-rule') {
-      api.xenoAct('applyCognitionMod', {targetKey: xeno.modTarget, removeRuleId: el.dataset.id});
+      api.xenoAct('applyCognitionMod', {targetKey: el.dataset.target || xeno.cogModTarget, removeRuleId: el.dataset.id});
       return;
     }
     if (act === 'mod-toggle-rule') {
-      api.xenoAct('applyCognitionMod', {targetKey: xeno.modTarget, toggleRuleId: el.dataset.id});
+      api.xenoAct('applyCognitionMod', {targetKey: el.dataset.target || xeno.cogModTarget, toggleRuleId: el.dataset.id});
       return;
     }
   });
@@ -834,17 +857,18 @@ export function xenoApp(ctx) {
       api.xenoAct('updateVore', {predatorKey: vorePredatorKey, entryId: el.dataset.id, patch: {digestion: el.value}});
       return;
     }
-    if (act === 'mod-select-target') { api.xenoAct('selectModTarget', {key: el.value}); return; }
+    if (act === 'select-body-mod-target') { api.xenoAct('selectBodyModTarget', {key: el.value}); return; }
+    if (act === 'select-cog-mod-target') { api.xenoAct('selectCogModTarget', {key: el.value}); return; }
     if (act === 'mod-orifice') {
       api.xenoAct('applyBodyMod', {
-        targetKey: xeno.modTarget,
+        targetKey: xeno.bodyModTarget,
         patch: {orificeMods: {[el.dataset.slot]: el.value}}
       });
       return;
     }
     if (act === 'mod-venom') {
       api.xenoAct('applyBodyMod', {
-        targetKey: xeno.modTarget,
+        targetKey: xeno.bodyModTarget,
         patch: {orificeMods: {venomType: el.value}}
       });
       return;
