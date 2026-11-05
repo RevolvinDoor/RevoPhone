@@ -12,6 +12,6 @@
     "disable": "disable",
     "delete": "dispose"
   },
-  "homePage": "https://github.com/hey8v0/ST-iPhonie",
+  "homePage": "https://github.com/RevolvinDoor/RevoPhone",
   "generate_interceptor": "stIphonieInterceptor"
 }
