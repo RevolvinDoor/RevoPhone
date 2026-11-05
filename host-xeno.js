@@ -5,6 +5,7 @@
 
 import {storyLines} from './core/moments.js';
 import {activeChatPreset, cleanTagged} from './core/chat.js';
+import {cardRoutes, findRoute, roleTypeOf} from './core/routes.js';
 import {ensureTarget, normalizeCatalogItem, GENDERS} from './core/xeno.js';
 
 export function createXenoHost({context, settings, backend, notice = () => {}}) {
@@ -94,7 +95,8 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
     return run('sync', async ctx => {
       const story = recentStoryText(ctx);
       if (!story.trim()) throw Error('当前还没有剧情内容可供同步');
-      const cur = settings().xeno;
+      const card = backend.cardState();
+      const cur = card.xeno;
       const known = [cur.protagonist.name, ...cur.targets.map(t => t.name)].filter(Boolean).join('、');
       const prompt = [
         {
@@ -110,13 +112,16 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
       const block = [...raw.matchAll(/<xeno_sync>([\s\S]*?)<\/xeno_sync>/gi)].map(m => m[1]).join('\n') || raw;
       const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l.includes('｜') || l.includes('|'));
       let count = 0;
-      const next = backend.saveXeno(xeno => {
+      const next = backend.saveXeno((xeno, nextState, cardKey) => {
+        const scopedRoutes = cardRoutes(nextState?.routes || [], cardKey);
         for (const line of lines) {
           const parts = line.split(/[｜|]/).map(s => s.trim());
           if (parts.length < 6) continue;
           const [kind, name, identity, gender, appearance, bodyBuild, physiology, outerwear, underwear] = parts;
-          if (!name || name === '姓名') continue;
-          const isProt = kind.includes('主角') || name === xeno.protagonist.name || name === userName();
+          if (!name || name === '姓名' || name === '旁白') continue;
+          const matchedRoute = findRoute(scopedRoutes, name);
+          if (matchedRoute && roleTypeOf(matchedRoute) === 'narrator') continue;
+          const isProt = (matchedRoute && roleTypeOf(matchedRoute) === 'protagonist') || kind.includes('主角') || name === xeno.protagonist.name || name === userName();
           const ent = isProt ? xeno.protagonist : ensureTarget(xeno, name);
           if (isProt && name) ent.name = name;
           if (identity) ent.identity = identity;

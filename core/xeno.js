@@ -3,6 +3,7 @@
 // Replaces TavernDB with zero-latency local actions, on-demand rule injection, and automatic story state sync.
 
 import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS} from './xeno-catalog.js';
+import {roleTypeOf} from './routes.js';
 
 export const GENDERS = Object.freeze(['男', '女', '扶她']);
 export const POSSESSION_MODES = Object.freeze(['浅层共鸣', '意识共存', '完全占据', '认知覆盖']);
@@ -180,6 +181,7 @@ export function defaultXeno() {
     modTarget: '__protagonist__',
     protagonist: normalizeEntity({name: '主角'}, true),
     targets: [],
+    targetPool: [],
     possession: {
       active: false,
       targetName: '',
@@ -216,6 +218,14 @@ export function normalizeXeno(raw) {
     if (!byId.has(builtin.id)) existingItems.push(normalizeCatalogItem(structuredClone(builtin)));
   }
   const targets = Array.isArray(raw.targets) ? raw.targets.slice(0, 60).map(t => normalizeEntity(t, false)) : [];
+  const poolMap = new Map();
+  for (const t of Array.isArray(raw.targetPool) ? raw.targetPool : []) {
+    const norm = normalizeEntity(t, false);
+    poolMap.set(norm.name, norm);
+  }
+  for (const t of targets) {
+    poolMap.set(t.name, t);
+  }
   const selectedTarget = targets.some(t => t.name === raw.selectedTarget)
     ? raw.selectedTarget
     : (targets[0]?.name || '');
@@ -229,6 +239,7 @@ export function normalizeXeno(raw) {
     modTarget: raw.modTarget === '__protagonist__' || targets.some(t => t.name === raw.modTarget) ? raw.modTarget : '__protagonist__',
     protagonist: normalizeEntity(raw.protagonist, true),
     targets,
+    targetPool: [...poolMap.values()].slice(0, 120),
     possession: {
       active: raw.possession?.active === true,
       targetName: clip(raw.possession?.targetName, 80),
@@ -277,14 +288,94 @@ export function ensureTarget(xeno, name, patch = {}) {
   const clean = clip(name, 80);
   if (!clean) throw Error('请先选择或填写目标姓名');
   let target = xeno.targets.find(t => t.name === clean);
+  const poolTarget = (xeno.targetPool || []).find(t => t.name === clean);
   if (!target) {
-    target = normalizeEntity({name: clean, ...patch}, false);
+    target = normalizeEntity({...(poolTarget || {}), name: clean, ...patch}, false);
     xeno.targets.push(target);
   } else if (Object.keys(patch).length) {
     Object.assign(target, patch);
   }
+  xeno.targetPool = Array.isArray(xeno.targetPool) ? xeno.targetPool.filter(t => t.name !== clean) : [];
+  xeno.targetPool.push(target);
   if (!xeno.selectedTarget) xeno.selectedTarget = target.name;
   return target;
+}
+
+/**
+ * Synchronizes `xeno.protagonist` and `xeno.targets` with the current card's role list (`routes`):
+ * - Role marked `protagonist` ('主角') binds to `xeno.protagonist`.
+ * - Roles marked `normal` ('普通角色') form `xeno.targets`.
+ * - Roles marked `narrator` ('旁白角色') are excluded from targets.
+ */
+export function syncXenoWithRoutes(xeno, routes = []) {
+  const out = normalizeXeno(xeno);
+  const list = Array.isArray(routes) ? routes : [];
+  const pool = new Map();
+  for (const t of out.targetPool || []) pool.set(t.name, t);
+  for (const t of out.targets || []) pool.set(t.name, t);
+
+  const protRoute = list.find(r => r?.name?.trim() && roleTypeOf(r) === 'protagonist');
+  if (protRoute) {
+    const pName = clip(protRoute.name, 80);
+    const prevName = out.protagonist.name;
+    const pooled = pool.get(pName);
+    if (prevName !== pName && pooled) {
+      out.protagonist = normalizeEntity({...pooled, ...out.protagonist, id: '__protagonist__', name: pName}, true);
+    } else {
+      out.protagonist.name = pName;
+    }
+    if (out.protagonist.originalBody === `${prevName}的原始肉体` || out.protagonist.originalBody === '主角的原始肉体') {
+      out.protagonist.originalBody = `${pName}的原始肉体`;
+    }
+    if (!out.possession.active && !out.fusion.active && (out.protagonist.currentBody === `${prevName}的原始肉体` || out.protagonist.currentBody === '主角的原始肉体')) {
+      out.protagonist.currentBody = `${pName}的原始肉体`;
+    }
+    if (protRoute.persona?.trim() && (!out.protagonist.identity || out.protagonist.identity === '异构能力持有者')) {
+      out.protagonist.identity = clip(protRoute.persona, 300);
+    }
+    if (protRoute.appearance?.trim() && (!out.protagonist.appearance || out.protagonist.appearance === '五官端正，眼神深邃')) {
+      out.protagonist.appearance = clip(protRoute.appearance, 1000);
+    }
+  }
+
+  const normalRoutes = list.filter(r => r?.name?.trim() && roleTypeOf(r) === 'normal' && r.name.trim() !== out.protagonist.name);
+  const activeTargets = [];
+  const seen = new Set();
+  for (const r of normalRoutes) {
+    const name = clip(r.name, 80);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    let ent = pool.get(name);
+    if (!ent) {
+      ent = normalizeEntity({
+        name,
+        identity: clip(r.persona, 300) || '登场角色',
+        appearance: clip(r.appearance, 1000) || ''
+      }, false);
+    } else {
+      if (r.persona?.trim() && (!ent.identity || ent.identity === '登场角色')) {
+        ent.identity = clip(r.persona, 300);
+      }
+      if (r.appearance?.trim() && (!ent.appearance || ent.appearance.startsWith('待从剧情同步'))) {
+        ent.appearance = clip(r.appearance, 1000);
+      }
+    }
+    pool.set(name, ent);
+    activeTargets.push(ent);
+  }
+
+  out.targetPool = [...pool.values()].slice(0, 120);
+  out.targets = activeTargets;
+  out.selectedTarget = out.targets.some(t => t.name === out.selectedTarget)
+    ? out.selectedTarget
+    : (out.targets[0]?.name || '');
+  if (out.wardrobeTarget !== '__protagonist__' && !out.targets.some(t => t.name === out.wardrobeTarget)) {
+    out.wardrobeTarget = '__protagonist__';
+  }
+  if (out.modTarget !== '__protagonist__' && !out.targets.some(t => t.name === out.modTarget)) {
+    out.modTarget = '__protagonist__';
+  }
+  return out;
 }
 
 /** Returns the entity for '__protagonist__' or a target's name. */

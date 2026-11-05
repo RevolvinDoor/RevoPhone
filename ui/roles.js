@@ -1,6 +1,7 @@
 import {createView, esc, engines, btn, field, input, select, textArea, heading, help, groupTitle, plate, avatar, languageField, languageName, typedLanguages, toggle} from './common.js';
 import {swipeRow, mountSwipeList} from './swipe-list.js';
 import {VOICE_GENDERS, VOICE_AGES, poolLine, readPoolFile, poolFile, guessVoice} from '../core/auto-voice.js';
+import {ROLE_TYPES, ROLE_TYPE_OPTIONS, roleTypeOf} from '../core/routes.js';
 import {saveFile} from '../download.js';
 import {icon, halo} from './icons.js';
 
@@ -25,10 +26,10 @@ export function rolesApp(ctx) {
   function renderList() {
     const roles = api.getState().routes, space = api.phoneSpace?.();
     const cards = roles.map((r, i) => {
-      const voiced = !!r.voice, engine = voiced ? r.engine : 'none';
+      const voiced = !!r.voice, engine = voiced ? r.engine : 'none', rType = roleTypeOf(r);
       return `<button class="role-card" data-action="edit-role" data-id="${esc(r.id)}" data-engine="${engine}">
         <span class="role-top"><span class="role-no">${number(i)}</span>${voiced ? halo() : ''}${avatar(r.name, engine, 54)}</span>
-        <span class="role-body"><strong>${esc(r.name)}</strong>${voiced
+        <span class="role-body"><strong>${esc(r.name)}</strong><small class="role-type-chip" data-role-type="${esc(rType)}">${esc(ROLE_TYPES[rType] || '普通角色')}</small>${voiced
           ? `<span>${plate(engines[r.engine])}</span><small>${esc(voiceLabel(r.voice))}<br>${esc(r.language ? languageName(r.language) : '跟随默认语言')}</small>${r.autoVoice ? '<small class="auto-chip">自动挑的</small>' : ''}`
           : '<small class="unset">待选择音色</small><small>出现在聊天里时会等你配音</small>'}</span></button>`;
     }).join('');
@@ -47,7 +48,7 @@ export function rolesApp(ctx) {
   function renderEditor() {
     const r = current, c = api.getState().connections[r.engine], schema = api.engineSchema(r.engine);
     const saved = api.getState().routes.findIndex(x => x.id === r.id), pending = api.pendingRole() === r.name && !!r.name;
-    const voiced = !!r.voice, model = r.model || c.model;
+    const voiced = !!r.voice, model = r.model || c.model, rType = roleTypeOf(r);
     const mimo = r.engine !== 'mimo' ? '' : /voicedesign$/.test(model) ? 'design' : /voiceclone$/.test(model) ? 'clone' : 'preset';
     v.draw(heading(r.id ? '角色配音' : '新增角色', '', 'Voice Route')
       + (pending ? `<div class="banner">${icon('alert')}<span>播放停在「${esc(r.name)}」这里，选好音色后可以继续。</span></div>` : '')
@@ -56,10 +57,11 @@ export function rolesApp(ctx) {
           <div class="id-top"><span>VOICE ID CARD</span>${plate(saved >= 0 ? number(saved) : 'NEW')}</div>
           <div class="id-main"><span class="id-photo">${halo()}${avatar(r.name || '新', voiced ? r.engine : 'none', 76)}</span>
             <div style="min-width:0;flex:1"><div class="id-name" data-id-name>${esc(r.name || '新角色')}</div>
-            <div class="id-fields"><span>ENGINE</span><span>${engines[r.engine]}</span><span>VOICE</span><span data-id-voice>${esc(voiced ? voiceLabel(r.voice) : '未选择')}</span><span>LANG</span><span>${esc(r.language ? languageName(r.language) : '跟随默认')}</span></div></div></div>
+            <div class="id-fields"><span>TYPE</span><span>${esc(ROLE_TYPES[rType] || '普通角色')}</span><span>ENGINE</span><span>${engines[r.engine]}</span><span>VOICE</span><span data-id-voice>${esc(voiced ? voiceLabel(r.voice) : '未选择')}</span><span>LANG</span><span>${esc(r.language ? languageName(r.language) : '跟随默认')}</span></div></div></div>
           <div class="barcode">${barcode((r.name || '') + r.engine + (r.voice || ''))}</div><span class="id-stamp">${voiced ? '已配音' : '待配音'}</span>
         </div>
         <div class="group pad">${field('角色名称', input('name', r.name, 'text', 'placeholder="与台词里的说话者一致"'))}
+          ${field('角色定位', select('roleType', rType, ROLE_TYPE_OPTIONS), '用于标记该角色是普通角色、主角还是旁白角色：\n· 普通角色：会自动作为异构终端、衣柜和商城的可选目标\n· 主角：会自动绑定到异构终端的主角状态栏\n· 旁白角色：仅用于配音，不会出现在目标选择列表中')}
           ${field('别名', input('aliases', Array.isArray(r.aliases) ? r.aliases.join('、') : r.aliases || '', 'text', 'placeholder="正文里的其他叫法，用逗号隔开"'), '正文里有时写全名、有时只写名或姓，比如「夏尔」和「夏尔·凡多姆海恩」：把其他叫法填在这里，都用这个角色的音色，不会再多出一个角色。全名里带「·」的会自动认出来。')}</div>
         ${groupTitle('引擎', help('每个角色在各家引擎里各自记住一套音色和模型，切过去再切回来不会丢。'))}
         <div class="engine-tabs">${Object.entries(engines).map(([k, label]) => {
@@ -201,8 +203,11 @@ export function rolesApp(ctx) {
   }
   // Starts a new draft for a speaker that appeared in chat without a voice.
   function create(name = '') {
-    current = drafts.get('new') || {name: '', engine: 'fish', voice: '', model: '', language: '', bindings: {}};
-    if (name) current.name = name;
+    current = drafts.get('new') || {name: '', roleType: 'normal', engine: 'fish', voice: '', model: '', language: '', bindings: {}};
+    if (name) {
+      current.name = name;
+      if (name === '旁白') current.roleType = 'narrator';
+    }
     drafts.set('new', current);
     render();
   }
@@ -227,7 +232,7 @@ export function rolesApp(ctx) {
     if (el.dataset.field === 'voice') { const n = v.root.querySelector('[data-id-voice]'); if (n) n.textContent = el.value ? voiceLabel(el.value) : '未选择'; }
   });
   // A MiMo model change turns the 音色 field into a description or a clone sample name.
-  v.on('change', 'select[data-field]', el => { current[el.dataset.field] = el.value; changed(); if (el.dataset.field === 'model' && current.engine === 'mimo') render(); });
+  v.on('change', 'select[data-field]', el => { current[el.dataset.field] = el.value; changed(); if ((el.dataset.field === 'model' && current.engine === 'mimo') || el.dataset.field === 'roleType') render(); });
   v.on('click', '[data-action]', async el => {
     switch (el.dataset.action) {
       case 'add-role': create(); break;

@@ -51,9 +51,10 @@ export function xenoApp(ctx) {
             <select class="xeno-select" data-change="select-target" aria-label="选择目标角色">
               ${targetList.length
                 ? targetList.map(t => `<option value="${esc(t.name)}" ${t.name === selectedTarget ? 'selected' : ''}>🎯 目标：${esc(t.name)}（${esc(t.identity)} · ${esc(t.gender)}）</option>`).join('')
-                : '<option value="">（暂无目标角色，请点击右侧新增或从剧情同步）</option>'}
+                : '<option value="">（暂无普通角色目标，请从「角色」添加或从剧情同步）</option>'}
             </select>
             <div class="xeno-target-btns">
+              <button type="button" class="xeno-mini-btn" data-action="open-roles">角色管理</button>
               <button type="button" class="xeno-mini-btn primary" data-action="add-target">+ 新增</button>
               ${entity ? `<button type="button" class="xeno-mini-btn danger" data-action="delete-target" data-name="${esc(entity.name)}">删除</button>` : ''}
             </div>
@@ -81,7 +82,7 @@ export function xenoApp(ctx) {
               <div class="xeno-kv detail"><span class="k">认知状态</span><span class="v">${esc(view.cognitionText)}</span></div>
             </div>
           ` : ''}
-        ` : `<p class="xeno-empty-note">当前未选定目标角色。可点击上方「+ 新增」手动添加，或点击「从剧情同步」/「洞察推荐」自动扫描登场角色。</p>`}
+        ` : `<p class="xeno-empty-note">目标列表自动读取「角色」应用中标记为【普通角色】的角色（【主角】绑定主角状态栏，【旁白角色】自动排除）。可点击「角色管理」调整分类，或点击「+ 新增」/「从剧情同步」。</p>`}
       </section>
     `;
   }
@@ -617,6 +618,7 @@ export function xenoApp(ctx) {
 
     if (act === 'open-wardrobe') { ctx.open('wardrobe'); return; }
     if (act === 'open-mall') { ctx.open('mall'); return; }
+    if (act === 'open-roles') { ctx.open('roles'); return; }
     if (act === 'toggle-xeno-settings') { settingsOpen = !settingsOpen; v.refresh(); return; }
     if (act === 'toggle-xeno-enabled') { api.saveXeno({enabled: !xeno.enabled}); return; }
     if (act === 'toggle-xeno-autosync') { api.saveXeno({autoUpdateTag: !xeno.autoUpdateTag}); return; }

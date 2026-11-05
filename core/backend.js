@@ -23,7 +23,7 @@ import { WALLET_LIMITS, PREMIUM, DECOR_KINDS, SHOP_GIFTS, LEDGER_KINDS, premiumO
 import { gptModels, DRAW_ENGINES, DRAW_ENGINE_NAMES, GPT_IMAGE_MODELS, GPT_QUALITIES, normalizeGpt, gptBase, gptSize, gptPrompt, gptGenerate, normalizeComfy, comfyUrl, checkWorkflow, workflowPlaceholders, COMFY_LIMITS, comfySize, comfyPrompt, comfyValues, fillWorkflow, comfyGenerate, comfyCatalog, comfyLoras, comfyClips, defaultWorkflow, tavernWorkflows, tavernWorkflow, orientationOf, DEFAULT_COMFY_WORKFLOW, COMFY_PARAM_KEYS, applyComfyWorkflow } from './image-engines.js';
 import {activeLoraWorkflow, normalizeDisabledLoras, inspectLoras, editLoras, pickLoraSource} from './comfy-loras.js';
 import { normalizeSettings, validateSettings, modelRules, freshState } from './state.js';
-import { normalizeRoute, switchRouteEngine, removeRoute, withRoles, findRoute, cleanAliases, cardRoutes } from './routes.js';
+import { normalizeRoute, switchRouteEngine, removeRoute, withRoles, findRoute, cleanAliases, cardRoutes, roleTypeOf, routeForCard } from './routes.js';
 import { DEFAULT_PROMPT, DEFAULT_FORMAT, promptPlan, validatePreset, parseDialogue, isPlaceholderRole, knownFormats } from './protocol.js';
 import { normalizeMarks, withMarks } from './voice-fx.js';
 import { TTSParameters, FISH_API, tauriTavern } from './parameters.js';
@@ -42,7 +42,7 @@ import { DrawQueue } from './draw-queue.js';
 import { CloudQueue, KeyHashQueue, newRoomCode, validRoom, sha256Hex } from './cloud-queue.js';
 import { vibeKey, readVibeFile, imageVibe, mergeVibe, encodingFor, withEncoding, vibeSummary, vibeParameters, singleFile, bundleFile, chatu8File, strength as vibeStrength, MAX_FREE_VIBES, VIBE_ANLAS } from './vibes.js';
 import {
-    normalizeXeno, normalizeCatalogItem, ensureTarget,
+    normalizeXeno, normalizeCatalogItem, ensureTarget, syncXenoWithRoutes,
     xenoStartPossession, xenoSetPossessionMode, xenoToggleOrganSync, xenoReleasePossession, xenoBodySwap,
     xenoStartFusion, xenoSetFusionMode, xenoToggleFusionController, xenoReleaseFusion, xenoRestoreFromLivingItem,
     xenoStartVore, xenoUpdateVore, xenoRemoveVore,
@@ -285,7 +285,10 @@ export class TTSBackend {
     }
     getState() { this.assertOpen(); return clone(this.settings); }
     routesHere(key = this.cardKey()) { return clone(cardRoutes(this.settings.routes, key)); }
-    cardState() { return { ...this.getState(), routes: this.routesHere() }; }
+    cardState() {
+        const state = this.getState(), routes = this.routesHere();
+        return { ...state, routes, xeno: syncXenoWithRoutes(state.xeno, routes) };
+    }
     getSnapshot() { return { state: this.getState(), revision: this.revision }; }
     save(next, expectedRevision) {
         this.assertOpen();
@@ -348,9 +351,18 @@ export class TTSBackend {
         const route = normalizeRoute({ ...(index >= 0 ? next.routes[index] : { engine: 'fish', voice: '', model: '', language: '' }), ...clone(value), id, name, card, cards: card ? [card] : [] });
         // 角色资料: who they are, for the phone's apps when the tavern has no card for them.
         if (typeof route.persona === 'string') { route.persona = route.persona.slice(0, 4000); if (!route.persona.trim()) delete route.persona; } else delete route.persona;
+        if (roleTypeOf(route) === 'protagonist') {
+            for (const other of next.routes) {
+                if (other.id !== id && routeForCard(other, card) && roleTypeOf(other) === 'protagonist') {
+                    other.roleType = 'normal';
+                }
+            }
+        }
         if (index >= 0) next.routes[index] = route; else next.routes.push(route);
         next.selected = id;
+        next.xeno = syncXenoWithRoutes(next.xeno, cardRoutes(next.routes, this.cardKey()));
         this.save(next);
+        this.emit('xeno', { xeno: clone(this.cardState().xeno) });
         return clone(this.settings.routes.find(row => row.id === id));
     }
     /** 候选音色池: the voices 自动挑音色 picks from first. */
@@ -362,7 +374,11 @@ export class TTSBackend {
     deleteRoute(id) {
         const route = this.settings.routes.find(row => row.id === id);
         if (route && (this.player.pending === route.name || this.player.queue.some(line => line.role === route.name))) this.player.stop('角色配音已删除');
-        return this.save(removeRoute(this.settings, id));
+        const next = removeRoute(this.settings, id);
+        next.xeno = syncXenoWithRoutes(next.xeno, cardRoutes(next.routes, this.cardKey()));
+        const saved = this.save(next);
+        this.emit('xeno', { xeno: clone(this.cardState().xeno) });
+        return saved;
     }
     saveConnection(engine, patch) {
         engineCheck(engine);
@@ -544,16 +560,45 @@ export class TTSBackend {
     // ---------- 异构终端 / 衣柜 / 购物商城 ----------
     saveXeno(patchOrFn) {
         const next = this.getState();
-        const cur = normalizeXeno(next.xeno);
-        const updated = typeof patchOrFn === 'function' ? patchOrFn(cur) || cur : { ...cur, ...(patchOrFn && typeof patchOrFn === 'object' ? clone(patchOrFn) : {}) };
-        next.xeno = normalizeXeno(updated);
+        const key = this.cardKey();
+        const cur = syncXenoWithRoutes(next.xeno, cardRoutes(next.routes, key));
+        const updated = typeof patchOrFn === 'function' ? patchOrFn(cur, next, key) || cur : { ...cur, ...(patchOrFn && typeof patchOrFn === 'object' ? clone(patchOrFn) : {}) };
+        // Ensure any target in `updated.targets` is also registered as a 'normal' role in `next.routes` for the current card
+        for (const t of Array.isArray(updated.targets) ? updated.targets : []) {
+            const tName = String(t?.name || '').trim();
+            if (!tName || isPlaceholderRole(tName) || tName === NARRATOR) continue;
+            const existing = findRoute(cardRoutes(next.routes, key), tName);
+            if (!existing) {
+                next.routes.push(normalizeRoute({
+                    id: crypto.randomUUID(),
+                    name: tName,
+                    roleType: 'normal',
+                    engine: 'fish',
+                    voice: '',
+                    model: '',
+                    language: '',
+                    card: key,
+                    cards: key ? [key] : []
+                }));
+            }
+        }
+        // If protagonist name was changed and matches or updates a protagonist route
+        const pName = String(updated.protagonist?.name || '').trim();
+        if (pName && pName !== '主角' && !isPlaceholderRole(pName)) {
+            const protRoute = cardRoutes(next.routes, key).find(r => roleTypeOf(r) === 'protagonist');
+            if (protRoute && protRoute.name !== pName) {
+                protRoute.name = pName;
+            }
+        }
+        next.xeno = syncXenoWithRoutes(updated, cardRoutes(next.routes, key));
         this.save(next);
-        this.emit('xeno', { xeno: clone(this.settings.xeno) });
-        return clone(this.settings.xeno);
+        const outXeno = clone(this.cardState().xeno);
+        this.emit('xeno', { xeno: outXeno });
+        return outXeno;
     }
     xenoAct(action, payload = {}) {
         const p = payload && typeof payload === 'object' ? clone(payload) : {};
-        return this.saveXeno(xeno => {
+        return this.saveXeno((xeno, nextState, cardKey) => {
             switch (action) {
                 case 'startPossession': return xenoStartPossession(xeno, p);
                 case 'setPossessionMode': return xenoSetPossessionMode(xeno, p.mode);
@@ -580,7 +625,12 @@ export class TTSBackend {
                     return xeno;
                 }
                 case 'deleteTarget': {
+                    const targetName = String(p.name || '').trim();
+                    if (targetName && nextState?.routes) {
+                        nextState.routes = nextState.routes.filter(r => !(routeForCard(r, cardKey) && r.name === targetName && roleTypeOf(r) === 'normal'));
+                    }
                     xeno.targets = xeno.targets.filter(t => t.name !== p.name);
+                    xeno.targetPool = (xeno.targetPool || []).filter(t => t.name !== p.name);
                     if (xeno.selectedTarget === p.name) xeno.selectedTarget = xeno.targets[0]?.name || '';
                     if (xeno.wardrobeTarget === p.name) xeno.wardrobeTarget = '__protagonist__';
                     if (xeno.modTarget === p.name) xeno.modTarget = '__protagonist__';
@@ -1762,11 +1812,15 @@ export class TTSBackend {
         for (const name of want) {
             const route = findRoute(cardRoutes(next.routes, key), name);
             if (!route) {
-                next.routes.push(normalizeRoute({ id: crypto.randomUUID(), name, engine: 'fish', voice: '', model: '', language: '', card: key, cards: [key] }));
+                next.routes.push(normalizeRoute({ id: crypto.randomUUID(), name, roleType: 'normal', engine: 'fish', voice: '', model: '', language: '', card: key, cards: [key] }));
                 changed = true;
             }
         }
-        if (changed) this.save(next);
+        if (changed) {
+            next.xeno = syncXenoWithRoutes(next.xeno, cardRoutes(next.routes, key));
+            this.save(next);
+            this.emit('xeno', { xeno: clone(this.cardState().xeno) });
+        }
         return changed;
     }
     /** Contacts of the card open now (all of them when 分区 is off). */

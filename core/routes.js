@@ -1,8 +1,19 @@
 const engines=['fish','mini','eleven','mimo','doubao','custom'];
+export const ROLE_TYPES=Object.freeze({normal:'普通角色',protagonist:'主角',narrator:'旁白角色'});
+export const ROLE_TYPE_OPTIONS=Object.freeze([
+  ['normal','普通角色（异构终端可选目标）'],
+  ['protagonist','主角（绑定主角状态栏）'],
+  ['narrator','旁白角色（不作为目标）']
+]);
+export function roleTypeOf(route){
+  if(route?.roleType==='protagonist'||route?.roleType==='narrator'||route?.roleType==='normal')return route.roleType;
+  if(String(route?.name||'').trim()==='旁白')return 'narrator';
+  return 'normal';
+}
 export function routeCard(route){return String(route?.card||(Array.isArray(route?.cards)&&route.cards[0])||'').trim().slice(0,300);}
 export function routeForCard(route,cardKey=''){const key=String(cardKey||'').trim(),card=routeCard(route);if(route?.name==='旁白')return !card||card===key;if(!key)return !card;return card===key||(Array.isArray(route?.cards)&&route.cards.includes(key));}
 export function cardRoutes(routes,cardKey=''){return (routes||[]).filter(r=>routeForCard(r,cardKey));}
-export function normalizeRoute(value){const route=structuredClone(value);if(route.aliases!==undefined){const list=cleanAliases(route.aliases,route.name);if(list.length)route.aliases=list;else delete route.aliases;}const card=routeCard(route);if(card){route.card=card;route.cards=[card];}else{delete route.card;delete route.cards;}route.bindings=Object.fromEntries(engines.filter(e=>value.bindings?.[e]).map(e=>[e,{voice:String(value.bindings[e].voice||''),model:String(value.bindings[e].model||'')}]));if(engines.includes(route.engine)){route.voice=String(route.voice??route.bindings[route.engine]?.voice??'');route.model=String(route.model??route.bindings[route.engine]?.model??'');route.bindings[route.engine]={voice:route.voice,model:route.model};}return route;}
+export function normalizeRoute(value){const route=structuredClone(value);route.roleType=roleTypeOf(value);if(route.aliases!==undefined){const list=cleanAliases(route.aliases,route.name);if(list.length)route.aliases=list;else delete route.aliases;}const card=routeCard(route);if(card){route.card=card;route.cards=[card];}else{delete route.card;delete route.cards;}route.bindings=Object.fromEntries(engines.filter(e=>value.bindings?.[e]).map(e=>[e,{voice:String(value.bindings[e].voice||''),model:String(value.bindings[e].model||'')}]));if(engines.includes(route.engine)){route.voice=String(route.voice??route.bindings[route.engine]?.voice??'');route.model=String(route.model??route.bindings[route.engine]?.model??'');route.bindings[route.engine]={voice:route.voice,model:route.model};}return route;}
 export function switchRouteEngine(value,engine){if(!engines.includes(engine))throw Error('引擎无效');const route=normalizeRoute(value);if(engine===route.engine)return route;route.engine=engine;route.voice=route.bindings[engine]?.voice||'';route.model=route.bindings[engine]?.model||'';return route;}
 export function removeRoute(settings,id){const next=structuredClone(settings),index=next.routes.findIndex(r=>r.id===id);if(index<0)return next;next.routes.splice(index,1);if(next.selected===id)next.selected=next.routes[Math.min(index,next.routes.length-1)]?.id||'';return next;}
 // ---------- 别名 ----------
