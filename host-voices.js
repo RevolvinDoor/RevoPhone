@@ -1,14 +1,14 @@
 // 自动挑音色, tavern side: when a character speaks for the first time (or 重新挑 in the 角色 App), the text model picks
 // their voice — from the 候选音色池 first, else from the voice library of the engine most roles use — and the route is
 // saved marked as picked automatically (autoVoice, with the reason). One character at a time.
-import {normalizePool, poolLine, voiceProfile, pickRequest, parsePick, searchRequest, parseSearch, matchesPoolLanguage} from './core/auto-voice.js';
+import {normalizePool, poolLine, voiceProfile, pickRequest, parsePick, searchRequest, parseSearch, matchesPoolLanguage, detectSpokenLanguage} from './core/auto-voice.js';
 import {plainStory} from './core/chat.js';
 import {findRoute} from './core/routes.js';
 
 const ENGINE_NAMES = {fish: 'Fish Audio', mini: 'MiniMax', eleven: 'ElevenLabs', mimo: 'MiMo', doubao: '豆包语音', custom: '自己的接口'};
 
 /** saidBy(name): what that character said in the story (their lines' translations), newest last. */
-export function createVoiceHost({context, settings, backend, saidBy = () => []}) {
+export function createVoiceHost({context, settings, backend, saidBy = () => [], spokenBy = () => []}) {
   const working = new Map();
   let chain = Promise.resolve();
   const ask = prompt => backend.generateText(context(), {prompt, trimNames: false, responseLength: 1500});
@@ -53,7 +53,8 @@ export function createVoiceHost({context, settings, backend, saidBy = () => []})
   async function choose(name, force) {
     const route = findRoute(settings().routes, name);
     if (route?.voice && !force) return route;
-    const language = String(route?.language || settings().general?.defaultLanguage || 'zh').trim();
+    const detectedLang = detectSpokenLanguage(spokenBy(name));
+    const language = String(route?.language || detectedLang || settings().general?.defaultLanguage || 'zh').trim();
     const profile = profileOf(name, language);
     const pool = normalizePool(settings().voicePool).filter(v => matchesPoolLanguage(v, language));
     let chosen = null;
@@ -64,7 +65,9 @@ export function createVoiceHost({context, settings, backend, saidBy = () => []})
     }
     if (!chosen) chosen = await fromLibrary(profile, libraryEngine(), language);
     if (!chosen) throw Error(`没能给「${name}」挑到音色，可以在角色 App 里手动选`);
+    const nextLanguage = route?.language || chosen.language || detectedLang || '';
     return backend.saveRoute({...(route || {}), name, engine: chosen.engine, voice: chosen.voice, model: chosen.model || '',
+      language: nextLanguage,
       autoVoice: true, autoName: chosen.name, autoReason: `${chosen.from}：${chosen.reason || chosen.name}`});
   }
   /** Picks a voice for name (force: again, though they have one). Resolves to the saved route. */

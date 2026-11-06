@@ -10,21 +10,26 @@ import {languageCode, languageName} from './languages.js';
 export const POOL_LIMIT = 200;
 export const VOICE_GENDERS = Object.freeze({female: '女', male: '男'});
 export const VOICE_AGES = Object.freeze({child: '孩子', young: '少年少女', adult: '成年', old: '老年'});
+export const VOICE_LANGUAGES = Object.freeze({
+  zh: '中文',
+  ja: '日语',
+  en: '英语',
+  ko: '韩语',
+  yue: '粤语',
+  fr: '法语',
+  de: '德语',
+  es: '西班牙语',
+  ru: '俄语',
+  it: '意大利语',
+  pt: '葡萄牙语',
+  ar: '阿拉伯语',
+  hi: '印地语',
+  th: '泰语',
+  vi: '越南语'
+});
 const ENGINES = ['fish', 'mini', 'eleven', 'mimo', 'doubao'];
 const text = (value, max) => String(value ?? '').trim().slice(0, max);
 
-export function normalizePool(list) {
-  const out = [], seen = new Set();
-  for (const v of Array.isArray(list) ? list : []) {
-    const engine = ENGINES.includes(v?.engine) ? v.engine : '', voice = text(v?.voice, 2000);
-    if (!engine || !voice || seen.has(engine + '\n' + voice)) continue;
-    seen.add(engine + '\n' + voice);
-    out.push({engine, voice, model: text(v.model, 120), name: text(v.name, 60) || voice.slice(0, 24),
-      gender: VOICE_GENDERS[v.gender] ? v.gender : '', age: VOICE_AGES[v.age] ? v.age : '', style: text(v.style, 120)});
-    if (out.length >= POOL_LIMIT) break;
-  }
-  return out;
-}
 // ---------- 音色池文件 ----------
 const LANGUAGE_WORDS = {zh: '中文', ja: '日语', en: '英语', ko: '韩语', yue: '粤语', fr: '法语', de: '德语', es: '西班牙语', ru: '俄语'};
 const LANGUAGE_PATTERNS = {
@@ -44,20 +49,99 @@ const LANGUAGE_PATTERNS = {
   th: /泰语|泰文|thai|(?<![a-z])th(?![a-z])/i,
   vi: /越南语|越语|vietnamese|(?<![a-z])vi(?![a-z])/i,
 };
+
+/** Normalizes or guesses a language code ('zh', 'ja', 'en', etc.) from a language field or remark string; '' when unspecified. */
+export function guessVoiceLanguage(words) {
+  const raw = String(words ?? '').trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase();
+  if (VOICE_LANGUAGES[lower]) return lower;
+  const code = languageCode(raw);
+  if (code && VOICE_LANGUAGES[code]) return code;
+  for (const [k, pattern] of Object.entries(LANGUAGE_PATTERNS)) {
+    if (pattern.test(raw)) return k;
+  }
+  return '';
+}
+
+/**
+ * Detects the spoken language code ('ja', 'ko', 'zh', 'yue', 'en', 'ru', etc.) from a character's `<tts>` spoken dialogue lines.
+ * Returns '' when there are no spoken lines or the script is ambiguous.
+ */
+export function detectSpokenLanguage(lines) {
+  const arr = Array.isArray(lines) ? lines : [lines];
+  const sample = arr
+    .map(s => String(s ?? '').replace(/\[[^\]]*\]|\([^)]*\)|<[^>]+>/g, ' ').trim())
+    .filter(Boolean)
+    .join(' ');
+  if (!sample) return '';
+  const jaKana = (sample.match(/[\u3040-\u309f\u30a0-\u30ff\u31f0-\u31ff\uff66-\uff9f]/g) || []).length;
+  const koHangul = (sample.match(/[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]/g) || []).length;
+  const hanCount = (sample.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length;
+  const cyrillic = (sample.match(/[\u0400-\u04ff]/g) || []).length;
+  const thai = (sample.match(/[\u0e00-\u0e7f]/g) || []).length;
+  const arabic = (sample.match(/[\u0600-\u06ff]/g) || []).length;
+  const devanagari = (sample.match(/[\u0900-\u097f]/g) || []).length;
+  const latin = (sample.match(/[a-zA-Z\u00c0-\u024f]/g) || []).length;
+
+  if (jaKana >= 1) return 'ja';
+  if (koHangul >= 1) return 'ko';
+  if (thai >= 2) return 'th';
+  if (arabic >= 2) return 'ar';
+  if (devanagari >= 2) return 'hi';
+  if (cyrillic >= 2) return 'ru';
+  if (hanCount >= 1) {
+    if (/[嘅喺咁冇唔係嚟咗咩啲畀]/.test(sample)) return 'yue';
+    return 'zh';
+  }
+  if (latin >= 2) return 'en';
+  return '';
+}
+
+export function normalizePool(list) {
+  const out = [], seen = new Set();
+  for (const v of Array.isArray(list) ? list : []) {
+    const engine = ENGINES.includes(v?.engine) ? v.engine : '', voice = text(v?.voice, 2000);
+    if (!engine || !voice || seen.has(engine + '\n' + voice)) continue;
+    seen.add(engine + '\n' + voice);
+    const style = text(v.style, 120);
+    const language = v?.language !== undefined
+      ? (VOICE_LANGUAGES[v.language] ? v.language : guessVoiceLanguage(v.language))
+      : guessVoiceLanguage([v?.category, style].filter(Boolean).join(' '));
+    out.push({
+      engine,
+      voice,
+      model: text(v.model, 120),
+      name: text(v.name, 60) || voice.slice(0, 24),
+      language,
+      gender: VOICE_GENDERS[v.gender] ? v.gender : '',
+      age: VOICE_AGES[v.age] ? v.age : '',
+      style
+    });
+    if (out.length >= POOL_LIMIT) break;
+  }
+  return out;
+}
+
 /**
  * Whether a pool entry matches the target spoken language:
- * - Unremarked entries (`!entry.style?.trim()`) are always included in the candidate pool.
- * - Entries with a remark (`entry.style`) must match the target language in their remark.
+ * - Entries with `language === ''` (不限) and entries whose `language` matches `targetLanguage` are included together in the candidate pool.
+ * - Entries with an explicit `language` that differs from `targetLanguage` are excluded.
  */
 export function matchesPoolLanguage(entry, language) {
   const raw = String(language ?? '').trim();
   if (!raw) return true;
+  const targetCode = languageCode(raw) || guessVoiceLanguage(raw) || raw.toLowerCase();
+  if (entry && entry.language !== undefined) {
+    if (!entry.language) return true;
+    const entryCode = languageCode(entry.language) || guessVoiceLanguage(entry.language) || String(entry.language).toLowerCase();
+    return entryCode === targetCode;
+  }
   const style = String(entry?.style ?? '').trim();
   if (!style) return true;
-  const code = languageCode(raw);
-  if (code && LANGUAGE_PATTERNS[code]) return LANGUAGE_PATTERNS[code].test(style);
-  const lower = style.toLowerCase(), label = languageName(raw).toLowerCase();
-  return lower.includes(raw.toLowerCase()) || (!!label && lower.includes(label));
+  const styleLang = guessVoiceLanguage(style);
+  if (!styleLang) return true;
+  return styleLang === targetCode;
 }
 /** Gender and age guessed from the words that describe a voice (少女、大叔、妈妈…); '' when they do not say or disagree. */
 export function guessVoice(words) {
@@ -65,7 +149,8 @@ export function guessVoice(words) {
   const female = /女|妇|妹|姐|妈|母|娘|萝莉|阿姨|奶奶|婆|girl|female|woman|lady/.test(either), male = /男|叔|爷|爸|父|哥|弟|正太|少年|boy|\bmale|\bman\b|guy/.test(either);
   const age = /萝莉|正太|小孩|孩子|儿童|幼|child|kid/.test(t) ? 'child' : /奶奶|爷爷|老人|老年|老爷|婆婆|elder|old/.test(t) ? 'old'
     : /少女|少年|妹|青梅|学生|元气|萌|teen|young/.test(t) ? 'young' : /大叔|叔|妈|母亲|父亲|爸|少妇|成熟|御姐|阿姨|男性|女性|adult|mature/.test(t) ? 'adult' : '';
-  return {gender: female === male ? '' : female ? 'female' : 'male', age};
+  const language = guessVoiceLanguage(words);
+  return {language, gender: female === male ? '' : female ? 'female' : 'male', age};
 }
 /**
  * A voice pool file as pool entries: ST-iPhonie's own (st-iphonie-voice-pool), FishDialogue's voice library
@@ -81,10 +166,20 @@ export function readPoolFile(source) {
   const out = normalizePool(list.map(v => {
     if (!v || typeof v !== 'object') return null;
     const engine = ENGINES.includes(v.engine) ? v.engine : fish || !v.engine ? 'fish' : '';
-    const language = LANGUAGE_WORDS[String(v.category || v.language || '').toLowerCase()] || '';
-    const style = text(v.style, 120) || [v.sub, v.desc && v.desc !== v.name ? v.desc : '', language].map(x => text(x, 60)).filter(Boolean).join(' · ');
-    const guess = guessVoice([v.name, v.sub, v.desc, v.style].join(' '));
-    return {engine, voice: v.voice || v.id || v.reference_id || v.voice_id, model: v.model, name: v.name, gender: VOICE_GENDERS[v.gender] ? v.gender : guess.gender, age: VOICE_AGES[v.age] ? v.age : guess.age, style};
+    const langWord = LANGUAGE_WORDS[String(v.category || v.language || '').toLowerCase()] || '';
+    const style = text(v.style, 120) || [v.sub, v.desc && v.desc !== v.name ? v.desc : '', langWord].map(x => text(x, 60)).filter(Boolean).join(' · ');
+    const guess = guessVoice([v.category, v.language, v.name, v.sub, v.desc, v.style].join(' '));
+    const language = guessVoiceLanguage(v.language || v.category) || guess.language;
+    return {
+      engine,
+      voice: v.voice || v.id || v.reference_id || v.voice_id,
+      model: v.model,
+      name: v.name,
+      language,
+      gender: VOICE_GENDERS[v.gender] ? v.gender : guess.gender,
+      age: VOICE_AGES[v.age] ? v.age : guess.age,
+      style
+    };
   }));
   if (!out.length) throw Error('这个文件里没有能用的音色（要有音色 ID）');
   return out;
@@ -92,8 +187,8 @@ export function readPoolFile(source) {
 /** The pool as a file to share. */
 export const poolFile = pool => JSON.stringify({type: 'st-iphonie-voice-pool', version: 1, voices: normalizePool(pool)}, null, 2);
 
-/** A pool entry as one line for the model: name, gender, age, style. */
-export const poolLine = v => [v.name, VOICE_GENDERS[v.gender], VOICE_AGES[v.age], v.style].filter(Boolean).join(' · ');
+/** A pool entry as one line for the model: name, language, gender, age, style. */
+export const poolLine = v => [v.name, VOICE_LANGUAGES[v.language], VOICE_GENDERS[v.gender], VOICE_AGES[v.age], v.style].filter(Boolean).join(' · ');
 
 /**
  * What is known of a character, for picking a voice: their card (when the tavern has one by that name), what they

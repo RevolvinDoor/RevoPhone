@@ -1,7 +1,7 @@
 // Shared image upload compression & AI product image generation helper for 购物商城 (mall) and 衣柜 (wardrobe).
 import {esc} from './common.js';
 import {icon} from './icons.js';
-import {poolLine} from '../core/auto-voice.js';
+import {poolLine, VOICE_LANGUAGES} from '../core/auto-voice.js';
 import {encodePoolVoiceRef, parsePoolVoiceRef, formatVoiceRoleLabel} from '../core/xeno.js';
 
 const ENGINE_LABELS = {
@@ -23,7 +23,7 @@ export function renderVoiceBindSelectOptions({
   const cur = String(currentValue || '').trim();
   const poolOpts = (Array.isArray(voicePool) ? voicePool : []).map(f => {
     const ref = encodePoolVoiceRef(f);
-    const meta = [ENGINE_LABELS[f.engine] || f.engine, f.style].filter(Boolean).join(' · ');
+    const meta = [ENGINE_LABELS[f.engine] || f.engine, VOICE_LANGUAGES[f.language], f.style].filter(Boolean).join(' · ');
     return {ref, html: `<option value="${esc(ref)}" ${cur === ref ? 'selected' : ''}>💖 收藏夹：${esc(f.name)}${meta ? `（${esc(meta)}）` : ''}</option>`};
   });
   const parsedCur = parsePoolVoiceRef(cur, voicePool);
@@ -59,15 +59,17 @@ export function openVoicePoolPickerDialog(ctx, {currentValue = '', onSelect} = {
           const active = cur === ref;
           const desc = [ENGINE_LABELS[f.engine] || f.engine, poolLine({...f, name: ''})].filter(Boolean).join(' · ');
           return `
-            <button type="button" class="list-row" data-pick-pool-idx="${idx}" style="${active ? 'background:rgba(255,80,0,0.08);border-color:#ff5000' : ''}">
-              <span class="disc">${icon('heart', true)}</span>
-              <span>
-                <strong>${esc(f.name)}${active ? '（当前已绑）' : ''}</strong>
-                <small>${esc(desc)}</small>
-                <small class="mono">${esc(f.voice)}</small>
-              </span>
-              ${icon('next')}
-            </button>
+            <div class="list-row voice-choice" style="${active ? 'background:rgba(255,80,0,0.08);border-color:#ff5000' : ''}">
+              <button type="button" class="voice-choice-pick" data-pick-pool-idx="${idx}">
+                <span class="disc">${icon('heart', true)}</span>
+                <span>
+                  <strong>${esc(f.name)}${active ? '（当前已绑）' : ''}</strong>
+                  <small>${esc(desc)}</small>
+                  <small class="mono">${esc(f.voice)}</small>
+                </span>
+              </button>
+              <button type="button" class="chip-button" data-audition-pool-idx="${idx}" title="试听这个音色" style="flex:none">${icon('play', true)}试听</button>
+            </div>
           `;
         }).join('')}
       </div>
@@ -92,6 +94,22 @@ export function openVoicePoolPickerDialog(ctx, {currentValue = '', onSelect} = {
     if (e.target.closest('[data-pool-clear]')) {
       d.close(true);
       onSelect?.('', '');
+      return;
+    }
+    const audBtn = e.target.closest('[data-audition-pool-idx]');
+    if (audBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const fav = pool[Number(audBtn.dataset.auditionPoolIdx)];
+      if (fav?.voice) {
+        ctx.api.audition({
+          name: fav.name || '试听音色',
+          engine: fav.engine || 'fish',
+          voice: fav.voice,
+          model: fav.model || '',
+          language: fav.language || ''
+        });
+      }
       return;
     }
     const btn = e.target.closest('[data-pick-pool-idx]');

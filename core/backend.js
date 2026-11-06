@@ -2148,12 +2148,25 @@ export class TTSBackend {
     }
     audition(route) {
         const temporary = this.cardState();
-        route = normalizeRoute(clone(route));
-        if (!route.name?.trim() || isPlaceholderRole(route.name)) throw Error('请填写实际角色名');
+        const raw = clone(route || {});
+        if (!raw.name?.trim() || isPlaceholderRole(raw.name)) raw.name = '试听音色';
+        route = normalizeRoute(raw);
+        if (!route.voice?.trim()) throw Error('请先填写或选择音色 ID');
         route.name = route.name.trim();
         temporary.routes = temporary.routes.filter(row => row.name !== route.name); temporary.routes.push(route);
         const revision = this.revision;
-        const text = ({ zh: '雨还没停，再坐一会儿吧。', en: 'The rain has not stopped. Stay a little longer.', ja: '雨はまだ止んでいません。もう少しここにいましょう。', ko: '비가 아직 그치지 않았어요.' })[languageCode(route.language || temporary.general.defaultLanguage)] || 'Hello.';
+        const langKey = languageCode(route.language || temporary.general.defaultLanguage) || String(route.language || '').trim().toLowerCase();
+        const text = ({
+            zh: '雨还没停，再坐一会儿吧。',
+            yue: '雨仲未停，不如坐多一陣啦。',
+            en: 'The rain has not stopped. Stay a little longer.',
+            ja: '雨はまだ止んでいません。もう少しここにいましょう。',
+            ko: '비가 아직 그치지 않았어요. 조금만 더 같이 있어요.',
+            fr: 'La pluie ne s’est pas arrêtée, reste encore un peu.',
+            de: 'Der Regen hat noch nicht aufgehört, bleib noch ein wenig.',
+            es: 'La lluvia aún no ha parado, quédate un poco más.',
+            ru: 'Дождь ещё не закончился, посиди ещё немного.'
+        })[langKey] || '雨还没停，再坐一会儿吧。';
         this.player.start([{ role: route.name, emotion: 'calm', text, translation: '' }], () => !this.closed && revision === this.revision, temporary);
     }
     async clearCache() {
