@@ -5,8 +5,9 @@ import {
   GENDERS, POSSESSION_MODES, POSSESSION_WAYS, FUSION_MODES, FUSION_BRANCHES,
   VORE_CHANNELS, VORE_LOCATIONS, VORE_STATUSES, VORE_DIGESTIONS,
   TAIL_STATES, ORIFICE_SLOTS, ORIFICE_MOD_TYPES, VENOM_TYPES, WORLD_CARRIERS,
-  PRESET_COGNITION_RULES, effectiveEntityView, getEntity, computeFusionGender
+  PRESET_COGNITION_RULES, effectiveEntityView, getEntity, computeFusionGender, formatVoiceRoleLabel
 } from '../core/xeno.js';
+import {renderVoiceBindSelectOptions, openVoicePoolPickerDialog} from './xeno-media.js';
 
 export function xenoApp(ctx) {
   const {api} = ctx, v = createView(ctx, 'xeno');
@@ -41,6 +42,7 @@ export function xenoApp(ctx) {
           </div>
           <div class="xeno-status-actions">
             ${isProt ? `<button type="button" class="xeno-mini-btn" data-action="sync-story" ${api.xenoBusy?.('sync') ? 'disabled' : ''}>${api.xenoBusy?.('sync') ? '同步中…' : '从剧情同步'}</button>` : ''}
+            ${isProt ? `<button type="button" class="xeno-mini-btn danger" data-action="reset-prot" title="新开聊天时清空主角状态栏与上一场的残留状态">初始化</button>` : ''}
             <button type="button" class="xeno-mini-btn" data-action="${editAction}">编辑</button>
             <button type="button" class="xeno-mini-btn ${detailOpen ? 'active' : ''}" data-action="${toggleAction}">${detailOpen ? '收起详情' : '详情'}</button>
           </div>
@@ -367,7 +369,9 @@ export function xenoApp(ctx) {
     const targetKey = xeno.bodyModTarget || '__protagonist__';
     const entity = getEntity(xeno, targetKey) || xeno.protagonist;
     const curBodyLabel = entity.currentBody || entity.originalBody || (entity.name ? `${entity.name}的肉体` : '主角肉体');
-    const routes = (api.getState().routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
+    const state = api.getState();
+    const routes = (state.routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
+    const voicePool = state.voicePool || [];
     const view = effectiveEntityView(xeno, entity);
     return `
       <div class="xeno-module-card">
@@ -383,13 +387,18 @@ export function xenoApp(ctx) {
           <div class="xeno-chip-group">
             ${GENDERS.map(g => `<button type="button" class="xeno-chip ${entity.gender === g ? 'active' : ''}" data-action="mod-gender" data-gender="${esc(g)}">${esc(g)}</button>`).join('')}
           </div>
-          <div class="xeno-label">🎙️ 肉体声带与音色绑定（可在「角色」App 新建音色角色后绑定）</div>
+          <div class="xeno-label">🎙️ 肉体声带与音色绑定（可从「音色收藏夹」或「角色」App 选择）</div>
           <div class="xeno-row-controls">
             <select class="xeno-select" id="xeno-mod-voice-role" data-change="mod-voice-role" aria-label="绑定声带音色角色" style="flex:1">
-              <option value="" ${!entity.voiceRole ? 'selected' : ''}>默认（跟随本人原名音色${entity.name ? `：${esc(entity.name)}` : ''}）</option>
-              ${routes.map(r => `<option value="${esc(r.name)}" ${entity.voiceRole === r.name ? 'selected' : ''}>🎙️ 使用角色【${esc(r.name)}】的音色${r.voice ? `（已配音）` : '（待配音）'}</option>`).join('')}
+              ${renderVoiceBindSelectOptions({
+                currentValue: entity.voiceRole || '',
+                emptyLabel: `默认（跟随本人原名音色${entity.name ? `：${entity.name}` : ''}）`,
+                routes,
+                voicePool
+              })}
             </select>
-            <button type="button" class="xeno-mini-btn primary" data-action="open-roles">去角色 App 新建/配音</button>
+            <button type="button" class="xeno-mini-btn primary" data-action="mod-pick-fav-voice">♡ 从收藏夹选</button>
+            <button type="button" class="xeno-mini-btn" data-action="open-roles">去角色 App</button>
           </div>
           <p class="xeno-hint">当前发声状态：<b>${esc(view.voiceStateText)}</b></p>
           <label class="xeno-field-inline">
@@ -564,7 +573,9 @@ export function xenoApp(ctx) {
   };
 
   function openEntityEditSheet(entity, isProt) {
-    const routes = (api.getState().routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
+    const state = api.getState();
+    const routes = (state.routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
+    const voicePool = state.voicePool || [];
     const d = ctx.dialog(`编辑${isProt ? '主角' : '目标'}状态栏`, `
       <div class="xeno-sheet-form">
         <label class="xeno-field-inline"><span>姓名</span><input class="xeno-input" data-edit="name" value="${esc(entity.name)}"></label>
@@ -580,12 +591,15 @@ export function xenoApp(ctx) {
         <label class="xeno-field-inline"><span>生理特征</span><textarea class="xeno-textarea" rows="2" data-edit="physiology">${esc(entity.physiology)}</textarea></label>
         <label class="xeno-field-inline"><span>原始肉体</span><input class="xeno-input" data-edit="originalBody" value="${esc(entity.originalBody)}"></label>
         <label class="xeno-field-inline"><span>当前肉体</span><input class="xeno-input" data-edit="currentBody" value="${esc(entity.currentBody)}"></label>
-        <label class="xeno-field-inline"><span>当前肉体绑定音色角色</span>
+        <div class="xeno-field-inline">
+          <div class="xeno-row-between" style="margin-bottom:4px">
+            <span>当前肉体绑定声带音色</span>
+            <button type="button" class="xeno-mini-btn primary" data-sheet-pick-fav>♡ 从音色收藏夹选</button>
+          </div>
           <select class="xeno-select" data-edit="voiceRole">
-            <option value="" ${!entity.voiceRole ? 'selected' : ''}>默认（跟随本人角色名）</option>
-            ${routes.map(r => `<option value="${esc(r.name)}" ${entity.voiceRole === r.name ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}
+            ${renderVoiceBindSelectOptions({currentValue: entity.voiceRole || '', emptyLabel: '默认（跟随本人角色名）', routes, voicePool})}
           </select>
-        </label>
+        </div>
         <div class="actions">
           <button type="button" class="secondary" data-sheet-cancel>取消</button>
           <button type="button" class="primary" data-sheet-save>保存修改</button>
@@ -594,6 +608,25 @@ export function xenoApp(ctx) {
     `);
     d.body.addEventListener('click', e => {
       if (e.target.closest('[data-sheet-cancel]')) d.close(null);
+      if (e.target.closest('[data-sheet-pick-fav]')) {
+        const sel = d.body.querySelector('[data-edit="voiceRole"]');
+        openVoicePoolPickerDialog(ctx, {
+          currentValue: sel?.value || '',
+          onSelect: ref => {
+            if (sel) {
+              const latest = api.getState();
+              sel.innerHTML = renderVoiceBindSelectOptions({
+                currentValue: ref,
+                emptyLabel: '默认（跟随本人角色名）',
+                routes: latest.routes || [],
+                voicePool: latest.voicePool || []
+              });
+              sel.value = ref;
+            }
+          }
+        });
+        return;
+      }
       if (e.target.closest('[data-sheet-save]')) {
         const read = k => d.body.querySelector(`[data-edit="${k}"]`)?.value?.trim() || '';
         api.xenoAct('applyBodyMod', {
@@ -669,6 +702,31 @@ export function xenoApp(ctx) {
     if (act === 'clear-pending') { api.xenoAct('clearPendingNote'); return; }
     if (act === 'toggle-prot-detail') { showProtDetail = !showProtDetail; v.refresh(); return; }
     if (act === 'toggle-target-detail') { showTargetDetail = !showTargetDetail; v.refresh(); return; }
+    if (act === 'reset-prot') {
+      const d = ctx.dialog('初始化主角状态栏（新开聊天清空）', `
+        <div class="xeno-sheet-form">
+          <p class="help-copy">将清空主角状态栏中的姓名、身份、性别、外貌、身材、生理特征及所有深层详情（原始/当前肉体、穿戴挂载、体内收纳、认知状态），并解除上一场聊天残留的附身与融合状态。</p>
+          <label style="display:flex;align-items:center;gap:6px;margin:8px 0;font-size:12px;cursor:pointer">
+            <input type="checkbox" data-reset-targets>
+            <span>同时初始化清空所有目标角色的状态栏改造记录与附身锚点</span>
+          </label>
+          <div class="actions">
+            <button type="button" class="secondary" data-sheet-cancel>取消</button>
+            <button type="button" class="danger" data-sheet-confirm>确认初始化清空</button>
+          </div>
+        </div>
+      `);
+      d.body.addEventListener('click', e => {
+        if (e.target.closest('[data-sheet-cancel]')) d.close(null);
+        if (e.target.closest('[data-sheet-confirm]')) {
+          const resetTargets = !!d.body.querySelector('[data-reset-targets]')?.checked;
+          api.xenoAct('resetProtagonist', {resetTargets});
+          d.close(true);
+          ctx.notify(resetTargets ? '主角与目标状态栏均已初始化清空' : '主角状态栏已初始化清空');
+        }
+      });
+      return;
+    }
     if (act === 'edit-prot') { openEntityEditSheet(xeno.protagonist, true); return; }
     if (act === 'edit-target') { if (curTarget) openEntityEditSheet(curTarget, false); return; }
     if (act === 'add-target') { openAddTargetSheet(); return; }
@@ -815,6 +873,20 @@ export function xenoApp(ctx) {
       ctx.notify('丸吞尾状态已更新');
       return;
     }
+    if (act === 'mod-pick-fav-voice') {
+      const entity = getEntity(xeno, xeno.bodyModTarget || '__protagonist__') || xeno.protagonist;
+      openVoicePoolPickerDialog(ctx, {
+        currentValue: entity.voiceRole || '',
+        onSelect: (ref, label) => {
+          api.xenoAct('applyBodyMod', {
+            targetKey: xeno.bodyModTarget,
+            patch: {voiceRole: ref}
+          });
+          ctx.notify(ref ? `当前肉体声带已绑定至${label}` : '已恢复默认本人音色');
+        }
+      });
+      return;
+    }
     if (act === 'mod-save-body') {
       const appearance = v.root.querySelector('#xeno-mod-appearance')?.value?.trim() ?? '';
       const bodyBuild = v.root.querySelector('#xeno-mod-body')?.value?.trim() ?? '';
@@ -885,7 +957,7 @@ export function xenoApp(ctx) {
         targetKey: xeno.bodyModTarget,
         patch: {voiceRole: el.value}
       });
-      ctx.notify(el.value ? `当前肉体声带已绑定至角色「${el.value}」音色` : '已恢复默认本人音色');
+      ctx.notify(el.value ? `当前肉体声带已绑定至「${formatVoiceRoleLabel(el.value, api.getState().voicePool || [])}」` : '已恢复默认本人音色');
       return;
     }
     if (act === 'mod-orifice') {

@@ -1,4 +1,111 @@
 // Shared image upload compression & AI product image generation helper for 购物商城 (mall) and 衣柜 (wardrobe).
+import {esc} from './common.js';
+import {icon} from './icons.js';
+import {poolLine} from '../core/auto-voice.js';
+import {encodePoolVoiceRef, parsePoolVoiceRef, formatVoiceRoleLabel} from '../core/xeno.js';
+
+const ENGINE_LABELS = {
+  fish: 'Fish Audio',
+  mini: 'MiniMax',
+  eleven: 'ElevenLabs',
+  mimo: '小米 MiMo',
+  doubao: '豆包语音',
+  custom: '自定义接口'
+};
+
+/** Renders `<option>` / `<optgroup>` items for binding either a `voicePool` (音色收藏夹) entry or a `角色` App route. */
+export function renderVoiceBindSelectOptions({
+  currentValue = '',
+  emptyLabel = '（不切换音色，保持本人原音色）',
+  routes = [],
+  voicePool = []
+} = {}) {
+  const cur = String(currentValue || '').trim();
+  const poolOpts = (Array.isArray(voicePool) ? voicePool : []).map(f => {
+    const ref = encodePoolVoiceRef(f);
+    const meta = [ENGINE_LABELS[f.engine] || f.engine, f.style].filter(Boolean).join(' · ');
+    return {ref, html: `<option value="${esc(ref)}" ${cur === ref ? 'selected' : ''}>💖 收藏夹：${esc(f.name)}${meta ? `（${esc(meta)}）` : ''}</option>`};
+  });
+  const parsedCur = parsePoolVoiceRef(cur, voicePool);
+  const extraPoolOpt = (parsedCur && !poolOpts.some(o => o.ref === cur))
+    ? `<option value="${esc(cur)}" selected>💖 收藏夹：${esc(parsedCur.name)}（${esc(ENGINE_LABELS[parsedCur.engine] || parsedCur.engine)}）</option>`
+    : '';
+  const roleOpts = (Array.isArray(routes) ? routes : [])
+    .filter(r => r?.name && r.roleKind !== 'narrator')
+    .map(r => `<option value="${esc(r.name)}" ${cur === r.name ? 'selected' : ''}>🎙️ 角色【${esc(r.name)}】${r.voice ? '（已配音）' : '（待配音）'}</option>`);
+
+  return [
+    `<option value="" ${!cur ? 'selected' : ''}>${esc(emptyLabel)}</option>`,
+    (poolOpts.length || extraPoolOpt)
+      ? `<optgroup label="💖 音色收藏夹（直接选用收藏音色）">${extraPoolOpt}${poolOpts.map(o => o.html).join('')}</optgroup>`
+      : '',
+    roleOpts.length
+      ? `<optgroup label="👤 角色 App（跟随角色配音）">${roleOpts.join('')}</optgroup>`
+      : ''
+  ].join('');
+}
+
+/** Opens a picker sheet showing all voices in `音色收藏夹` (`state.voicePool`) and invokes `onSelect(ref, label)`. */
+export function openVoicePoolPickerDialog(ctx, {currentValue = '', onSelect} = {}) {
+  const state = ctx.api.getState();
+  const pool = state.voicePool || [];
+  const cur = String(currentValue || '').trim();
+  const d = ctx.dialog('💖 从音色收藏夹选择音色', pool.length ? `
+    <div class="xeno-sheet-form">
+      <p class="xeno-hint">点击下方收藏的音色即可直接绑定为声带音色：</p>
+      <div class="group" style="max-height:52vh;overflow-y:auto;margin:6px 0">
+        ${pool.map((f, idx) => {
+          const ref = encodePoolVoiceRef(f);
+          const active = cur === ref;
+          const desc = [ENGINE_LABELS[f.engine] || f.engine, poolLine({...f, name: ''})].filter(Boolean).join(' · ');
+          return `
+            <button type="button" class="list-row" data-pick-pool-idx="${idx}" style="${active ? 'background:rgba(255,80,0,0.08);border-color:#ff5000' : ''}">
+              <span class="disc">${icon('heart', true)}</span>
+              <span>
+                <strong>${esc(f.name)}${active ? '（当前已绑）' : ''}</strong>
+                <small>${esc(desc)}</small>
+                <small class="mono">${esc(f.voice)}</small>
+              </span>
+              ${icon('next')}
+            </button>
+          `;
+        }).join('')}
+      </div>
+      <div class="actions">
+        <button type="button" class="secondary" data-pool-clear>清除绑定</button>
+        <button type="button" class="secondary" data-pool-close>关闭</button>
+      </div>
+    </div>
+  ` : `
+    <div class="xeno-sheet-form">
+      <p class="help-copy">你的「音色收藏夹」目前还是空的。可以在「角色」App 的「音色收藏夹」中手动添加、从音色列表点 ♡ 收藏，或直接导入音色库 JSON 文件。</p>
+      <div class="actions">
+        <button type="button" class="secondary" data-pool-close>关闭</button>
+        <button type="button" class="primary" data-pool-go-roles>前往「角色」App 管理收藏夹</button>
+      </div>
+    </div>
+  `);
+
+  d.body.addEventListener('click', e => {
+    if (e.target.closest('[data-pool-close]')) { d.close(null); return; }
+    if (e.target.closest('[data-pool-go-roles]')) { d.close(null); ctx.open('roles'); return; }
+    if (e.target.closest('[data-pool-clear]')) {
+      d.close(true);
+      onSelect?.('', '');
+      return;
+    }
+    const btn = e.target.closest('[data-pick-pool-idx]');
+    if (btn) {
+      const idx = Number(btn.dataset.pickPoolIdx);
+      const fav = pool[idx];
+      if (fav) {
+        const ref = encodePoolVoiceRef(fav);
+        d.close(true);
+        onSelect?.(ref, formatVoiceRoleLabel(ref, pool));
+      }
+    }
+  });
+}
 
 /** Compresses an image File or Blob to a compact JPEG data URI (max 640px) so it can be stored in item.imageData. */
 export async function blobToDataUrl(win, fileOrBlob) {

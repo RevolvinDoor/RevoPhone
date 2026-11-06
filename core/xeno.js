@@ -157,15 +157,15 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
     // === 肉体改造：丸吞尾 & 孔洞异化 ===
     predatorTail: ['none', 'hidden', 'deployed'].includes(raw?.predatorTail) ? raw.predatorTail : 'none',
     orificeMods: normalizeOrificeMods(raw?.orificeMods),
-    // 当前肉体绑定的音色角色名（为空则默认跟随自身角色名；肉体互换或肉体改造换音色时自动/手动绑定）
-    voiceRole: clip(raw?.voiceRole, 80),
+    // 当前肉体绑定的音色（可为角色名，或 pool:<engine>:<voice>:<name> 音色收藏夹引用）
+    voiceRole: clip(raw?.voiceRole, 300),
     // Snapshot of original body parameters before possession/fusion so returning restores them cleanly
     baseSnapshot: raw?.baseSnapshot && typeof raw.baseSnapshot === 'object' ? {
       gender: GENDERS.includes(raw.baseSnapshot.gender) ? raw.baseSnapshot.gender : '',
       appearance: clip(raw.baseSnapshot.appearance, 1000),
       bodyBuild: clip(raw.baseSnapshot.bodyBuild, 1000),
       physiology: clip(raw.baseSnapshot.physiology, 1000),
-      voiceRole: clip(raw.baseSnapshot.voiceRole, 80)
+      voiceRole: clip(raw.baseSnapshot.voiceRole, 300)
     } : null
   };
 }
@@ -185,7 +185,7 @@ export function normalizeCatalogItem(raw = {}) {
     owned: raw?.owned === true,
     source: ['shop', 'fusion', 'restock'].includes(raw?.source) ? raw.source : 'shop',
     sourceTargetName: clip(raw?.sourceTargetName, 80),
-    voiceRole: clip(raw?.voiceRole || raw?.sourceTargetName, 80),
+    voiceRole: clip(raw?.voiceRole || raw?.sourceTargetName, 300),
     effectKind: clip(raw?.effectKind, 40),
     gender: GENDERS.includes(raw?.gender) ? raw.gender : (category === 'skin_suit' || category === 'flesh_ring' ? '扶她' : ''),
     appearance: clip(raw?.appearance, 1000),
@@ -212,6 +212,7 @@ export function defaultXeno() {
     wardrobeTarget: '__protagonist__',
     bodyModTarget: '__protagonist__',
     cogModTarget: '',
+    protagonistCleared: false,
     protagonist: normalizeEntity({}, true),
     targets: [],
     targetPool: [],
@@ -282,6 +283,7 @@ export function normalizeXeno(raw) {
     wardrobeTarget: raw.wardrobeTarget === '__protagonist__' || targets.some(t => t.name === raw.wardrobeTarget) ? raw.wardrobeTarget : '__protagonist__',
     bodyModTarget,
     cogModTarget,
+    protagonistCleared: raw.protagonistCleared === true,
     protagonist: normalizeEntity(raw.protagonist, true),
     targets,
     targetPool: [...poolMap.values()].slice(0, 120),
@@ -360,7 +362,7 @@ export function syncXenoWithRoutes(xeno, routes = []) {
   for (const t of out.targets || []) pool.set(t.name, t);
 
   const protRoute = list.find(r => r?.name?.trim() && roleTypeOf(r) === 'protagonist');
-  if (protRoute) {
+  if (protRoute && !out.protagonistCleared) {
     const pName = clip(protRoute.name, 80);
     const prevName = out.protagonist.name;
     const pooled = pool.get(pName);
@@ -437,6 +439,43 @@ export function rebuildCognitionSummary(cog) {
   return cog.summary;
 }
 
+/** Encodes a `voicePool` (音色收藏夹) favorite entry into a storable `voiceRole` reference string. */
+export function encodePoolVoiceRef(fav) {
+  if (!fav?.engine || !fav?.voice) return '';
+  return `pool:${fav.engine}:${encodeURIComponent(String(fav.voice).trim())}:${encodeURIComponent(String(fav.name || fav.voice).trim())}`;
+}
+
+/** Parses a `pool:<engine>:<voice>:<name>` reference back into a voice descriptor, enriched from `voicePool` when available. */
+export function parsePoolVoiceRef(ref, voicePool = []) {
+  const s = String(ref || '').trim();
+  if (!s.startsWith('pool:')) return null;
+  const parts = s.split(':');
+  const engine = parts[1] || '';
+  let voice = '', fallbackName = '';
+  try { voice = decodeURIComponent(parts[2] || ''); } catch { voice = parts[2] || ''; }
+  try { fallbackName = decodeURIComponent(parts.slice(3).join(':') || ''); } catch { fallbackName = parts.slice(3).join(':') || ''; }
+  if (!engine || !voice) return null;
+  const found = Array.isArray(voicePool)
+    ? voicePool.find(f => f.engine === engine && f.voice === voice)
+    : null;
+  return {
+    engine,
+    voice,
+    model: found?.model || '',
+    name: found?.name || fallbackName || voice,
+    style: found?.style || '',
+    gender: found?.gender || '',
+    age: found?.age || ''
+  };
+}
+
+/** Formats any `voiceRole` value (character name or `pool:...` favorite ref) into a human-readable label. */
+export function formatVoiceRoleLabel(ref, voicePool = []) {
+  const parsed = parsePoolVoiceRef(ref, voicePool);
+  if (parsed) return `收藏音色·${parsed.name}`;
+  return String(ref || '').trim();
+}
+
 /**
  * Resolves which role's voice should be used when `speakerName` speaks or thinks (`inner === true`):
  * 1. 附身之术 (Possession): 主角开口说话使用被附身目标 B 的音色；主角脑内心声 (inner) 使用主角自己的原音色。脱离附身后恢复。
@@ -476,12 +515,12 @@ export function resolveXenoVoiceRole(xeno, speakerName, {inner = false} = {}) {
     if (!m) continue;
     if (m.skinSuitId && m.skinFaceMode === 'full') {
       const skin = items.find(i => i.id === m.skinSuitId);
-      const skinVoice = clip(skin?.voiceRole || skin?.sourceTargetName, 80);
+      const skinVoice = clip(skin?.voiceRole || skin?.sourceTargetName, 300);
       if (skinVoice) return skinVoice;
     }
     if (m.fleshRingId && m.fleshExtendMode === 'backward') {
       const ring = items.find(i => i.id === m.fleshRingId);
-      const ringVoice = clip(ring?.voiceRole || ring?.sourceTargetName, 80);
+      const ringVoice = clip(ring?.voiceRole || ring?.sourceTargetName, 300);
       if (ringVoice) return ringVoice;
     }
   }
@@ -499,6 +538,32 @@ export function resolveLineRoute(settings, line) {
   const inner = line?.inner === true || lineEffect(line) === 'inner';
   const targetVoiceRole = resolveXenoVoiceRole(settings?.xeno, canonName, {inner});
   if (targetVoiceRole && targetVoiceRole !== canonName) {
+    const poolVoice = parsePoolVoiceRef(targetVoiceRole, settings?.voicePool);
+    if (poolVoice) {
+      const base = direct ? structuredClone(direct) : {
+        id: 'pool_' + canonName,
+        name: canonName,
+        language: settings?.general?.defaultLanguage || 'zh',
+        bindings: {}
+      };
+      const model = poolVoice.model || settings?.connections?.[poolVoice.engine]?.model || '';
+      return {
+        ...base,
+        name: canonName,
+        engine: poolVoice.engine,
+        voice: poolVoice.voice,
+        model,
+        bindings: {
+          ...(base.bindings || {}),
+          [poolVoice.engine]: {
+            ...(base.bindings?.[poolVoice.engine] || {}),
+            voice: poolVoice.voice,
+            model
+          }
+        },
+        voiceSourceRole: `收藏音色·${poolVoice.name}`
+      };
+    }
     const mapped = findRoute(routes, targetVoiceRole);
     if (mapped) {
       return {
@@ -519,6 +584,25 @@ export function effectiveSpeakingRoutes(settings) {
     if (!r?.name) return r;
     const targetVoiceRole = resolveXenoVoiceRole(settings?.xeno, r.name, {inner: false});
     if (targetVoiceRole && targetVoiceRole !== r.name) {
+      const poolVoice = parsePoolVoiceRef(targetVoiceRole, settings?.voicePool);
+      if (poolVoice) {
+        const model = poolVoice.model || settings?.connections?.[poolVoice.engine]?.model || '';
+        return {
+          ...structuredClone(r),
+          engine: poolVoice.engine,
+          voice: poolVoice.voice,
+          model,
+          bindings: {
+            ...(r.bindings || {}),
+            [poolVoice.engine]: {
+              ...(r.bindings?.[poolVoice.engine] || {}),
+              voice: poolVoice.voice,
+              model
+            }
+          },
+          voiceSourceRole: `收藏音色·${poolVoice.name}`
+        };
+      }
       const mapped = findRoute(routes, targetVoiceRole);
       if (mapped && (mapped.voice?.trim() || mapped.language || mapped.engine)) {
         return {
@@ -602,15 +686,17 @@ export function effectiveEntityView(xeno, entity) {
   const lookupName = e.name || (e.id === '__protagonist__' ? '主角' : '');
   const spokenVoiceRole = resolveXenoVoiceRole(xeno, lookupName, {inner: false});
   const innerVoiceRole = resolveXenoVoiceRole(xeno, lookupName, {inner: true});
+  const spokenLabel = formatVoiceRoleLabel(spokenVoiceRole);
+  const innerLabel = formatVoiceRoleLabel(innerVoiceRole);
   let voiceStateText = e.name ? `本人原音色（${e.name}）` : '本人原音色';
   if (spokenVoiceRole && spokenVoiceRole !== e.name && spokenVoiceRole !== '主角') {
     if (innerVoiceRole && innerVoiceRole !== spokenVoiceRole) {
-      voiceStateText = `开口使用【${spokenVoiceRole}】音色 ｜ 心声保留【${innerVoiceRole === '主角' ? (e.name || '主角') : innerVoiceRole}】音色`;
+      voiceStateText = `开口使用【${spokenLabel}】音色 ｜ 心声保留【${innerVoiceRole === '主角' ? (e.name || '主角') : innerLabel}】音色`;
     } else {
-      voiceStateText = `使用【${spokenVoiceRole}】音色`;
+      voiceStateText = `使用【${spokenLabel}】音色`;
     }
   } else if (skin && e.livingMount.skinFaceMode === 'neck') {
-    voiceStateText = `皮躯露原貌：恢复【${spokenVoiceRole || e.name || '本人'}】音色`;
+    voiceStateText = `皮躯露原貌：恢复【${spokenLabel || e.name || '本人'}】音色`;
   }
 
   return {
@@ -1083,9 +1169,32 @@ export function xenoRemoveVore(state, {predatorKey = '__protagonist__', entryId,
 
 // ==================== 4. 肉体改造（针对肉体） & 5. 认知修改（针对角色本身） ====================
 
+/** Resets Protagonist Status Bar (and active possession/fusion) to empty for starting a fresh chat. */
+export function xenoResetProtagonist(state, {resetTargets = false} = {}) {
+  const next = normalizeXeno(state);
+  next.protagonist = normalizeEntity({}, true);
+  next.protagonistCleared = true;
+  next.possession.active = false;
+  next.possession.targetName = '';
+  next.possession.organSync = false;
+  next.possession.insightReports = [];
+  next.fusion.active = false;
+  next.fusion.targetName = '';
+  next.pendingActionNote = '';
+  if (resetTargets) {
+    next.targets = next.targets.map(t => normalizeEntity({id: t.id, name: t.name}, false));
+    next.targetPool = [];
+    next.possession.anchors = [];
+  }
+  return next;
+}
+
 export function xenoApplyBodyMod(state, {targetKey = '__protagonist__', patch = {}}) {
   const next = normalizeXeno(state);
   const entity = getEntity(next, targetKey) || next.protagonist;
+  if (entity === next.protagonist && (patch.name || patch.identity || patch.gender || patch.appearance || patch.bodyBuild || patch.physiology)) {
+    next.protagonistCleared = false;
+  }
   if (patch.name !== undefined) entity.name = clip(patch.name, 80);
   if (patch.identity !== undefined) entity.identity = clip(patch.identity, 300);
   if (patch.gender !== undefined) entity.gender = GENDERS.includes(patch.gender) ? patch.gender : '';
@@ -1094,7 +1203,7 @@ export function xenoApplyBodyMod(state, {targetKey = '__protagonist__', patch = 
   if (patch.physiology !== undefined) entity.physiology = clip(patch.physiology, 1000);
   if (patch.originalBody !== undefined) entity.originalBody = clip(patch.originalBody, 160);
   if (patch.currentBody !== undefined) entity.currentBody = clip(patch.currentBody, 160);
-  if (patch.voiceRole !== undefined) entity.voiceRole = clip(patch.voiceRole, 80);
+  if (patch.voiceRole !== undefined) entity.voiceRole = clip(patch.voiceRole, 300);
   if (patch.predatorTail && ['none', 'hidden', 'deployed'].includes(patch.predatorTail)) {
     entity.predatorTail = patch.predatorTail;
   }
@@ -1408,6 +1517,7 @@ export function applyXenoUpdateFromText(state, text) {
       const isProt = name === next.protagonist.name || name === '主角';
       const ent = isProt ? next.protagonist : next.targets.find(t => t.name === name);
       if (!ent) continue;
+      if (isProt) next.protagonistCleared = false;
       if (identity) ent.identity = clip(identity, 300);
       if (GENDERS.includes(gender)) ent.gender = gender;
       if (appearance) ent.appearance = clip(appearance, 1000);

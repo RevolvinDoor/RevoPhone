@@ -46,7 +46,7 @@ import {
     xenoStartPossession, xenoSetPossessionMode, xenoToggleOrganSync, xenoReleasePossession, xenoBodySwap,
     xenoStartFusion, xenoSetFusionMode, xenoToggleFusionController, xenoReleaseFusion, xenoRestoreFromLivingItem,
     xenoStartVore, xenoUpdateVore, xenoRemoveVore,
-    xenoApplyBodyMod, xenoApplyCognitionMod,
+    xenoResetProtagonist, xenoApplyBodyMod, xenoApplyCognitionMod,
     xenoEquipItem, xenoUpdateMountOption, xenoUnequipSlot, xenoUseConsumable
 } from './xeno.js';
 
@@ -613,6 +613,7 @@ export class TTSBackend {
                 case 'startVore': return xenoStartVore(xeno, p);
                 case 'updateVore': return xenoUpdateVore(xeno, p);
                 case 'removeVore': return xenoRemoveVore(xeno, p);
+                case 'resetProtagonist': return xenoResetProtagonist(xeno, p);
                 case 'applyBodyMod': return xenoApplyBodyMod(xeno, p);
                 case 'applyCognitionMod': return xenoApplyCognitionMod(xeno, p);
                 case 'equipItem': return xenoEquipItem(xeno, p);

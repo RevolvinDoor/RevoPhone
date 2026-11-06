@@ -123,7 +123,10 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
           if (matchedRoute && roleTypeOf(matchedRoute) === 'narrator') continue;
           const isProt = (matchedRoute && roleTypeOf(matchedRoute) === 'protagonist') || kind.includes('主角') || name === xeno.protagonist.name || name === userName();
           const ent = isProt ? xeno.protagonist : ensureTarget(xeno, name);
-          if (isProt && name) ent.name = name;
+          if (isProt) {
+            xeno.protagonistCleared = false;
+            if (name) ent.name = name;
+          }
           if (identity) ent.identity = identity;
           if (GENDERS.includes(gender)) ent.gender = gender;
           if (appearance) ent.appearance = appearance;

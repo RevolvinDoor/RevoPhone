@@ -7,8 +7,8 @@
 
 import {createView, esc, heading} from './common.js';
 import {icon} from './icons.js';
-import {getEntity} from '../core/xeno.js';
-import {blobToDataUrl, generateItemPreview} from './xeno-media.js';
+import {getEntity, formatVoiceRoleLabel} from '../core/xeno.js';
+import {blobToDataUrl, generateItemPreview, renderVoiceBindSelectOptions, openVoicePoolPickerDialog} from './xeno-media.js';
 
 const SHELVES = [
   ['skin_suit', '皮躯专柜'],
@@ -214,7 +214,7 @@ export function mallApp(ctx) {
                   <p class="tb-desc">${esc(item.summary)}</p>
                   ${item.bodyBuild ? `<p class="tb-spec"><b>规格：</b>${esc(item.bodyBuild)}</p>` : ''}
                   ${(item.category === 'skin_suit' || item.category === 'flesh_ring') && (item.voiceRole || item.sourceTargetName)
-                    ? `<p class="tb-spec"><b>🎙️ 声带音色：</b>${esc(item.voiceRole || item.sourceTargetName)}（${item.category === 'skin_suit' ? '全脸覆面生效' : '后方延展生效'}）</p>`
+                    ? `<p class="tb-spec"><b>🎙️ 声带音色：</b>${esc(formatVoiceRoleLabel(item.voiceRole || item.sourceTargetName, api.getState().voicePool || []))}（${item.category === 'skin_suit' ? '全脸覆面生效' : '后方延展生效'}）</p>`
                     : ''}
                   <div class="tb-price-row">
                     <div class="tb-price-box">
@@ -388,7 +388,9 @@ export function mallApp(ctx) {
       const item = xeno.items.find(i => i.id === el.dataset.id);
       if (!item) return;
       const isLiving = item.category === 'skin_suit' || item.category === 'flesh_ring';
-      const routes = (api.getState().routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
+      const state = api.getState();
+      const routes = (state.routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
+      const voicePool = state.voicePool || [];
       const curVoice = item.voiceRole || item.sourceTargetName || '';
       const d = ctx.dialog(item.name, `
         <div class="xeno-sheet-form">
@@ -396,13 +398,15 @@ export function mallApp(ctx) {
           <p><b>分类：</b>${esc(SLOT_LABELS[item.slot] || item.category)} ｜ <b>售价：</b>¥${esc(String(item.price))}</p>
           <p><b>简介：</b>${esc(item.summary)}</p>
           ${isLiving ? `
-            <label class="xeno-field-inline">
-              <span>🎙️ 绑定声带音色角色（${item.category === 'skin_suit' ? '全脸覆面时生效' : '后方全身延展时生效'}）</span>
+            <div class="xeno-field-inline">
+              <div class="xeno-row-between" style="margin-bottom:4px">
+                <span>🎙️ 绑定声带音色（${item.category === 'skin_suit' ? '全脸覆面时生效' : '后方全身延展时生效'}）</span>
+                <button type="button" class="xeno-mini-btn primary" data-pick-fav-voice>♡ 从音色收藏夹选</button>
+              </div>
               <select class="xeno-select" data-mall-voice>
-                <option value="" ${!curVoice ? 'selected' : ''}>（不切换音色，保持穿戴者本人音色）</option>
-                ${routes.map(r => `<option value="${esc(r.name)}" ${curVoice === r.name ? 'selected' : ''}>🎙️ 使用角色【${esc(r.name)}】的音色${r.voice ? '（已配音）' : '（待配音）'}</option>`).join('')}
+                ${renderVoiceBindSelectOptions({currentValue: curVoice, emptyLabel: '（不切换音色，保持穿戴者本人音色）', routes, voicePool})}
               </select>
-            </label>
+            </div>
           ` : ''}
           ${item.appearance ? `<p><b>外貌特征：</b>${esc(item.appearance)}</p>` : ''}
           ${item.bodyBuild ? `<p><b>体型身材：</b>${esc(item.bodyBuild)}</p>` : ''}
@@ -423,11 +427,30 @@ export function mallApp(ctx) {
       if (isLiving) {
         d.body.addEventListener('click', e => {
           if (e.target.closest('[data-sheet-cancel]')) d.close(null);
+          if (e.target.closest('[data-pick-fav-voice]')) {
+            const sel = d.body.querySelector('[data-mall-voice]');
+            openVoicePoolPickerDialog(ctx, {
+              currentValue: sel?.value || '',
+              onSelect: ref => {
+                if (sel) {
+                  const latest = api.getState();
+                  sel.innerHTML = renderVoiceBindSelectOptions({
+                    currentValue: ref,
+                    emptyLabel: '（不切换音色，保持穿戴者本人音色）',
+                    routes: latest.routes || [],
+                    voicePool: latest.voicePool || []
+                  });
+                  sel.value = ref;
+                }
+              }
+            });
+            return;
+          }
           if (e.target.closest('[data-sheet-save-voice]')) {
             const voiceRole = d.body.querySelector('[data-mall-voice]')?.value?.trim() || '';
             api.xenoAct('saveItem', {...item, voiceRole});
             d.close(true);
-            ctx.notify(voiceRole ? `已绑定「${voiceRole}」的声带音色` : '已清除声带音色绑定');
+            ctx.notify(voiceRole ? `已绑定「${formatVoiceRoleLabel(voiceRole, api.getState().voicePool || [])}」的声带音色` : '已清除声带音色绑定');
           }
         });
       }
