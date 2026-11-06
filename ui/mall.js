@@ -213,6 +213,9 @@ export function mallApp(ctx) {
                   </div>
                   <p class="tb-desc">${esc(item.summary)}</p>
                   ${item.bodyBuild ? `<p class="tb-spec"><b>规格：</b>${esc(item.bodyBuild)}</p>` : ''}
+                  ${(item.category === 'skin_suit' || item.category === 'flesh_ring') && (item.voiceRole || item.sourceTargetName)
+                    ? `<p class="tb-spec"><b>🎙️ 声带音色：</b>${esc(item.voiceRole || item.sourceTargetName)}（${item.category === 'skin_suit' ? '全脸覆面生效' : '后方延展生效'}）</p>`
+                    : ''}
                   <div class="tb-price-row">
                     <div class="tb-price-box">
                       ${xeno.freeShop
@@ -384,11 +387,23 @@ export function mallApp(ctx) {
     if (act === 'view-mall-item') {
       const item = xeno.items.find(i => i.id === el.dataset.id);
       if (!item) return;
-      ctx.dialog(item.name, `
+      const isLiving = item.category === 'skin_suit' || item.category === 'flesh_ring';
+      const routes = (api.getState().routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
+      const curVoice = item.voiceRole || item.sourceTargetName || '';
+      const d = ctx.dialog(item.name, `
         <div class="xeno-sheet-form">
           ${item.imageData ? `<img class="wardrobe-sheet-img" src="${esc(item.imageData)}" alt="">` : ''}
           <p><b>分类：</b>${esc(SLOT_LABELS[item.slot] || item.category)} ｜ <b>售价：</b>¥${esc(String(item.price))}</p>
           <p><b>简介：</b>${esc(item.summary)}</p>
+          ${isLiving ? `
+            <label class="xeno-field-inline">
+              <span>🎙️ 绑定声带音色角色（${item.category === 'skin_suit' ? '全脸覆面时生效' : '后方全身延展时生效'}）</span>
+              <select class="xeno-select" data-mall-voice>
+                <option value="" ${!curVoice ? 'selected' : ''}>（不切换音色，保持穿戴者本人音色）</option>
+                ${routes.map(r => `<option value="${esc(r.name)}" ${curVoice === r.name ? 'selected' : ''}>🎙️ 使用角色【${esc(r.name)}】的音色${r.voice ? '（已配音）' : '（待配音）'}</option>`).join('')}
+              </select>
+            </label>
+          ` : ''}
           ${item.appearance ? `<p><b>外貌特征：</b>${esc(item.appearance)}</p>` : ''}
           ${item.bodyBuild ? `<p><b>体型身材：</b>${esc(item.bodyBuild)}</p>` : ''}
           ${item.physiology ? `<p><b>生理特征：</b>${esc(item.physiology)}</p>` : ''}
@@ -397,8 +412,25 @@ export function mallApp(ctx) {
             <span>完整高定档案</span>
             <textarea class="xeno-textarea" rows="7" readonly>${esc(item.rawDesign)}</textarea>
           </label>
+          ${isLiving ? `
+            <div class="actions">
+              <button type="button" class="secondary" data-sheet-cancel>关闭</button>
+              <button type="button" class="primary" data-sheet-save-voice>保存音色绑定</button>
+            </div>
+          ` : ''}
         </div>
       `);
+      if (isLiving) {
+        d.body.addEventListener('click', e => {
+          if (e.target.closest('[data-sheet-cancel]')) d.close(null);
+          if (e.target.closest('[data-sheet-save-voice]')) {
+            const voiceRole = d.body.querySelector('[data-mall-voice]')?.value?.trim() || '';
+            api.xenoAct('saveItem', {...item, voiceRole});
+            d.close(true);
+            ctx.notify(voiceRole ? `已绑定「${voiceRole}」的声带音色` : '已清除声带音色绑定');
+          }
+        });
+      }
       return;
     }
     if (act === 'delete-mall-item') {

@@ -58,7 +58,7 @@ export function wardrobeApp(ctx) {
             ${allPeople.map(([k, label]) => `<option value="${esc(k)}" ${targetKey === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}
           </select>
         </div>
-        <p class="xeno-hint">当前显性外貌：<b>${esc(view.gender)}</b> ｜ ${esc(view.bodyBuild.slice(0, 80))}</p>
+        <p class="xeno-hint">当前显性外貌：<b>${esc(view.gender || '未定')}</b> ｜ 🎙️ 声带音色：<b>${esc(view.voiceStateText)}</b></p>
         <div class="wardrobe-slot-list">
           <div class="wardrobe-slot-row ${skin ? 'equipped' : ''}">
             <div class="slot-head">
@@ -68,9 +68,10 @@ export function wardrobeApp(ctx) {
             </div>
             ${skin ? `
               <p class="slot-desc">${esc(skin.summary || skin.bodyBuild)}</p>
+              <p class="xeno-hint" style="margin:2px 0 6px">🎙️ 皮躯绑定音色：<b>${esc(skin.voiceRole || skin.sourceTargetName || '未绑定（点击下方皮躯卡片可绑定角色音色）')}</b>（全脸覆面生效，露原貌恢复本人音色）</p>
               <div class="xeno-row-controls">
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.skinFaceMode === 'full' ? 'primary' : ''}" data-action="skin-face" data-mode="full">全脸覆面拟态</button>
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.skinFaceMode === 'neck' ? 'primary' : ''}" data-action="skin-face" data-mode="neck">褪至颈部露原貌</button>
+                <button type="button" class="xeno-mini-btn ${entity.livingMount.skinFaceMode === 'full' ? 'primary' : ''}" data-action="skin-face" data-mode="full">全脸覆面（皮躯音色）</button>
+                <button type="button" class="xeno-mini-btn ${entity.livingMount.skinFaceMode === 'neck' ? 'primary' : ''}" data-action="skin-face" data-mode="neck">露原貌（本人音色）</button>
                 <button type="button" class="xeno-mini-btn ${entity.livingMount.skinOrganOut ? 'accent' : ''}" data-action="skin-organ">
                   ${entity.livingMount.skinOrganOut ? '扶她器官：充血释出' : '扶她器官：收纳隐藏'}
                 </button>
@@ -85,10 +86,11 @@ export function wardrobeApp(ctx) {
             </div>
             ${ring ? `
               <p class="slot-desc">${esc(ring.summary || ring.ringAppearance)}</p>
+              <p class="xeno-hint" style="margin:2px 0 6px">🎙️ 肉躯绑定音色：<b>${esc(ring.voiceRole || ring.sourceTargetName || '未绑定（点击下方肉躯卡片可绑定角色音色）')}</b>（仅后方延展生效）</p>
               <div class="xeno-row-controls">
                 <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'idle' ? 'primary' : ''}" data-action="ring-mode" data-mode="idle">静息饰品形态</button>
                 <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'forward' ? 'primary' : ''}" data-action="ring-mode" data-mode="forward">前方延展(肉棒重构)</button>
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'backward' ? 'primary' : ''}" data-action="ring-mode" data-mode="backward">后方延展(全身重构)</button>
+                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'backward' ? 'primary' : ''}" data-action="ring-mode" data-mode="backward">后方延展(全身+肉躯音色)</button>
               </div>
             ` : '<small class="slot-empty">从下方「肉躯库」选择活体肉躯环扣合于阴茎口/阴蒂口</small>'}
           </div>
@@ -190,11 +192,23 @@ export function wardrobeApp(ctx) {
   }
 
   function openDesignSheet(item) {
+    const isLiving = item.category === 'skin_suit' || item.category === 'flesh_ring';
+    const routes = (api.getState().routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
+    const curVoice = item.voiceRole || item.sourceTargetName || '';
     const d = ctx.dialog(item.name, `
       <div class="xeno-sheet-form">
         ${item.imageData ? `<img class="wardrobe-sheet-img" src="${esc(item.imageData)}" alt="">` : ''}
         <label class="xeno-field-inline"><span>单品名称</span><input class="xeno-input" data-item="name" value="${esc(item.name)}"></label>
         <label class="xeno-field-inline"><span>一句话简介</span><input class="xeno-input" data-item="summary" value="${esc(item.summary)}"></label>
+        ${isLiving ? `
+          <label class="xeno-field-inline">
+            <span>🎙️ 绑定声带音色角色（${item.category === 'skin_suit' ? '全脸覆面时生效' : '后方全身延展时生效'}）</span>
+            <select class="xeno-select" data-item="voiceRole">
+              <option value="" ${!curVoice ? 'selected' : ''}>（不切换音色，保持穿戴者本人音色）</option>
+              ${routes.map(r => `<option value="${esc(r.name)}" ${curVoice === r.name ? 'selected' : ''}>🎙️ 使用角色【${esc(r.name)}】的音色${r.voice ? '（已配音）' : '（待配音）'}</option>`).join('')}
+            </select>
+          </label>
+        ` : ''}
         <label class="xeno-field-inline"><span>外貌特征</span><textarea class="xeno-textarea" rows="2" data-item="appearance">${esc(item.appearance)}</textarea></label>
         <label class="xeno-field-inline"><span>体型身材</span><textarea class="xeno-textarea" rows="2" data-item="bodyBuild">${esc(item.bodyBuild)}</textarea></label>
         <label class="xeno-field-inline"><span>生理特征</span><textarea class="xeno-textarea" rows="2" data-item="physiology">${esc(item.physiology)}</textarea></label>
@@ -214,6 +228,7 @@ export function wardrobeApp(ctx) {
           ...item,
           name: read('name') || item.name,
           summary: read('summary'),
+          voiceRole: isLiving ? read('voiceRole') : item.voiceRole,
           appearance: read('appearance'),
           bodyBuild: read('bodyBuild'),
           physiology: read('physiology'),

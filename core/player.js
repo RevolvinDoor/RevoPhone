@@ -3,6 +3,7 @@ import { TTSParameters } from './parameters.js';
 import { findRoute } from './routes.js';
 import { requestHash } from './cache.js';
 import { effectChain, lineEffect } from './voice-fx.js';
+import { resolveLineRoute } from './xeno.js';
 import { audioKind, unpacked, mp3FromFrame, undecodable } from './audio-bytes.js';
 export { audioKind, mp3FromFrame } from './audio-bytes.js';
 
@@ -206,7 +207,7 @@ export class DialoguePlayer {
  getVolume() { return this.volume; }
  /** The cache key a line's audio has with its speaker's current voice settings, or null without a speaker. */
  async lineKey(line) {
-  const s = this.settings(), route = findRoute(s.routes, line.role);
+  const s = this.settings(), route = resolveLineRoute(s, line);
   if (!route) return null;
   return requestHash(buildRequest(route.engine, s.connections[route.engine], { ...route, language: route.language || s.general.defaultLanguage }, line, this.providers.references));
  }
@@ -325,7 +326,7 @@ export class DialoguePlayer {
    const s = this.settings();
    if (signal?.aborted || !valid() || !s.general.cacheEnabled) break;
    if (line.narration) continue;
-   const route = findRoute(s.routes, line.role);
+   const route = resolveLineRoute(s, line);
    if (!route?.voice?.trim() && !(route?.engine === 'fish' && s.connections.fish.params.references.length) && !(route?.engine === 'mini' && s.connections.mini.params.timbre_weights.length)) continue;
    const done = await this.make(line, route, s, signal || new AbortController().signal, () => {}, () => !signal?.aborted && valid());
    if (!done) break;
@@ -339,7 +340,7 @@ export class DialoguePlayer {
  makeAhead(index, signal) {
   const line = this.queue[index], s = this.settingsOverride || this.settings();
   if (line?.narration && s.narration?.voice !== 'role') return null;
-  const route = line && findRoute(s.routes, line.role);
+  const route = line && resolveLineRoute(s, line);
   if (!route?.voice?.trim() && !(route?.engine === 'fish' && s.connections.fish.params.references.length) && !(route?.engine === 'mini' && s.connections.mini.params.timbre_weights.length)) return null;
   const made = this.make(line, route, s, signal, () => {}, () => !signal.aborted && this.valid());
   made.catch(() => {});
@@ -373,12 +374,13 @@ export class DialoguePlayer {
      if (!await this.finishedLine(epoch)) return;
      continue;
     }
-    const route = findRoute(s.routes, line.role);
+    const route = resolveLineRoute(s, line);
     this.line = line;
     this.speaker = line.role;
     this.engine = route?.engine || '';
     this.requestKey = null;
     if (!route?.voice?.trim() && !(route?.engine === 'fish' && s.connections.fish.params.references.length) && !(route?.engine === 'mini' && s.connections.mini.params.timbre_weights.length)) {
+     const targetRole = route?.voiceSourceRole || line.role;
      // Playing a whole reply goes on past speakers without a voice, so a story with more people than voices still plays
      // through; a single line stops and asks for a voice.
      if (this.queue.length > 1) {
@@ -386,9 +388,9 @@ export class DialoguePlayer {
       this.index++;
       continue;
      }
-     this.pending = line.role;
-     this.emit('waiting', '等待为 ' + line.role + ' 选择音色');
-     this.unknown(line.role);
+     this.pending = targetRole;
+     this.emit('waiting', '等待为 ' + targetRole + ' 选择音色');
+     this.unknown(targetRole);
      return;
     }
     this.pending = null;

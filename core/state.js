@@ -14,7 +14,7 @@ import { normalizePool } from './auto-voice.js';
 import { defaultSounds,normalizeSounds } from './sounds.js';
 import { defaultAssistant,normalizeAssistant } from './assistant.js';
 import { defaultNarration,normalizeNarration,NARRATOR } from './narration.js';
-import { defaultXeno,normalizeXeno } from './xeno.js';
+import { defaultXeno,normalizeXeno,effectiveSpeakingRoutes } from './xeno.js';
 export const NAMESPACE='stTtsDialogue';
 // 朗读规则 and 对白输出硬性规则 as entries of the voice preset, so they can be edited (both were added to the first entry before 0.7.58).
 const RULE_ENTRIES=()=>[{id:'reading',title:'朗读规则（按角色的引擎自动生成）',enabled:true,text:READING_PROMPT},{id:'contract',title:'对白输出硬性规则',enabled:true,text:CONTRACT_PROMPT}];
@@ -28,8 +28,8 @@ const ENGINE_NAMES={fish:'Fish Audio',mini:'MiniMax',eleven:'ElevenLabs',mimo:'�
 /** Roles to write rules for: those named in `only` (the speakers of this chat) when any of them is known, else all. */
 // only: the speakers of the current story (null: every role, for previews). Roles not in the story are never named in
 // a story request, or the model takes them as the cast (a new chat of a world card kept bringing back saved roles).
-export function speakingRoutes(s,only=null){const configured=s.routes.filter(r=>!isPlaceholderRole(r.name));if(!Array.isArray(only))return configured;const wanted=new Set(only.map(n=>String(n).trim()));return configured.filter(r=>wanted.has(r.name));}
-export function modelRules(s,only=null){const {FISH_DRAMA_PAIRS,FISH_DRAMA_SOUNDS,FISH_S1_EMOTIONS,FISH_S2_TONES,FISH_S2_SOUNDS,FISH_S1_TONES,FISH_S1_SOUNDS,MINI_SOUNDS,ELEVEN_TAGS,MIMO_STYLES,MIMO_SOUNDS}=TTSParameters.vocab;const output=[];const configured=speakingRoutes(s,only);const registered=s.routes.filter(r=>!isPlaceholderRole(r.name));
+export function speakingRoutes(s,only=null){const configured=effectiveSpeakingRoutes(s).filter(r=>!isPlaceholderRole(r.name));if(!Array.isArray(only))return configured;const wanted=new Set(only.map(n=>String(n).trim()));return configured.filter(r=>wanted.has(r.name));}
+export function modelRules(s,only=null){const {FISH_DRAMA_PAIRS,FISH_DRAMA_SOUNDS,FISH_S1_EMOTIONS,FISH_S2_TONES,FISH_S2_SOUNDS,FISH_S1_TONES,FISH_S1_SOUNDS,MINI_SOUNDS,ELEVEN_TAGS,MIMO_STYLES,MIMO_SOUNDS}=TTSParameters.vocab;const output=[];const configured=speakingRoutes(s,only);const registered=effectiveSpeakingRoutes(s).filter(r=>!isPlaceholderRole(r.name));
  // Nobody registered in the story yet: the rules of the engines in use, without names.
  const nameless=!configured.length&&registered.length,routes=configured.length?configured:nameless?[...new Map(registered.map(r=>[r.engine+'|'+(r.model||''),{...r,name:'说话者'}])).values()]:[{name:'未配置角色',engine:'fish',model:s.connections.fish.model}];
  for(const r of routes){const model=r.model||s.connections[r.engine]?.model||TTSParameters.catalogs[r.engine]?.model||'';let rule;

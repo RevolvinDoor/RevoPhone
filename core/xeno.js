@@ -3,7 +3,8 @@
 // Replaces TavernDB with zero-latency local actions, on-demand rule injection, and automatic story state sync.
 
 import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS} from './xeno-catalog.js';
-import {roleTypeOf, isValidRoleName} from './routes.js';
+import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
+import {lineEffect} from './voice-fx.js';
 
 export const GENDERS = Object.freeze(['男', '女', '扶她']);
 export const POSSESSION_MODES = Object.freeze(['浅层共鸣', '意识共存', '完全占据', '认知覆盖']);
@@ -156,12 +157,15 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
     // === 肉体改造：丸吞尾 & 孔洞异化 ===
     predatorTail: ['none', 'hidden', 'deployed'].includes(raw?.predatorTail) ? raw.predatorTail : 'none',
     orificeMods: normalizeOrificeMods(raw?.orificeMods),
+    // 当前肉体绑定的音色角色名（为空则默认跟随自身角色名；肉体互换或肉体改造换音色时自动/手动绑定）
+    voiceRole: clip(raw?.voiceRole, 80),
     // Snapshot of original body parameters before possession/fusion so returning restores them cleanly
     baseSnapshot: raw?.baseSnapshot && typeof raw.baseSnapshot === 'object' ? {
       gender: GENDERS.includes(raw.baseSnapshot.gender) ? raw.baseSnapshot.gender : '',
       appearance: clip(raw.baseSnapshot.appearance, 1000),
       bodyBuild: clip(raw.baseSnapshot.bodyBuild, 1000),
-      physiology: clip(raw.baseSnapshot.physiology, 1000)
+      physiology: clip(raw.baseSnapshot.physiology, 1000),
+      voiceRole: clip(raw.baseSnapshot.voiceRole, 80)
     } : null
   };
 }
@@ -181,6 +185,7 @@ export function normalizeCatalogItem(raw = {}) {
     owned: raw?.owned === true,
     source: ['shop', 'fusion', 'restock'].includes(raw?.source) ? raw.source : 'shop',
     sourceTargetName: clip(raw?.sourceTargetName, 80),
+    voiceRole: clip(raw?.voiceRole || raw?.sourceTargetName, 80),
     effectKind: clip(raw?.effectKind, 40),
     gender: GENDERS.includes(raw?.gender) ? raw.gender : (category === 'skin_suit' || category === 'flesh_ring' ? '扶她' : ''),
     appearance: clip(raw?.appearance, 1000),
@@ -432,6 +437,105 @@ export function rebuildCognitionSummary(cog) {
   return cog.summary;
 }
 
+/**
+ * Resolves which role's voice should be used when `speakerName` speaks or thinks (`inner === true`):
+ * 1. 附身之术 (Possession): 主角开口说话使用被附身目标 B 的音色；主角脑内心声 (inner) 使用主角自己的原音色。脱离附身后恢复。
+ * 2. 肉体互换 (Body Swap): 双向互换后双方肉体音色永久对调；单向夺舍后主角永久使用目标 B 的音色。
+ * 3. 融合之术 (Fusion): 融合期间开口说话使用目标 B 的音色；主角心声保留主角自己的原音色。
+ * 4. 活体皮躯 (Skin Suit): 仅在「全脸覆面」(skinFaceMode === 'full') 时开口使用皮躯绑定的音色；「露原貌」(neck) 恢复本人当前肉体音色。
+ * 5. 活体肉躯 (Flesh Ring): 仅在「后方全身延展」(fleshExtendMode === 'backward') 时开口使用肉躯绑定的音色；静息/前方延展保持本人当前肉体音色。
+ * 6. 肉体改造 (Body Mod): 若肉体绑定了新建/指定的音色角色 (`entity.voiceRole`)，则使用该角色音色。
+ */
+export function resolveXenoVoiceRole(xeno, speakerName, {inner = false} = {}) {
+  const rawName = String(speakerName ?? '').trim();
+  if (!rawName || !xeno || xeno.enabled === false) return rawName;
+  const isProt = (xeno.protagonist?.name && rawName === xeno.protagonist.name) || rawName === '主角';
+  const actor = isProt ? xeno.protagonist : (xeno.targets || []).find(t => t.name === rawName);
+  if (!actor) return rawName;
+
+  // 心声（脑内独白）：附身/融合时使用主角本体原音色；穿戴皮躯/肉躯时心声仍为自身肉体音色
+  if (inner) {
+    if (isProt && (xeno.possession?.active || xeno.fusion?.active) && actor.baseSnapshot) {
+      return actor.baseSnapshot.voiceRole || actor.name || rawName;
+    }
+    return actor.voiceRole || actor.name || rawName;
+  }
+
+  // 开口说话：先确定当前实际发声的物理肉体
+  let bodyEntity = actor;
+  if (isProt && xeno.possession?.active && xeno.possession?.targetName) {
+    bodyEntity = (xeno.targets || []).find(t => t.name === xeno.possession.targetName) || actor;
+  } else if (isProt && xeno.fusion?.active && xeno.fusion?.targetName) {
+    bodyEntity = (xeno.targets || []).find(t => t.name === xeno.fusion.targetName) || actor;
+  }
+
+  // 检查最外层活体挂载（皮躯全脸覆面 / 肉躯后方全身延展）
+  const items = xeno.items || [];
+  const mounts = bodyEntity !== actor ? [actor.livingMount, bodyEntity.livingMount] : [bodyEntity.livingMount];
+  for (const m of mounts) {
+    if (!m) continue;
+    if (m.skinSuitId && m.skinFaceMode === 'full') {
+      const skin = items.find(i => i.id === m.skinSuitId);
+      const skinVoice = clip(skin?.voiceRole || skin?.sourceTargetName, 80);
+      if (skinVoice) return skinVoice;
+    }
+    if (m.fleshRingId && m.fleshExtendMode === 'backward') {
+      const ring = items.find(i => i.id === m.fleshRingId);
+      const ringVoice = clip(ring?.voiceRole || ring?.sourceTargetName, 80);
+      if (ringVoice) return ringVoice;
+    }
+  }
+
+  return bodyEntity.voiceRole || bodyEntity.name || rawName;
+}
+
+/** Resolves the effective TTS route for a spoken or inner-voice dialogue line. */
+export function resolveLineRoute(settings, line) {
+  const routes = settings?.routes || [];
+  const role = String(line?.role || '').trim();
+  if (!role) return undefined;
+  const direct = findRoute(routes, role);
+  const canonName = direct?.name || role;
+  const inner = line?.inner === true || lineEffect(line) === 'inner';
+  const targetVoiceRole = resolveXenoVoiceRole(settings?.xeno, canonName, {inner});
+  if (targetVoiceRole && targetVoiceRole !== canonName) {
+    const mapped = findRoute(routes, targetVoiceRole);
+    if (mapped) {
+      return {
+        ...structuredClone(mapped),
+        id: direct?.id || mapped.id,
+        name: canonName,
+        voiceSourceRole: mapped.name
+      };
+    }
+  }
+  return direct;
+}
+
+/** Maps `settings.routes` so prompt language & reading rules follow each character's current spoken voice body. */
+export function effectiveSpeakingRoutes(settings) {
+  const routes = Array.isArray(settings?.routes) ? settings.routes : [];
+  return routes.map(r => {
+    if (!r?.name) return r;
+    const targetVoiceRole = resolveXenoVoiceRole(settings?.xeno, r.name, {inner: false});
+    if (targetVoiceRole && targetVoiceRole !== r.name) {
+      const mapped = findRoute(routes, targetVoiceRole);
+      if (mapped && (mapped.voice?.trim() || mapped.language || mapped.engine)) {
+        return {
+          ...structuredClone(r),
+          engine: mapped.engine,
+          voice: mapped.voice,
+          model: mapped.model,
+          language: mapped.language || r.language,
+          bindings: structuredClone(mapped.bindings || {}),
+          voiceSourceRole: mapped.name
+        };
+      }
+    }
+    return r;
+  });
+}
+
 /** Effective display of an entity's 6 core fields + 8 detail fields, accounting for worn 皮躯 / 肉躯! */
 export function effectiveEntityView(xeno, entity) {
   const e = normalizeEntity(entity, entity?.id === '__protagonist__');
@@ -495,6 +599,20 @@ export function effectiveEntityView(xeno, entity) {
     ? e.voreStorage.map(v => `${v.preyName}［${v.location} · 经由${v.channel} · ${v.status} · ${v.digestion}］`).join('；')
     : '无';
 
+  const lookupName = e.name || (e.id === '__protagonist__' ? '主角' : '');
+  const spokenVoiceRole = resolveXenoVoiceRole(xeno, lookupName, {inner: false});
+  const innerVoiceRole = resolveXenoVoiceRole(xeno, lookupName, {inner: true});
+  let voiceStateText = e.name ? `本人原音色（${e.name}）` : '本人原音色';
+  if (spokenVoiceRole && spokenVoiceRole !== e.name && spokenVoiceRole !== '主角') {
+    if (innerVoiceRole && innerVoiceRole !== spokenVoiceRole) {
+      voiceStateText = `开口使用【${spokenVoiceRole}】音色 ｜ 心声保留【${innerVoiceRole === '主角' ? (e.name || '主角') : innerVoiceRole}】音色`;
+    } else {
+      voiceStateText = `使用【${spokenVoiceRole}】音色`;
+    }
+  } else if (skin && e.livingMount.skinFaceMode === 'neck') {
+    voiceStateText = `皮躯露原貌：恢复【${spokenVoiceRole || e.name || '本人'}】音色`;
+  }
+
   return {
     // 6 core fields
     name: e.name,
@@ -511,7 +629,10 @@ export function effectiveEntityView(xeno, entity) {
     livingMountText: `皮躯：${skinText} ｜ 肉躯：${ringText}`,
     outfitText: `外搭：${e.outfit.outerwear || '无'}${/风衣/.test(e.outfit.outerwear) ? (e.outfit.coatPose === 'open' ? '（展开姿态）' : '（遮蔽形态）') : ''} ｜ 内衣：${e.outfit.underwear || '无'} ｜ 遮挡：${e.outfit.privacyCover || '无'} ｜ 饰品：${e.outfit.accessories || '无'}`,
     voreText,
-    cognitionText: rebuildCognitionSummary(e.cognitionState)
+    cognitionText: rebuildCognitionSummary(e.cognitionState),
+    spokenVoiceRole,
+    innerVoiceRole,
+    voiceStateText
   };
 }
 
@@ -531,7 +652,8 @@ export function xenoStartPossession(state, {targetName, mode = '浅层共鸣', e
       gender: next.protagonist.gender,
       appearance: next.protagonist.appearance,
       bodyBuild: next.protagonist.bodyBuild,
-      physiology: next.protagonist.physiology
+      physiology: next.protagonist.physiology,
+      voiceRole: next.protagonist.voiceRole
     };
   }
 
@@ -625,6 +747,7 @@ export function xenoReleasePossession(state, fakeMemory = '') {
     next.protagonist.appearance = next.protagonist.baseSnapshot.appearance;
     next.protagonist.bodyBuild = next.protagonist.baseSnapshot.bodyBuild;
     next.protagonist.physiology = next.protagonist.baseSnapshot.physiology;
+    next.protagonist.voiceRole = next.protagonist.baseSnapshot.voiceRole || '';
     next.protagonist.baseSnapshot = null;
   }
   next.protagonist.currentBody = next.protagonist.originalBody;
@@ -650,8 +773,11 @@ export function xenoBodySwap(state, swapType = 'both') {
     gender: next.protagonist.gender,
     appearance: next.protagonist.appearance,
     bodyBuild: next.protagonist.bodyBuild,
-    physiology: next.protagonist.physiology
+    physiology: next.protagonist.physiology,
+    voiceRole: next.protagonist.voiceRole
   };
+  const protOldVoice = oldProtagonistSnap.voiceRole || next.protagonist.voiceRole || next.protagonist.name;
+  const targetOldVoice = target.voiceRole || target.name;
   const newProtagonistBody = target.originalBody || `${target.name}的肉体`;
   const cleanTargetPhys = target.physiology.replace(/；【器官同步激活：[^】]*】/g, '');
 
@@ -662,18 +788,25 @@ export function xenoBodySwap(state, swapType = 'both') {
   next.protagonist.appearance = target.appearance;
   next.protagonist.bodyBuild = target.bodyBuild;
   next.protagonist.physiology = cleanTargetPhys;
+  next.protagonist.voiceRole = targetOldVoice === next.protagonist.name ? '' : targetOldVoice;
   next.protagonist.baseSnapshot = null;
   next.protagonist.changeReason = '永久肉体互换（新原始本体）';
   next.protagonist.hostingState = '未离体（已以新肉体为原始本体）';
 
-  // Target soul wakes up in protagonist's old body
-  target.originalBody = oldProtagonistBody;
-  target.currentBody = oldProtagonistBody;
-  target.gender = oldProtagonistSnap.gender;
-  target.appearance = oldProtagonistSnap.appearance;
-  target.bodyBuild = oldProtagonistSnap.bodyBuild;
-  target.physiology = oldProtagonistSnap.physiology;
-  target.hostingState = '本人意识在新肉体中苏醒';
+  if (swapType === 'oneway') {
+    target.changeReason = '肉体已被主角单向夺舍占据';
+    target.hostingState = '原意识沉睡或消散';
+  } else {
+    // Target soul wakes up in protagonist's old body
+    target.originalBody = oldProtagonistBody;
+    target.currentBody = oldProtagonistBody;
+    target.gender = oldProtagonistSnap.gender;
+    target.appearance = oldProtagonistSnap.appearance;
+    target.bodyBuild = oldProtagonistSnap.bodyBuild;
+    target.physiology = oldProtagonistSnap.physiology;
+    target.voiceRole = protOldVoice === target.name ? '' : protOldVoice;
+    target.hostingState = '本人意识在新肉体中苏醒';
+  }
 
   if (swapType === 'outer') {
     target.changeReason = '永久肉体互换（自知肉体改变，但外界认知被覆盖合理化）';
@@ -707,7 +840,8 @@ export function xenoStartFusion(state, {targetName, mode = '共存融合', relea
       gender: next.protagonist.gender,
       appearance: next.protagonist.appearance,
       bodyBuild: next.protagonist.bodyBuild,
-      physiology: next.protagonist.physiology
+      physiology: next.protagonist.physiology,
+      voiceRole: next.protagonist.voiceRole
     };
   }
 
@@ -785,6 +919,7 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
     next.protagonist.appearance = next.protagonist.baseSnapshot.appearance;
     next.protagonist.bodyBuild = next.protagonist.baseSnapshot.bodyBuild;
     next.protagonist.physiology = next.protagonist.baseSnapshot.physiology;
+    next.protagonist.voiceRole = next.protagonist.baseSnapshot.voiceRole || '';
     next.protagonist.baseSnapshot = null;
   }
   next.protagonist.currentBody = next.protagonist.originalBody;
@@ -803,6 +938,7 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
       owned: true,
       source: 'fusion',
       sourceTargetName: target.name,
+      voiceRole: target.voiceRole || target.name,
       gender: target.gender,
       appearance: target.appearance,
       bodyBuild: target.bodyBuild,
@@ -827,6 +963,7 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
       owned: true,
       source: 'fusion',
       sourceTargetName: target.name,
+      voiceRole: target.voiceRole || target.name,
       gender: '扶她',
       ringAppearance: `由${target.name}肉体凝缩而成的温热活体肉质圆环，锚定于阴茎口/阴蒂口`,
       forwardExtension: `向前方增殖重构出极具侵略性的肉棒器官（承载${target.name}的生理特征）`,
@@ -957,6 +1094,7 @@ export function xenoApplyBodyMod(state, {targetKey = '__protagonist__', patch = 
   if (patch.physiology !== undefined) entity.physiology = clip(patch.physiology, 1000);
   if (patch.originalBody !== undefined) entity.originalBody = clip(patch.originalBody, 160);
   if (patch.currentBody !== undefined) entity.currentBody = clip(patch.currentBody, 160);
+  if (patch.voiceRole !== undefined) entity.voiceRole = clip(patch.voiceRole, 80);
   if (patch.predatorTail && ['none', 'hidden', 'deployed'].includes(patch.predatorTail)) {
     entity.predatorTail = patch.predatorTail;
   }
@@ -973,6 +1111,7 @@ export function xenoApplyBodyMod(state, {targetKey = '__protagonist__', patch = 
       if (patch.appearance !== undefined) possTarget.appearance = entity.appearance;
       if (patch.bodyBuild !== undefined) possTarget.bodyBuild = entity.bodyBuild;
       if (patch.physiology !== undefined) possTarget.physiology = entity.physiology;
+      if (patch.voiceRole !== undefined) possTarget.voiceRole = entity.voiceRole;
       if (patch.predatorTail) possTarget.predatorTail = entity.predatorTail;
       if (patch.orificeMods) possTarget.orificeMods = normalizeOrificeMods(entity.orificeMods);
     }
@@ -1147,6 +1286,7 @@ export function xenoPromptPlan(xeno) {
     `- 生理特征：${pView.physiology}`,
     `- [详情] 原始肉体：${pView.originalBody} ｜ 当前肉体：${pView.currentBody} ｜ 变更原因：${pView.changeReason}`,
     `- [详情] 本体托管状态：${pView.hostingState}`,
+    `- [详情] 声带与音色：${pView.voiceStateText}`,
     `- [详情] 皮躯/肉躯挂载：${pView.livingMountText}`,
     `- [详情] 四槽位着装：${pView.outfitText}`,
     `- [详情] 体内收纳：${pView.voreText}`,
@@ -1163,6 +1303,7 @@ export function xenoPromptPlan(xeno) {
         `  - 体型身材：${tv.bodyBuild}`,
         `  - 生理特征：${tv.physiology}`,
         `  - [详情] 原始肉体：${tv.originalBody} ｜ 当前肉体：${tv.currentBody} ｜ 变更原因：${tv.changeReason} ｜ 托管/意识：${tv.hostingState}`,
+        `  - [详情] 声带与音色：${tv.voiceStateText}`,
         `  - [详情] 皮躯/肉躯挂载：${tv.livingMountText}`,
         `  - [详情] 四槽位着装：${tv.outfitText}`,
         `  - [详情] 体内收纳：${tv.voreText}`,

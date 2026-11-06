@@ -70,11 +70,12 @@ export function xenoApp(ctx) {
           </div>
           ${detailOpen ? `
             <div class="xeno-detail-list">
-              <div class="xeno-detail-divider"><span>深层映射与挂载详情（8项）</span></div>
+              <div class="xeno-detail-divider"><span>深层映射与挂载详情（9项）</span></div>
               <div class="xeno-kv detail"><span class="k">原始肉体</span><span class="v">${esc(view.originalBody)}</span></div>
               <div class="xeno-kv detail"><span class="k">当前肉体</span><span class="v">${esc(view.currentBody)}</span></div>
               <div class="xeno-kv detail"><span class="k">变更原因</span><span class="v">${esc(view.changeReason)}</span></div>
               <div class="xeno-kv detail"><span class="k">托管状态</span><span class="v">${esc(view.hostingState)}</span></div>
+              <div class="xeno-kv detail"><span class="k">声带音色</span><span class="v">${esc(view.voiceStateText)}</span></div>
               <div class="xeno-kv detail"><span class="k">皮躯/肉躯挂载</span><span class="v">${esc(view.livingMountText)}</span></div>
               <div class="xeno-kv detail"><span class="k">四槽位着装</span><span class="v">${esc(view.outfitText)}</span></div>
               <div class="xeno-kv detail"><span class="k">体内收纳</span><span class="v">${esc(view.voreText)}</span></div>
@@ -366,6 +367,8 @@ export function xenoApp(ctx) {
     const targetKey = xeno.bodyModTarget || '__protagonist__';
     const entity = getEntity(xeno, targetKey) || xeno.protagonist;
     const curBodyLabel = entity.currentBody || entity.originalBody || (entity.name ? `${entity.name}的肉体` : '主角肉体');
+    const routes = (api.getState().routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
+    const view = effectiveEntityView(xeno, entity);
     return `
       <div class="xeno-module-card">
         <div class="xeno-sec-title">
@@ -380,6 +383,15 @@ export function xenoApp(ctx) {
           <div class="xeno-chip-group">
             ${GENDERS.map(g => `<button type="button" class="xeno-chip ${entity.gender === g ? 'active' : ''}" data-action="mod-gender" data-gender="${esc(g)}">${esc(g)}</button>`).join('')}
           </div>
+          <div class="xeno-label">🎙️ 肉体声带与音色绑定（可在「角色」App 新建音色角色后绑定）</div>
+          <div class="xeno-row-controls">
+            <select class="xeno-select" id="xeno-mod-voice-role" data-change="mod-voice-role" aria-label="绑定声带音色角色" style="flex:1">
+              <option value="" ${!entity.voiceRole ? 'selected' : ''}>默认（跟随本人原名音色${entity.name ? `：${esc(entity.name)}` : ''}）</option>
+              ${routes.map(r => `<option value="${esc(r.name)}" ${entity.voiceRole === r.name ? 'selected' : ''}>🎙️ 使用角色【${esc(r.name)}】的音色${r.voice ? `（已配音）` : '（待配音）'}</option>`).join('')}
+            </select>
+            <button type="button" class="xeno-mini-btn primary" data-action="open-roles">去角色 App 新建/配音</button>
+          </div>
+          <p class="xeno-hint">当前发声状态：<b>${esc(view.voiceStateText)}</b></p>
           <label class="xeno-field-inline">
             <span>肉体外貌特征改造</span>
             <textarea class="xeno-textarea" id="xeno-mod-appearance" rows="2" placeholder="改造该肉体的发色、瞳色、五官气质…">${esc(entity.appearance)}</textarea>
@@ -552,6 +564,7 @@ export function xenoApp(ctx) {
   };
 
   function openEntityEditSheet(entity, isProt) {
+    const routes = (api.getState().routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
     const d = ctx.dialog(`编辑${isProt ? '主角' : '目标'}状态栏`, `
       <div class="xeno-sheet-form">
         <label class="xeno-field-inline"><span>姓名</span><input class="xeno-input" data-edit="name" value="${esc(entity.name)}"></label>
@@ -567,6 +580,12 @@ export function xenoApp(ctx) {
         <label class="xeno-field-inline"><span>生理特征</span><textarea class="xeno-textarea" rows="2" data-edit="physiology">${esc(entity.physiology)}</textarea></label>
         <label class="xeno-field-inline"><span>原始肉体</span><input class="xeno-input" data-edit="originalBody" value="${esc(entity.originalBody)}"></label>
         <label class="xeno-field-inline"><span>当前肉体</span><input class="xeno-input" data-edit="currentBody" value="${esc(entity.currentBody)}"></label>
+        <label class="xeno-field-inline"><span>当前肉体绑定音色角色</span>
+          <select class="xeno-select" data-edit="voiceRole">
+            <option value="" ${!entity.voiceRole ? 'selected' : ''}>默认（跟随本人角色名）</option>
+            ${routes.map(r => `<option value="${esc(r.name)}" ${entity.voiceRole === r.name ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}
+          </select>
+        </label>
         <div class="actions">
           <button type="button" class="secondary" data-sheet-cancel>取消</button>
           <button type="button" class="primary" data-sheet-save>保存修改</button>
@@ -587,7 +606,8 @@ export function xenoApp(ctx) {
             bodyBuild: read('bodyBuild'),
             physiology: read('physiology'),
             originalBody: read('originalBody'),
-            currentBody: read('currentBody')
+            currentBody: read('currentBody'),
+            voiceRole: read('voiceRole')
           }
         });
         d.close(true);
@@ -799,9 +819,10 @@ export function xenoApp(ctx) {
       const appearance = v.root.querySelector('#xeno-mod-appearance')?.value?.trim() ?? '';
       const bodyBuild = v.root.querySelector('#xeno-mod-body')?.value?.trim() ?? '';
       const physiology = v.root.querySelector('#xeno-mod-phys')?.value?.trim() ?? '';
+      const voiceRole = v.root.querySelector('#xeno-mod-voice-role')?.value?.trim() ?? '';
       api.xenoAct('applyBodyMod', {
         targetKey: xeno.bodyModTarget,
-        patch: {appearance, bodyBuild, physiology}
+        patch: {appearance, bodyBuild, physiology, voiceRole}
       });
       ctx.notify('肉体改造已生效');
       return;
@@ -859,6 +880,14 @@ export function xenoApp(ctx) {
     }
     if (act === 'select-body-mod-target') { api.xenoAct('selectBodyModTarget', {key: el.value}); return; }
     if (act === 'select-cog-mod-target') { api.xenoAct('selectCogModTarget', {key: el.value}); return; }
+    if (act === 'mod-voice-role') {
+      api.xenoAct('applyBodyMod', {
+        targetKey: xeno.bodyModTarget,
+        patch: {voiceRole: el.value}
+      });
+      ctx.notify(el.value ? `当前肉体声带已绑定至角色「${el.value}」音色` : '已恢复默认本人音色');
+      return;
+    }
     if (act === 'mod-orifice') {
       api.xenoAct('applyBodyMod', {
         targetKey: xeno.bodyModTarget,
