@@ -7,7 +7,7 @@ import {
   TAIL_STATES, ORIFICE_SLOTS, ORIFICE_MOD_TYPES, VENOM_TYPES, WORLD_CARRIERS,
   PRESET_COGNITION_RULES, effectiveEntityView, getEntity, computeFusionGender, formatVoiceRoleLabel
 } from '../core/xeno.js';
-import {renderVoiceBindSelectOptions, openVoicePoolPickerDialog} from './xeno-media.js';
+import {renderVoiceBindSelectOptions, openVoicePoolPickerDialog, generateEntityPortrait, openEntityPortraitDialog} from './xeno-media.js';
 
 export function xenoApp(ctx) {
   const {api} = ctx, v = createView(ctx, 'xeno');
@@ -33,6 +33,7 @@ export function xenoApp(ctx) {
   function renderStatusBarCard({title, badge, entity, view, isProt, detailOpen, targetList = [], selectedTarget = ''}) {
     const toggleAction = isProt ? 'toggle-prot-detail' : 'toggle-target-detail';
     const editAction = isProt ? 'edit-prot' : 'edit-target';
+    const targetKey = isProt ? '__protagonist__' : (entity?.name || '');
     return `
       <section class="xeno-status-card ${isProt ? 'prot' : 'target'}">
         <header class="xeno-status-head">
@@ -43,6 +44,8 @@ export function xenoApp(ctx) {
           <div class="xeno-status-actions">
             ${isProt ? `<button type="button" class="xeno-mini-btn" data-action="sync-story" ${api.xenoBusy?.('sync') ? 'disabled' : ''}>${api.xenoBusy?.('sync') ? '同步中…' : '从剧情同步'}</button>` : ''}
             ${isProt ? `<button type="button" class="xeno-mini-btn danger" data-action="reset-prot" title="新开聊天时清空主角状态栏与上一场的残留状态">初始化</button>` : ''}
+            ${entity ? `<button type="button" class="xeno-mini-btn primary" data-action="draw-entity-portrait" data-target="${esc(targetKey)}" title="按当前肉体、穿戴与改造状态一键生成全身形态图">📸 形态图</button>` : ''}
+            ${entity?.portraitData ? `<button type="button" class="xeno-mini-btn" data-action="view-entity-portrait" data-target="${esc(targetKey)}" title="查看已生成的形态立绘">🖼️ 看图</button>` : ''}
             <button type="button" class="xeno-mini-btn" data-action="${editAction}">编辑</button>
             <button type="button" class="xeno-mini-btn ${detailOpen ? 'active' : ''}" data-action="${toggleAction}">${detailOpen ? '收起详情' : '详情'}</button>
           </div>
@@ -734,6 +737,22 @@ export function xenoApp(ctx) {
     }
     if (act === 'edit-prot') { openEntityEditSheet(xeno.protagonist, true); return; }
     if (act === 'edit-target') { if (curTarget) openEntityEditSheet(curTarget, false); return; }
+    if (act === 'view-entity-portrait') {
+      openEntityPortraitDialog(ctx, el.dataset.target || '__protagonist__');
+      return;
+    }
+    if (act === 'draw-entity-portrait') {
+      const tKey = el.dataset.target || '__protagonist__';
+      if (!api.drawReady?.()) {
+        openEntityPortraitDialog(ctx, tKey);
+        return;
+      }
+      await v.busy(el, async () => {
+        const url = await generateEntityPortrait(ctx, tKey);
+        if (url) openEntityPortraitDialog(ctx, tKey);
+      });
+      return;
+    }
     if (act === 'add-target') { openAddTargetSheet(); return; }
     if (act === 'delete-target') {
       const name = el.dataset.name;

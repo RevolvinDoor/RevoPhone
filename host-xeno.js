@@ -7,6 +7,7 @@ import {storyLines} from './core/moments.js';
 import {activeChatPreset, cleanTagged} from './core/chat.js';
 import {cardRoutes, findRoute, roleTypeOf} from './core/routes.js';
 import {ensureTarget, normalizeCatalogItem, GENDERS} from './core/xeno.js';
+import {searchStoryMessages} from './host-tt.js';
 
 export function createXenoHost({context, settings, backend, notice = () => {}}) {
   const busy = {insight: null, sync: null, restock: null};
@@ -24,20 +25,32 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
     return busy[kind];
   }
 
-  function recentStoryText(ctx) {
+  async function recentStoryText(ctx, extraNames = '') {
     const s = settings();
     const preset = activeChatPreset(s.chat);
-    const lines = storyLines(ctx?.chat || [], preset, userName()).slice(-16);
+    const chat = Array.isArray(ctx?.chat) ? ctx.chat : [];
+    const lines = storyLines(chat, preset, userName()).slice(-16);
     const charCard = ctx?.characters?.[ctx?.characterId];
     const cardDesc = charCard ? `【当前角色卡：${charCard.name || ''}】\n${String(charCard.description || '').slice(0, 1200)}` : '';
     const storyBlock = lines.map(r => `${r.name}: ${r.text}`).join('\n');
-    return [cardDesc, storyBlock].filter(Boolean).join('\n\n');
+    let recalledBlock = '';
+    const endIndex = Math.max(0, chat.length - 16);
+    if (endIndex > 0) {
+      const query = [extraNames, charCard?.name || '', '外貌 身高 三围 罩杯 身材 穿着 衣服 身份 发色 瞳色'].filter(Boolean).join(' ');
+      const hits = await searchStoryMessages(ctx, {query, limit: 6, endIndex, scanLimit: 3000}).catch(() => []);
+      if (hits.length) {
+        recalledBlock = `【早期剧情中的角色设定与状态记录（全文检索召回）】\n` + hits.map(h => `[第${h.index + 1}楼 · ${h.name}] ${h.text}`).join('\n');
+      }
+    }
+    return [cardDesc, recalledBlock, storyBlock].filter(Boolean).join('\n\n');
   }
 
   /** 1. 附身之术 · 洞察推荐：扫描当前剧情环境，生成《附身价值与颜值评估报告》并自动登记目标角色 */
   function insightRecommend() {
     return run('insight', async ctx => {
-      const story = recentStoryText(ctx);
+      const cur = backend.cardState()?.xeno;
+      const knownNames = [cur?.protagonist?.name, ...(cur?.targets || []).map(t => t.name)].filter(Boolean).join(' ');
+      const story = await recentStoryText(ctx, knownNames);
       if (!story.trim()) throw Error('当前还没有剧情内容可供洞察分析');
       const prompt = [
         {
@@ -93,11 +106,11 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
   /** 2. 从当前剧情同步主角与登场目标状态栏 */
   function syncFromStory() {
     return run('sync', async ctx => {
-      const story = recentStoryText(ctx);
-      if (!story.trim()) throw Error('当前还没有剧情内容可供同步');
       const card = backend.cardState();
       const cur = card.xeno;
       const known = [cur.protagonist.name, ...cur.targets.map(t => t.name)].filter(Boolean).join('、');
+      const story = await recentStoryText(ctx, known);
+      if (!story.trim()) throw Error('当前还没有剧情内容可供同步');
       const prompt = [
         {
           role: 'system',

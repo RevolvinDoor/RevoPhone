@@ -11,6 +11,7 @@ import {forumContext} from './core/forum.js';
 import {promptOn} from './core/prompt-rules.js';
 import {activeText} from './core/llm.js';
 import {requestAssistantText, hasCompletionService, loadCompletionModule} from './host-assistant.js';
+import {getChatMetadataExtension, setChatMetadataExtension} from './host-tt.js';
 
 /** 看图: the user's latest photos (at most this many, in the chat window) go along to a model that sees. */
 export const CHAT_PICTURES = 3;
@@ -63,7 +64,15 @@ export function createChatHost({context, settings, backend, notice, memory = nul
   }
   // What the next story reply brings along; kept over a page reload (it used to be lost without a word).
   let pending = (() => { try { const p = JSON.parse(storage?.getItem(BRING_KEY) || 'null'); return p?.threadId && p.text ? p : null; } catch { return null; } })();
-  const keepBring = () => { try { if (pending) storage?.setItem(BRING_KEY, JSON.stringify(pending)); else storage?.removeItem(BRING_KEY); } catch { /* this visit only */ } };
+  const keepBring = () => {
+    try { if (pending) storage?.setItem(BRING_KEY, JSON.stringify(pending)); else storage?.removeItem(BRING_KEY); } catch { /* this visit only */ }
+    setChatMetadataExtension(context, { pendingBring: pending || null, updatedAt: Date.now() }).catch(() => {});
+  };
+  getChatMetadataExtension(context).then(meta => {
+    if (!pending && meta?.pendingBring?.threadId && meta.pendingBring.text) {
+      pending = meta.pendingBring;
+    }
+  }).catch(() => {});
   /** A note「N 条消息会带进下一次正文」an older version wrote for the choice goes when that choice is replaced, cancelled or used. */
   const dropNote = p => p?.noteId ? backend.chatMutate(p.threadId, () => backend.chats.removeMessages(p.threadId, [p.noteId])).catch(() => {}) : Promise.resolve();
 
@@ -114,7 +123,10 @@ export function createChatHost({context, settings, backend, notice, memory = nul
       // 记忆: the written-up older chat, and older messages that match the latest ones.
       const query = thread.messages.filter(m => m.kind !== 'system').slice(-6).map(m => messageLine(m, user)).join('\n');
       const remembered = memory ? (await memory.contextFor(thread, {query}).catch(() => ({text: ''}))).text : '';
-      const request = pics => buildChatRequest({prompts: settings().promptRules, preset, thread, members: people, story: recent, user, userPersona: userPersona(), voiceFormat, lore, forum, memory: remembered, earlier: memory?.storyMemory() || '', images: !!backend.drawReady?.(), stickers: settings().chat.stickers || [], nudge, pictures: pics});
+      const earlierStory = memory?.recallStory
+        ? await memory.recallStory([people.map(p => p.name).join(' '), query].filter(Boolean).join(' '), {recentCount: preset.context})
+        : (memory?.storyMemory() || '');
+      const request = pics => buildChatRequest({prompts: settings().promptRules, preset, thread, members: people, story: recent, user, userPersona: userPersona(), voiceFormat, lore, forum, memory: remembered, earlier: earlierStory, images: !!backend.drawReady?.(), stickers: settings().chat.stickers || [], nudge, pictures: pics});
       const answer = cleanTagged(await answerFor(ctx, request, await pictures(ctx, thread, preset)), preset.cleanTags);
       // 「[不发]」 (also as 「名字：[不发]」) is a no, not a message.
       const text = nudge ? answer.split('\n').filter(line => !/\[不发\]/.test(line)).join('\n') : answer;
@@ -265,7 +277,10 @@ export function createChatHost({context, settings, backend, notice, memory = nul
       backend.emit('chat', {threadId, typing: true});
       const recent = story(preset);
       const remembered = memory ? (await memory.contextFor(thread, {query: said}).catch(() => ({text: ''}))).text : '';
-      const prompt = buildChatRequest({prompts: settings().promptRules, preset, thread, members: people, story: recent, user, userPersona: userPersona(), voiceFormat: '', memory: remembered, earlier: memory?.storyMemory() || '', images: !!backend.drawReady?.(), stickers: s.chat.stickers || [], asking: said});
+      const earlierStory = memory?.recallStory
+        ? await memory.recallStory(`${name} ${said}`, {recentCount: preset.context})
+        : (memory?.storyMemory() || '');
+      const prompt = buildChatRequest({prompts: settings().promptRules, preset, thread, members: people, story: recent, user, userPersona: userPersona(), voiceFormat: '', memory: remembered, earlier: earlierStory, images: !!backend.drawReady?.(), stickers: s.chat.stickers || [], asking: said});
       const reply = cleanTagged(await backend.generateText(ctx, {prompt, trimNames: false}), preset.cleanTags);
       const items = parseChatReply(reply, {members: people.map(p => ({...p, voice: false})), user, voiceFormat: '', voiceNames: [], stickers: s.chat.stickers || []});
       const yes = items.findIndex(i => i.kind === 'befriend'), no = items.find(i => i.kind === 'refuse');

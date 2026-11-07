@@ -52,7 +52,10 @@ export function createMomentsHost({context, settings, backend, notice, memory = 
       const space = backend.cardKey(), {s, preset, crowd, user, names} = base();
       const recent = (await backend.moments.list()).filter(p => inSpace(p, backend.here())).slice(0, 6);
       const story = storyLines(ctx.chat, preset, user);
-      const request = buildMomentsRequest({prompts: settings().promptRules, preset, earlier: memory?.storyMemory() || '', mode: 'posts', people: crowd, story, user, userPersona: userPersona(), recent, images: s.moments.images, memory: await remembered(crowd.map(p => p.name)), lore: await lore(preset, crowd, story, recent.map(p => `${p.author}: ${p.text}`))});
+      const earlierStory = memory?.recallStory
+        ? await memory.recallStory(names.join(' '), {recentCount: preset.context})
+        : (memory?.storyMemory() || '');
+      const request = buildMomentsRequest({prompts: settings().promptRules, preset, earlier: earlierStory, mode: 'posts', people: crowd, story, user, userPersona: userPersona(), recent, images: s.moments.images, memory: await remembered(crowd.map(p => p.name)), lore: await lore(preset, crowd, story, recent.map(p => `${p.author}: ${p.text}`))});
       const found = parseMoments(await ask(ctx, request), {names, user, mode: 'posts'});
       if (!found.posts.length) throw Error('这次没有收到新动态，可以再刷新一次');
       const posts = await backend.momentsMutate(() => backend.moments.add(found.posts.map(p => ({...p, space, source: auto ? 'auto' : 'manual', imageState: p.imageTags && s.moments.images ? 'waiting' : undefined}))));
@@ -67,7 +70,10 @@ export function createMomentsHost({context, settings, backend, notice, memory = 
       const post = await backend.moments.get(postId);
       if (!post) throw Error('这条动态已经不在了');
       const story = storyLines(ctx.chat, preset, user);
-      const request = buildMomentsRequest({prompts: settings().promptRules, preset, earlier: memory?.storyMemory() || '', mode: 'react', people: crowd, story, user, userPersona: userPersona(), post, memory: await remembered(crowd.map(p => p.name)), lore: await lore(preset, crowd, story, [post.text])});
+      const earlierStory = memory?.recallStory
+        ? await memory.recallStory(`${post.text} ${names.join(' ')}`, {recentCount: preset.context})
+        : (memory?.storyMemory() || '');
+      const request = buildMomentsRequest({prompts: settings().promptRules, preset, earlier: earlierStory, mode: 'react', people: crowd, story, user, userPersona: userPersona(), post, memory: await remembered(crowd.map(p => p.name)), lore: await lore(preset, crowd, story, [post.text])});
       const found = parseMoments(await ask(ctx, request), {names, user, mode: 'react'});
       return backend.momentsMutate(() => backend.moments.react(postId, found));
     });
@@ -79,7 +85,10 @@ export function createMomentsHost({context, settings, backend, notice, memory = 
       const post = await backend.moments.get(postId), comment = post?.comments.find(c => c.id === commentId);
       if (!post || !comment) throw Error('这条评论已经不在了');
       const story = storyLines(ctx.chat, preset, user);
-      const request = buildMomentsRequest({prompts: settings().promptRules, preset, earlier: memory?.storyMemory() || '', mode: 'reply', people: crowd, story, user, userPersona: userPersona(), post, comment, memory: await remembered(crowd.map(p => p.name)), lore: await lore(preset, crowd, story, [post.text, comment.text])});
+      const earlierStory = memory?.recallStory
+        ? await memory.recallStory(`${post.text} ${comment.text}`, {recentCount: preset.context})
+        : (memory?.storyMemory() || '');
+      const request = buildMomentsRequest({prompts: settings().promptRules, preset, earlier: earlierStory, mode: 'reply', people: crowd, story, user, userPersona: userPersona(), post, comment, memory: await remembered(crowd.map(p => p.name)), lore: await lore(preset, crowd, story, [post.text, comment.text])});
       const found = parseMoments(await ask(ctx, request), {names, user, mode: 'reply'});
       return backend.momentsMutate(() => backend.moments.react(postId, {comments: found.comments}));
     });

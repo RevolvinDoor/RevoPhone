@@ -42,13 +42,18 @@ import { DrawQueue } from './draw-queue.js';
 import { CloudQueue, KeyHashQueue, newRoomCode, validRoom, sha256Hex } from './cloud-queue.js';
 import { vibeKey, readVibeFile, imageVibe, mergeVibe, encodingFor, withEncoding, vibeSummary, vibeParameters, singleFile, bundleFile, chatu8File, strength as vibeStrength, MAX_FREE_VIBES, VIBE_ANLAS } from './vibes.js';
 import {
-    normalizeXeno, normalizeCatalogItem, ensureTarget, syncXenoWithRoutes,
+    normalizeXeno, normalizeCatalogItem, ensureTarget, syncXenoWithRoutes, extractXenoSession, mergeXenoSession,
+    applyXenoUpdateFromText,
     xenoStartPossession, xenoSetPossessionMode, xenoToggleOrganSync, xenoReleasePossession, xenoBodySwap,
     xenoStartFusion, xenoSetFusionMode, xenoToggleFusionController, xenoReleaseFusion, xenoRestoreFromLivingItem,
     xenoStartVore, xenoUpdateVore, xenoRemoveVore,
     xenoResetProtagonist, xenoApplyBodyMod, xenoApplyCognitionMod,
     xenoEquipItem, xenoUpdateMountOption, xenoUnequipSlot, xenoUseConsumable
 } from './xeno.js';
+import {
+    getChatStoreJson, setChatStoreJson,
+    getExtStoreJson, setExtStoreJson, deleteExtStoreJson, listExtStoreKeys
+} from '../host-tt.js';
 
 export const BACKEND_API_VERSION = '1.0.0';
 const ENGINES = ['fish', 'mini', 'eleven', 'mimo', 'doubao', 'custom'];
@@ -174,6 +179,13 @@ export class TTSBackend {
         this.revision = 0;
         this.closed = false;
         this.prepared = null;
+        // Separate store for Mall/Wardrobe item images and entity state portraits so settings.json stays tiny and fast on Android.
+        this.xenoImages = new Map();
+        this.pendingLegacyXenoImages = new Map();
+        this.activeChatKey = '';
+        this.xenoSessions = new Map();
+        this.xenoFloors = new Map();
+        this.stripAndCaptureXenoImages(this.settings.xeno, { persist: false, legacyQueue: this.pendingLegacyXenoImages });
         this.player = new DialoguePlayer({
             settings: () => this.cardState(), providers, cache: this.cache, ...(sink ? { sink } : {}), unknown, speech,
             change: state => { if (state.phase === 'error') this.reportDiagnostic('语音播放', {message: state.message}); change(state); this.emit('playback', state); },
@@ -189,8 +201,108 @@ export class TTSBackend {
             if (!this.closed) this.player.setVolume(phone.volume);
             await this.loadReferences();
             await this.loadVibes();
+            await this.loadXenoImages();
         } catch (error) { this.notify(error.message); }
         return this;
+    }
+    portraitImageKey(targetKey = '__protagonist__', chatKey = this.activeChatKey || this.cardKey() || 'global') {
+        const who = !targetKey || targetKey === '__protagonist__' ? '__protagonist__' : String(targetKey).trim();
+        return `portrait:${chatKey}:${who}`;
+    }
+    stripAndCaptureXenoImages(xeno, { persist = true, legacyQueue = null } = {}) {
+        if (!xeno || typeof xeno !== 'object') return xeno;
+        const recordImage = (key, data) => {
+            if (!key || !data) return;
+            const prev = this.xenoImages.get(key);
+            this.xenoImages.set(key, data);
+            if (legacyQueue) legacyQueue.set(key, data);
+            if (persist && prev !== data) this.persistXenoImage(key, data).catch(() => {});
+        };
+        for (const item of Array.isArray(xeno.items) ? xeno.items : []) {
+            if (item?.id && item.imageData) {
+                recordImage(`item:${item.id}`, item.imageData);
+                item.imageData = '';
+            }
+        }
+        const entities = [
+            ['__protagonist__', xeno.protagonist],
+            ...(Array.isArray(xeno.targets) ? xeno.targets.map(t => [t?.name, t]) : []),
+            ...(Array.isArray(xeno.targetPool) ? xeno.targetPool.map(t => [t?.name, t]) : [])
+        ];
+        for (const [k, ent] of entities) {
+            if (ent && ent.portraitData) {
+                recordImage(this.portraitImageKey(k), ent.portraitData);
+                ent.portraitData = '';
+            }
+        }
+        return xeno;
+    }
+    hydrateXenoImages(xeno) {
+        if (!xeno || typeof xeno !== 'object') return xeno;
+        for (const item of Array.isArray(xeno.items) ? xeno.items : []) {
+            if (item?.id && !item.imageData) {
+                const img = this.xenoImages.get(`item:${item.id}`);
+                if (img) item.imageData = img;
+            }
+        }
+        if (xeno.protagonist && !xeno.protagonist.portraitData) {
+            const pImg = this.xenoImages.get(this.portraitImageKey('__protagonist__'));
+            if (pImg) xeno.protagonist.portraitData = pImg;
+        }
+        for (const t of Array.isArray(xeno.targets) ? xeno.targets : []) {
+            if (t?.name && !t.portraitData) {
+                const tImg = this.xenoImages.get(this.portraitImageKey(t.name));
+                if (tImg) t.portraitData = tImg;
+            }
+        }
+        return xeno;
+    }
+    async persistXenoImage(key, imageData) {
+        if (this.closed || !key) return;
+        const id = `xeno-img:${key}`;
+        if (!imageData) {
+            this.xenoImages.delete(key);
+            await this.apps.remove(id).catch(() => {});
+            await deleteExtStoreJson(key, { table: 'xeno-images' }).catch(() => {});
+            return;
+        }
+        await this.apps.put([{ id, kind: 'xeno-image', key, imageData, at: Date.now() }]).catch(() => {});
+        await setExtStoreJson(key, { key, imageData, at: Date.now() }, { table: 'xeno-images' }).catch(() => {});
+    }
+    async loadXenoImages() {
+        if (this.closed) return;
+        let migrated = false;
+        if (this.pendingLegacyXenoImages.size > 0) {
+            for (const [key, data] of this.pendingLegacyXenoImages.entries()) {
+                await this.persistXenoImage(key, data);
+            }
+            this.pendingLegacyXenoImages.clear();
+            migrated = true;
+        }
+        try {
+            const rows = await this.apps.list('xeno-image');
+            for (const row of rows) {
+                const k = row?.key || String(row?.id || '').replace(/^xeno-img:/, '');
+                if (k && row?.imageData && !this.xenoImages.has(k)) {
+                    this.xenoImages.set(k, row.imageData);
+                }
+            }
+        } catch {}
+        try {
+            const keys = await listExtStoreKeys({ table: 'xeno-images' });
+            for (const safeKey of keys) {
+                const rec = await getExtStoreJson(safeKey, { table: 'xeno-images' });
+                if (rec?.key && rec?.imageData && !this.xenoImages.has(rec.key)) {
+                    this.xenoImages.set(rec.key, rec.imageData);
+                }
+            }
+        } catch {}
+        if (migrated) {
+            try { this.persist(clone(this.settings)); } catch {}
+        }
+        if (this.xenoImages.size > 0 && !this.closed) {
+            this.emit('xeno', { xeno: clone(this.cardState().xeno) });
+        }
     }
     /** Reads the Fish reference audio and the MiMo clone samples the settings use into memory, for requests. */
     async loadReferences() {
@@ -207,7 +319,7 @@ export class TTSBackend {
         const stores = want.flatMap(part => PART_STORES[part]);
         const library = stores.length ? await this.library.exportRows(stores) : {};
         let settings = null;
-        if (want.includes('settings')) { settings = this.getState(); delete settings.scope; delete settings.floating; }
+        if (want.includes('settings')) { settings = this.getState(); settings.xeno = this.hydrateXenoImages(settings.xeno); delete settings.scope; delete settings.floating; }
         const chats = want.includes('chats') ? await this.chats.exportThreads() : null, moments = want.includes('moments') ? await this.moments.exportPosts() : null;
         // Keys only with a password: sealed here, never written as they are.
         let keys = null;
@@ -287,7 +399,7 @@ export class TTSBackend {
     routesHere(key = this.cardKey()) { return clone(cardRoutes(this.settings.routes, key)); }
     cardState() {
         const state = this.getState(), routes = this.routesHere();
-        return { ...state, routes, xeno: syncXenoWithRoutes(state.xeno, routes) };
+        return { ...state, routes, xeno: this.hydrateXenoImages(syncXenoWithRoutes(state.xeno, routes)) };
     }
     getSnapshot() { return { state: this.getState(), revision: this.revision }; }
     save(next, expectedRevision) {
@@ -307,6 +419,7 @@ export class TTSBackend {
             }
             for (const [engine, connection] of Object.entries(copy.connections)) modelCheck(engine, connection.model);
             validateSettings(copy);
+            this.stripAndCaptureXenoImages(copy.xeno, { persist: true });
         } catch (error) { throw Error(message(error)); }
         const imageChanged = JSON.stringify([copy.draw.connections, copy.draw.engine]) !== JSON.stringify([this.settings.draw.connections, this.settings.draw.engine]);
         if (imageChanged) this.assertImageIdle();
@@ -592,9 +705,178 @@ export class TTSBackend {
         }
         next.xeno = syncXenoWithRoutes(updated, cardRoutes(next.routes, key));
         this.save(next);
+        this.persistActiveChatXeno().catch(() => {});
         const outXeno = clone(this.cardState().xeno);
         this.emit('xeno', { xeno: outXeno });
         return outXeno;
+    }
+    getChatFloors(chatKey = this.activeChatKey) {
+        const key = String(chatKey || 'default');
+        if (!this.xenoFloors.has(key)) this.xenoFloors.set(key, {});
+        return this.xenoFloors.get(key);
+    }
+    pruneChatFloors(floors) {
+        if (!floors || typeof floors !== 'object') return {};
+        const keys = Object.keys(floors).map(Number).filter(Number.isInteger).sort((a, b) => a - b);
+        while (keys.length > 25) {
+            const oldest = keys.shift();
+            delete floors[oldest];
+        }
+        return floors;
+    }
+    async persistActiveChatXeno(chatKey = this.activeChatKey) {
+        const key = String(chatKey || '').trim();
+        if (!key || this.closed) return;
+        const session = extractXenoSession(this.settings.xeno);
+        const floors = this.pruneChatFloors(this.getChatFloors(key));
+        this.xenoSessions.set(key, session);
+        const payload = { chatKey: key, session, floors, updatedAt: Date.now() };
+        await this.apps.put([{ id: `xeno-chat:${key}`, kind: 'xeno-chat', ...payload, at: payload.updatedAt }]).catch(() => {});
+        if (key === this.activeChatKey) {
+            await setChatStoreJson('xeno-state', payload).catch(() => {});
+        }
+    }
+    /** Switches active chat session for Xeno so starting a new chat or changing chats never leaks state. */
+    async switchChatXeno(chatKey, { hasHistory = false } = {}) {
+        const nextKey = String(chatKey || '').trim();
+        if (!nextKey || this.closed) return;
+        if (this.activeChatKey && this.activeChatKey !== nextKey) {
+            await this.persistActiveChatXeno(this.activeChatKey).catch(() => {});
+        }
+        this.activeChatKey = nextKey;
+        let record = null;
+        try {
+            const [ttRec, idbRec] = await Promise.all([
+                getChatStoreJson('xeno-state').catch(() => null),
+                this.apps.get(`xeno-chat:${nextKey}`).catch(() => null)
+            ]);
+            const validTt = ttRec?.session && (!ttRec.chatKey || ttRec.chatKey === nextKey) ? ttRec : null;
+            const validIdb = idbRec?.session ? idbRec : null;
+            if (validTt && validIdb) {
+                record = (Number(validTt.updatedAt) || 0) >= (Number(validIdb.updatedAt) || 0) ? validTt : validIdb;
+            } else {
+                record = validTt || validIdb;
+            }
+        } catch {}
+
+        if (!record && this.xenoSessions.has(nextKey)) {
+            record = { session: this.xenoSessions.get(nextKey), floors: this.getChatFloors(nextKey) };
+        }
+
+        let sessionToApply = record?.session || null;
+        if (!record) {
+            // If upgrading from a previous version and opening an ongoing chat before any xeno-chat records exist,
+            // adopt the existing session once; for any new chat or subsequent chat, start with a fresh session.
+            const existingRecords = await this.apps.list('xeno-chat').catch(() => []);
+            if (hasHistory && existingRecords.length === 0 && (this.settings.xeno?.protagonist?.name || this.settings.xeno?.targets?.length)) {
+                sessionToApply = extractXenoSession(this.settings.xeno);
+            } else {
+                sessionToApply = null;
+            }
+        }
+
+        this.xenoFloors.set(nextKey, record?.floors && typeof record.floors === 'object' ? clone(record.floors) : {});
+        this.xenoSessions.set(nextKey, sessionToApply);
+
+        const next = this.getState();
+        const cardKey = this.cardKey();
+        next.xeno = syncXenoWithRoutes(mergeXenoSession(next.xeno, sessionToApply), cardRoutes(next.routes, cardKey));
+        this.save(next);
+        await this.persistActiveChatXeno(nextKey).catch(() => {});
+        this.emit('xeno', { xeno: clone(this.cardState().xeno) });
+    }
+    /** Snapshots the pre-floor Xeno session right before a reply is generated or applied. */
+    snapshotXenoBeforeFloor(floorId) {
+        if (!Number.isInteger(Number(floorId)) || Number(floorId) < 0) return;
+        const floors = this.getChatFloors();
+        const fid = String(Number(floorId));
+        floors[fid] ||= { before: extractXenoSession(this.settings.xeno), swipes: {} };
+        if (!floors[fid].before) floors[fid].before = extractXenoSession(this.settings.xeno);
+    }
+    /** Records and applies `<xeno_update>` for a received story floor + swipe. */
+    applyXenoFloorReply(floorId, swipeId = 0, messageText = '', { protagonistName = '' } = {}) {
+        const fid = String(Number.isInteger(Number(floorId)) ? Number(floorId) : 0);
+        const sid = String(Number.isInteger(Number(swipeId)) ? Number(swipeId) : 0);
+        const floors = this.getChatFloors();
+        floors[fid] ||= { before: extractXenoSession(this.settings.xeno), swipes: {} };
+        const baseSession = floors[fid].before || extractXenoSession(this.settings.xeno);
+        const baseXeno = syncXenoWithRoutes(mergeXenoSession(this.settings.xeno, baseSession), this.routesHere());
+        const updated = messageText
+            ? applyXenoUpdateFromText(baseXeno, messageText, { routes: this.routesHere(), protagonistName })
+            : null;
+        const finalXeno = updated || baseXeno;
+        finalXeno.pendingActionNote = '';
+        floors[fid].swipes ||= {};
+        floors[fid].swipes[sid] = extractXenoSession(finalXeno);
+        this.pruneChatFloors(floors);
+        return this.saveXeno(finalXeno);
+    }
+    /** Restores or recomputes Xeno state when the user swipes/rerolls a story floor. */
+    rollbackXenoOnSwipe(floorId, swipeId = 0, messageText = '', { protagonistName = '' } = {}) {
+        const fid = String(Number.isInteger(Number(floorId)) ? Number(floorId) : 0);
+        const sid = String(Number.isInteger(Number(swipeId)) ? Number(swipeId) : 0);
+        const floors = this.getChatFloors();
+        const entry = floors[fid];
+        if (!entry) {
+            if (messageText) {
+                const updated = applyXenoUpdateFromText(this.cardState().xeno, messageText, { routes: this.routesHere(), protagonistName });
+                if (updated) return this.saveXeno(updated);
+            }
+            return null;
+        }
+        if (messageText && entry.swipes?.[sid]) {
+            return this.saveXeno(mergeXenoSession(this.settings.xeno, entry.swipes[sid]));
+        }
+        const baseXeno = syncXenoWithRoutes(mergeXenoSession(this.settings.xeno, entry.before), this.routesHere());
+        const updated = messageText
+            ? applyXenoUpdateFromText(baseXeno, messageText, { routes: this.routesHere(), protagonistName })
+            : null;
+        const finalXeno = updated || baseXeno;
+        if (messageText) {
+            entry.swipes ||= {};
+            entry.swipes[sid] = extractXenoSession(finalXeno);
+        }
+        return this.saveXeno(finalXeno);
+    }
+    /** Recomputes Xeno state when a story floor is edited. */
+    rollbackXenoOnEdit(floorId, swipeId = 0, messageText = '', { protagonistName = '' } = {}) {
+        const fid = String(Number.isInteger(Number(floorId)) ? Number(floorId) : 0);
+        const sid = String(Number.isInteger(Number(swipeId)) ? Number(swipeId) : 0);
+        const floors = this.getChatFloors();
+        const entry = floors[fid];
+        const baseXeno = entry?.before
+            ? syncXenoWithRoutes(mergeXenoSession(this.settings.xeno, entry.before), this.routesHere())
+            : this.cardState().xeno;
+        const updated = messageText
+            ? applyXenoUpdateFromText(baseXeno, messageText, { routes: this.routesHere(), protagonistName })
+            : null;
+        const finalXeno = updated || baseXeno;
+        if (entry) {
+            entry.swipes ||= {};
+            entry.swipes[sid] = extractXenoSession(finalXeno);
+        }
+        return this.saveXeno(finalXeno);
+    }
+    /** Restores Xeno state when one or more story floors at the tail are deleted. */
+    rollbackXenoOnDelete(newChatLength = 0) {
+        const lastFloor = Number(newChatLength) - 1;
+        const floors = this.getChatFloors();
+        if (lastFloor < 0) {
+            this.xenoFloors.set(this.activeChatKey || 'default', {});
+            return this.saveXeno(mergeXenoSession(this.settings.xeno, null));
+        }
+        const deletedKeys = Object.keys(floors).map(Number).filter(k => Number.isInteger(k) && k > lastFloor).sort((a, b) => a - b);
+        let restoreSession = null;
+        for (const k of deletedKeys) {
+            if (!restoreSession && floors[k]?.before) {
+                restoreSession = floors[k].before;
+            }
+            delete floors[k];
+        }
+        if (restoreSession) {
+            return this.saveXeno(mergeXenoSession(this.settings.xeno, restoreSession));
+        }
+        return null;
     }
     xenoAct(action, payload = {}) {
         const p = payload && typeof payload === 'object' ? clone(payload) : {};
@@ -667,6 +949,7 @@ export class TTSBackend {
                 case 'deleteItem': {
                     xeno.items = xeno.items.filter(i => i.id !== p.itemId);
                     if (xeno.itemVoiceBindings && p.itemId) delete xeno.itemVoiceBindings[p.itemId];
+                    if (p.itemId) this.persistXenoImage(`item:${p.itemId}`, '').catch(() => {});
                     return xeno;
                 }
                 case 'clearPendingNote': xeno.pendingActionNote = ''; return xeno;

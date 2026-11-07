@@ -6,7 +6,7 @@
 import {createView, esc, heading} from './common.js';
 import {icon} from './icons.js';
 import {getEntity, effectiveEntityView, formatVoiceRoleLabel} from '../core/xeno.js';
-import {blobToDataUrl, generateItemPreview, renderVoiceBindSelectOptions, openVoicePoolPickerDialog} from './xeno-media.js';
+import {blobToDataUrl, generateItemPreview, renderVoiceBindSelectOptions, openVoicePoolPickerDialog, generateEntityPortrait, openEntityPortraitDialog} from './xeno-media.js';
 
 const SLOT_NAMES = {
   skin_suit: '活体皮躯',
@@ -57,6 +57,8 @@ export function wardrobeApp(ctx) {
             <strong>全身穿戴总览</strong>
           </div>
           <div class="xeno-status-actions">
+            ${entity.portraitData ? `<button type="button" class="xeno-mini-btn" data-action="view-wearer-portrait" title="查看当前穿戴形态图">🖼️ 看形态图</button>` : ''}
+            <button type="button" class="xeno-mini-btn" data-action="draw-wearer-portrait" title="按当前全身穿戴与躯体一键生成形态图">📸 生成形态图</button>
             <button type="button" class="xeno-mini-btn primary" data-action="go-mall">🛒 去商城买新装</button>
           </div>
         </header>
@@ -330,6 +332,21 @@ export function wardrobeApp(ctx) {
 
     if (act === 'go-xeno') { ctx.open('xeno'); return; }
     if (act === 'go-mall') { ctx.open('mall'); return; }
+    if (act === 'view-wearer-portrait') {
+      openEntityPortraitDialog(ctx, targetKey);
+      return;
+    }
+    if (act === 'draw-wearer-portrait') {
+      if (!api.drawReady?.()) {
+        openEntityPortraitDialog(ctx, targetKey);
+        return;
+      }
+      await v.busy(el, async () => {
+        const url = await generateEntityPortrait(ctx, targetKey);
+        if (url) openEntityPortraitDialog(ctx, targetKey);
+      });
+      return;
+    }
     if (act === 'wardrobe-tab') { activeTab = el.dataset.tab; v.refresh(); return; }
     if (act === 'filter-apparel') { apparelFilter = el.dataset.filter; v.refresh(); return; }
     if (act === 'skin-face') {

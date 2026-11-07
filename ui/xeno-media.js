@@ -2,7 +2,7 @@
 import {esc} from './common.js';
 import {icon} from './icons.js';
 import {poolLine, VOICE_LANGUAGES} from '../core/auto-voice.js';
-import {encodePoolVoiceRef, parsePoolVoiceRef, formatVoiceRoleLabel} from '../core/xeno.js';
+import {encodePoolVoiceRef, parsePoolVoiceRef, formatVoiceRoleLabel, buildEntityPortraitPrompt, getEntity} from '../core/xeno.js';
 
 const ENGINE_LABELS = {
   fish: 'Fish Audio',
@@ -227,4 +227,134 @@ export async function generateItemPreview(ctx, item) {
     api.xenoAct('saveItem', {id: item.id, imageData});
   }
   return imageData;
+}
+
+/** Generates a full-body portrait for the protagonist or target character based on their current appearance, body, living mounts, and 4-slot outfit. */
+export async function generateEntityPortrait(ctx, targetKey = '__protagonist__', customBaseTags = '') {
+  const {api} = ctx;
+  if (!api.drawReady?.()) {
+    throw Error((api.drawMissing?.() || '请先在「绘图」App 配置绘图接口与密钥') + '，或点击「查看形态图」上传本地立绘');
+  }
+  const state = api.getState();
+  const xeno = state.xeno;
+  const entity = getEntity(xeno, targetKey) || xeno.protagonist;
+  const isProt = targetKey === '__protagonist__' || entity === xeno.protagonist;
+  const built = buildEntityPortraitPrompt(xeno, entity);
+  const baseTags = String(customBaseTags || built.prompt).trim();
+  const style = state.draw?.styles?.find(s => s.id === state.draw.activeStyle) || state.draw?.styles?.[0] || {artist: '', positive: '', negative: ''};
+  const prompt = [style.artist, style.positive, baseTags].map(s => String(s || '').trim()).filter(Boolean).join(', ');
+  const negative = String(style.negative || 'lowres, bad anatomy, bad hands, text, error').trim();
+  const entityName = built.entityName || entity.name || (isProt ? '主角' : '角色');
+
+  let result;
+  try {
+    result = await api.generateImage({
+      prompt,
+      negative,
+      name: `形态图-${entityName}`,
+      key: `xeno-portrait:${isProt ? 'prot' : entityName}`,
+      label: `异构形态图 · ${entityName}`,
+      allowPaid: false
+    });
+  } catch (error) {
+    if (error?.code === 'PAID' || /扣 Anlas|花钱/.test(String(error?.message || ''))) {
+      const ask = api.paidPrompt?.() || {title: '确认生成当前形态图', text: error.message};
+      if (!await ctx.confirm(ask.title, ask.text)) return '';
+      result = await api.generateImage({
+        prompt,
+        negative,
+        name: `形态图-${entityName}`,
+        key: `xeno-portrait:${isProt ? 'prot' : entityName}`,
+        label: `异构形态图 · ${entityName}`,
+        allowPaid: true
+      });
+    } else {
+      throw error;
+    }
+  }
+
+  if (!result?.photoId) throw Error('未能获取生成的形态图');
+  const photo = await api.getPhoto(result.photoId);
+  if (!photo?.blob) throw Error('读取生成的形态图失败');
+  const portraitData = await blobToDataUrl(ctx.win, photo.blob);
+  api.xenoAct('applyBodyMod', {
+    targetKey: isProt ? '__protagonist__' : entity.name,
+    patch: {portraitData}
+  });
+  return portraitData;
+}
+
+/** Opens a dialog to view, upload, or regenerate an entity's full-body status portrait. */
+export function openEntityPortraitDialog(ctx, targetKey = '__protagonist__') {
+  const state = ctx.api.getState();
+  const xeno = state.xeno;
+  const entity = getEntity(xeno, targetKey) || xeno.protagonist;
+  const isProt = targetKey === '__protagonist__' || entity === xeno.protagonist;
+  const built = buildEntityPortraitPrompt(xeno, entity);
+  const entityName = built.entityName || entity.name || (isProt ? '主角' : '目标角色');
+
+  const d = ctx.dialog(`📸 ${entityName} · 当前形态立绘`, `
+    <div class="xeno-sheet-form">
+      <div data-portrait-preview-wrap style="text-align:center;margin-bottom:8px">
+        ${entity.portraitData
+          ? `<img class="wardrobe-sheet-img" style="max-height:52vh;object-fit:contain;border-radius:10px" src="${esc(entity.portraitData)}" alt="${esc(entityName)}">`
+          : `<div class="xeno-reserved-box" style="padding:18px 12px"><p>尚未生成「${esc(entityName)}」的当前形态立绘</p><p class="sub">可点击下方「🎨 AI 生成当前形态图」按当前肉体、皮躯/肉躯与四槽位着装自动出图，或上传本地图片。</p></div>`}
+      </div>
+      <p class="xeno-hint" style="margin:4px 0"><b>当前形态摘要：</b>${esc(built.summaryLabel)}</p>
+      <label class="xeno-field-inline">
+        <span>自动汇总生图提示词（可微调后点生成）</span>
+        <textarea class="xeno-textarea" rows="3" data-portrait-prompt>${esc(built.prompt)}</textarea>
+      </label>
+      <input type="file" accept="image/*" data-portrait-file hidden>
+      <div class="actions" style="flex-wrap:wrap;gap:6px">
+        <button type="button" class="secondary" data-portrait-upload>📷 上传本地图</button>
+        <button type="button" class="primary" data-portrait-draw>🎨 AI 生成当前形态图</button>
+        <button type="button" class="secondary" data-portrait-close>关闭</button>
+      </div>
+    </div>
+  `);
+
+  const fileInput = d.body.querySelector('[data-portrait-file]');
+  fileInput?.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = '';
+    if (!file) return;
+    const portraitData = await blobToDataUrl(ctx.win, file);
+    ctx.api.xenoAct('applyBodyMod', {
+      targetKey: isProt ? '__protagonist__' : entity.name,
+      patch: {portraitData}
+    });
+    const wrap = d.body.querySelector('[data-portrait-preview-wrap]');
+    if (wrap) {
+      wrap.innerHTML = `<img class="wardrobe-sheet-img" style="max-height:52vh;object-fit:contain;border-radius:10px" src="${esc(portraitData)}" alt="${esc(entityName)}">`;
+    }
+    ctx.notify(`已更新「${entityName}」的形态立绘`);
+  });
+
+  d.body.addEventListener('click', async e => {
+    if (e.target.closest('[data-portrait-close]')) { d.close(null); return; }
+    if (e.target.closest('[data-portrait-upload]')) { fileInput?.click(); return; }
+    const drawBtn = e.target.closest('[data-portrait-draw]');
+    if (drawBtn) {
+      const customTags = d.body.querySelector('[data-portrait-prompt]')?.value?.trim() || built.prompt;
+      drawBtn.disabled = true;
+      const oldText = drawBtn.textContent;
+      drawBtn.textContent = '🎨 正在生成形态图…';
+      try {
+        const url = await generateEntityPortrait(ctx, isProt ? '__protagonist__' : entity.name, customTags);
+        if (url) {
+          const wrap = d.body.querySelector('[data-portrait-preview-wrap]');
+          if (wrap) {
+            wrap.innerHTML = `<img class="wardrobe-sheet-img" style="max-height:52vh;object-fit:contain;border-radius:10px" src="${esc(url)}" alt="${esc(entityName)}">`;
+          }
+          ctx.notify(`已生成「${entityName}」的当前形态图`);
+        }
+      } catch (err) {
+        ctx.notify(err?.message || '生成形态图失败', {error: true});
+      } finally {
+        drawBtn.disabled = false;
+        drawBtn.textContent = oldText;
+      }
+    }
+  });
 }

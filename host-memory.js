@@ -5,6 +5,7 @@
 import {currentDm} from './core/chats.js';
 import {nextBatch, nextMerge, addNode, buildMemoryRequest, parseMemory, memoryText, chunks, recall, recallText, textKey, transcript, roots, storyMemoryText, unwritten, STORY_MEMORY} from './core/memory.js';
 import {activeChatPreset} from './core/chat.js';
+import {searchStoryMessages} from './host-tt.js';
 
 // How many requests one go may make: after a reply only a little (a long backlog is caught up over several replies),
 // when the user asks for it more.
@@ -200,6 +201,24 @@ export function createMemoryHost({context, settings, backend, notice = () => {}}
 
   /** 更早的剧情: what the picked memory plugins put into the tavern's extension prompts. */
   function storyMemory() { return storyMemoryText(context()?.extensionPrompts, options().storyKeys); }
+  /** Combines extension-prompt story memory with TauriTavern full-text search recall over earlier story floors. */
+  async function recallStory(query = '', {recentCount = 0, limit = 5} = {}) {
+    const base = storyMemory();
+    const ctx = context();
+    const chat = Array.isArray(ctx?.chat) ? ctx.chat : [];
+    const windowLen = Number(recentCount) || Number(activeChatPreset(settings().chat)?.context) || 10;
+    const endIndex = Math.max(0, chat.length - windowLen);
+    const cleanQ = String(query || '').replace(/\s+/g, ' ').trim();
+    if (!cleanQ || endIndex <= 0) return base;
+    try {
+      const hits = await searchStoryMessages(ctx, {query: cleanQ, limit, endIndex, scanLimit: 3000});
+      if (!hits.length) return base;
+      const recalled = '【想起来的正文往事（从早期楼层检索召回）】\n' + hits.map(h => `- [第${h.index + 1}楼] ${h.name}：${h.snippet || h.text}`).join('\n');
+      return [base, recalled].filter(Boolean).join('\n\n');
+    } catch {
+      return base;
+    }
+  }
   /** Every extension prompt there is now (not the phone's own), for picking which hold story memory. */
   function storySources() {
     const prompts = context()?.extensionPrompts || {}, picked = new Set(options().storyKeys);
@@ -211,7 +230,7 @@ export function createMemoryHost({context, settings, backend, notice = () => {}}
   }
 
   return {
-    storyMemory, storySources,
+    storyMemory, recallStory, storySources,
     tidy, after, contextFor, aboutPeople, storyPlan, storyReady, refreshStory,
     status: threadId => ({...status.get(threadId), busy: busy.has(threadId), ...(storyError ? {storyError} : {})}),
     close() { closed = true; clearTimeout(storyTimer); unsubscribe?.(); }

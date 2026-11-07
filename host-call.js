@@ -155,8 +155,12 @@ export function createCallHost({context, settings, backend, notice, ringing = ()
       const full = await backend.chats.get(thread.id);
       c.memory = (await memory.contextFor(full, {query: [c.reason, ...history.slice(-4).map(m => messageLine(m, user))].filter(Boolean).join('\n')}).catch(() => ({text: ''}))).text;
     }
+    const callQuery = [c.name, c.reason, ...c.lines.slice(-4).map(l => l.translation || l.text)].filter(Boolean).join(' ');
+    const earlierStory = memory?.recallStory
+      ? await memory.recallStory(callQuery, {recentCount: preset.context})
+      : (memory?.storyMemory() || '');
     const prompt = buildCallRequest({prompts: settings().promptRules, preset, mode, contact: c.contact, lines: c.lines, history, story, user, userPersona: userPersona(),
-      voiceFormat, voiceRules: c.voiced ? modelRules(s, [c.name]) : '', reason: c.reason, lore, memory: c.memory || '', earlier: memory?.storyMemory() || ''});
+      voiceFormat, voiceRules: c.voiced ? modelRules(s, [c.name]) : '', reason: c.reason, lore, memory: c.memory || '', earlier: earlierStory});
     const text = cleanTagged(await backend.generateText(ctx, {prompt, trimNames: false}), preset.cleanTags);
     return parseCallReply(text, {name: c.name, user, voiceFormat, voiced: c.voiced});
   }

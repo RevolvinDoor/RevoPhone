@@ -162,6 +162,8 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
     orificeMods: normalizeOrificeMods(raw?.orificeMods),
     // 当前肉体绑定的音色（可为角色名，或 pool:<engine>:<voice>:<name> 音色收藏夹引用）
     voiceRole: clip(raw?.voiceRole, 300),
+    // 当前角色形态图预览（存储在独立图片库，不落入 settings.json）
+    portraitData: clip(raw?.portraitData, 500000),
     // Snapshot of original body parameters before possession/fusion so returning restores them cleanly
     baseSnapshot: raw?.baseSnapshot && typeof raw.baseSnapshot === 'object' ? {
       gender: GENDERS.includes(raw.baseSnapshot.gender) ? raw.baseSnapshot.gender : '',
@@ -370,6 +372,51 @@ export function normalizeXeno(raw) {
     itemVoiceBindings,
     pendingActionNote: clip(raw.pendingActionNote, 1000)
   };
+}
+
+/** Extracts per-chat session state (excluding global mall/wardrobe catalog & global preferences) for chat isolation & floor snapshots. */
+export function extractXenoSession(xeno) {
+  const norm = normalizeXeno(xeno);
+  const stripEntityImg = ent => {
+    if (!ent || typeof ent !== 'object') return ent;
+    const copy = structuredClone(ent);
+    copy.portraitData = '';
+    return copy;
+  };
+  return {
+    selectedTarget: norm.selectedTarget,
+    wardrobeTarget: norm.wardrobeTarget,
+    bodyModTarget: norm.bodyModTarget,
+    cogModTarget: norm.cogModTarget,
+    protagonistCleared: norm.protagonistCleared,
+    protagonist: stripEntityImg(norm.protagonist),
+    targets: norm.targets.map(stripEntityImg),
+    targetPool: (norm.targetPool || []).map(stripEntityImg),
+    possession: structuredClone(norm.possession),
+    fusion: structuredClone(norm.fusion),
+    pendingActionNote: norm.pendingActionNote
+  };
+}
+
+/** Merges a per-chat session snapshot (or fresh session when null) with the global catalog & global settings in `globalXeno`. */
+export function mergeXenoSession(globalXeno, session = null) {
+  const base = normalizeXeno(globalXeno);
+  const fresh = defaultXeno();
+  const s = session && typeof session === 'object' ? session : fresh;
+  return normalizeXeno({
+    ...base,
+    selectedTarget: s.selectedTarget ?? fresh.selectedTarget,
+    wardrobeTarget: s.wardrobeTarget ?? fresh.wardrobeTarget,
+    bodyModTarget: s.bodyModTarget ?? fresh.bodyModTarget,
+    cogModTarget: s.cogModTarget ?? fresh.cogModTarget,
+    protagonistCleared: s.protagonistCleared ?? fresh.protagonistCleared,
+    protagonist: s.protagonist ?? fresh.protagonist,
+    targets: Array.isArray(s.targets) ? s.targets : fresh.targets,
+    targetPool: Array.isArray(s.targetPool) ? s.targetPool : fresh.targetPool,
+    possession: s.possession ?? fresh.possession,
+    fusion: s.fusion ?? fresh.fusion,
+    pendingActionNote: s.pendingActionNote ?? ''
+  });
 }
 
 /** Finds or creates a target entity by name. */
@@ -1312,12 +1359,15 @@ export function xenoApplyBodyMod(state, {targetKey = '__protagonist__', patch = 
   if (patch.originalBody !== undefined) entity.originalBody = clip(patch.originalBody, 160);
   if (patch.currentBody !== undefined) entity.currentBody = clip(patch.currentBody, 160);
   if (patch.voiceRole !== undefined) entity.voiceRole = clip(patch.voiceRole, 300);
+  if (patch.portraitData !== undefined) entity.portraitData = clip(patch.portraitData, 500000);
   if (patch.predatorTail && ['none', 'hidden', 'deployed'].includes(patch.predatorTail)) {
     entity.predatorTail = patch.predatorTail;
   }
   if (patch.orificeMods && typeof patch.orificeMods === 'object') {
     entity.orificeMods = normalizeOrificeMods({...entity.orificeMods, ...patch.orificeMods});
   }
+  const onlyPortrait = Object.keys(patch).length > 0 && Object.keys(patch).every(k => k === 'portraitData');
+  if (onlyPortrait) return next;
   // If protagonist is currently possessing this target's body, sync the physical body fields between target and protagonist
   if (next.possession.active && next.possession.targetName) {
     const possTarget = next.targets.find(t => t.name === next.possession.targetName);
@@ -1493,6 +1543,54 @@ export function xenoDrawTagsFor(xeno, name) {
   return tags.filter(Boolean).join(', ');
 }
 
+/** Builds a full-body current-state portrait prompt (Danbooru tags + effective appearance/body/equipment/vore/alienation). */
+export function buildEntityPortraitPrompt(xeno, entity) {
+  const state = normalizeXeno(xeno);
+  const e = normalizeEntity(entity, entity?.id === '__protagonist__');
+  const view = effectiveEntityView(state, e);
+  const tags = [];
+
+  const isFuta = view.gender === '扶她'
+    || (state.possession?.active && state.possession.organSync && (e.id === '__protagonist__' || e.name === state.possession.targetName));
+  if (isFuta) tags.push('1girl, solo, futanari, full body, masterpiece, best quality');
+  else if (view.gender === '男') tags.push('1boy, solo, full body, masterpiece, best quality');
+  else tags.push('1girl, solo, full body, masterpiece, best quality');
+
+  const equipTags = xenoDrawTagsFor(state, e.id === '__protagonist__' ? '__protagonist__' : e.name);
+  if (equipTags) tags.push(equipTags);
+
+  const items = state.items || [];
+  const skin = e.livingMount.skinSuitId ? items.find(i => i.id === e.livingMount.skinSuitId) : null;
+  const ring = e.livingMount.fleshRingId ? items.find(i => i.id === e.livingMount.fleshRingId) : null;
+  if (skin) {
+    if (e.livingMount.skinFaceMode === 'neck') tags.push('living bodysuit, retracted hood, exposed original face, neck seam');
+    if (e.livingMount.skinOrganOut) tags.push('futanari, erection');
+  }
+  if (ring && e.livingMount.fleshExtendMode === 'forward') {
+    tags.push('futanari, biological penis, erection');
+  }
+  if (ring && e.livingMount.fleshExtendMode === 'backward' && e.livingMount.fleshFaceMode === 'neck') {
+    tags.push('living bodysuit, retracted hood, exposed original face');
+  }
+  if (e.voreStorage?.length > 0) {
+    tags.push('distended belly, stomach bulge, vore, belly bulge, squirming bulge');
+  }
+  if (e.predatorTail === 'deployed') {
+    tags.push('monster tail, thick biological tail, tail mouth');
+  }
+
+  const cleanDesc = s => String(s || '').replace(/【[^】]*】/g, ' ').replace(/\s+/g, ' ').trim();
+  if (cleanDesc(view.appearance)) tags.push(cleanDesc(view.appearance));
+  if (cleanDesc(view.bodyBuild)) tags.push(cleanDesc(view.bodyBuild));
+  if (!e.outfit.outerwearItemId && e.outfit.outerwear && e.outfit.outerwear !== '无') tags.push(e.outfit.outerwear);
+  if (!e.outfit.underwearItemId && e.outfit.underwear && !/真空|无/.test(e.outfit.underwear)) tags.push(e.outfit.underwear);
+
+  return {
+    prompt: [...new Set(tags.map(t => String(t || '').trim()).filter(Boolean))].join(', '),
+    summaryLabel: `${view.name || '角色'} · ${view.gender || '当前形态'}`
+  };
+}
+
 // ==================== 6. SillyTavern Prompt Injection & Auto-Sync ====================
 
 export function xenoPromptPlan(xeno) {
@@ -1584,7 +1682,7 @@ export function xenoPromptPlan(xeno) {
     statusLines.push(
       '',
       '【状态自动同步协议】',
-      '1. 当且仅当本轮剧情中【已登记的目标角色或主角】发生换装/爆衣或身体特征变化时，在最终正文彻底结束后的最末尾输出一次完整闭合的状态块：<xeno_update>姓名|身份|性别(男/女/扶她)|外貌特征|体型身材|生理特征|外搭衣物|内衣裤装</xeno_update>（若有多名已登记角色变化则一行一人，每行固定8列）。',
+      '1. 当本轮剧情中有【新登场的女性/扶她重要角色】首次亮相，或【已登记的目标角色/主角】发生换装、爆衣或身体特征变化时，在最终正文彻底结束后的最末尾输出一次完整闭合的状态块：<xeno_update>姓名|身份|性别(男/女/扶她)|外貌特征|体型身材|生理特征|外搭衣物|内衣裤装</xeno_update>（若有多名角色登场或变化则一行一人，每行固定8列）。',
       '2. 思考过程/思维链中在心里核对即可，严禁在思维链内预演或写出 xeno_update 标签字样，严禁产生半截未闭合标签，也严禁将 tts 台词写进状态块内。'
     );
   }
@@ -1621,7 +1719,7 @@ export function stripXenoUpdate(text) {
 }
 
 /** Parses `<xeno_update>` blocks from a story reply and merges any new/updated character rows into `xeno`. */
-export function applyXenoUpdateFromText(state, text) {
+export function applyXenoUpdateFromText(state, text, options = {}) {
   // Strip thinking chains and <tts> tags first so CoT mentions or dialogue lines are never parsed
   const source = String(text ?? '')
     .replace(THINK_BLOCK_RE, '')
@@ -1629,6 +1727,8 @@ export function applyXenoUpdateFromText(state, text) {
   const matches = [...source.matchAll(XENO_UPDATE_RE)];
   if (!matches.length) return null;
   const next = normalizeXeno(state);
+  const routes = Array.isArray(options?.routes) ? options.routes : [];
+  const protNameHint = clip(options?.protagonistName, 80);
   let changed = false;
   for (const m of matches) {
     const lines = String(m[1] || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -1639,10 +1739,21 @@ export function applyXenoUpdateFromText(state, text) {
       const [name, identity, gender, appearance, bodyBuild, physiology, outerwear, underwear] = parts;
       if (!isValidRoleName(name) || name === '角色名' || name === '角色姓名' || name === '旁白') continue;
       if (!GENDERS.includes(gender)) continue;
-      const isProt = name === next.protagonist.name || name === '主角';
-      const ent = isProt ? next.protagonist : next.targets.find(t => t.name === name);
+      const matchedRoute = findRoute(routes, name);
+      if (matchedRoute && roleTypeOf(matchedRoute) === 'narrator') continue;
+      const isProt = (matchedRoute && roleTypeOf(matchedRoute) === 'protagonist')
+        || name === next.protagonist.name
+        || (protNameHint && name === protNameHint)
+        || name === '主角';
+      let ent = null;
+      if (isProt) {
+        ent = next.protagonist;
+        next.protagonistCleared = false;
+        if (!ent.name && name !== '主角') ent.name = clip(name, 80);
+      } else {
+        ent = ensureTarget(next, name);
+      }
       if (!ent) continue;
-      if (isProt) next.protagonistCleared = false;
       if (identity) ent.identity = clip(identity, 300);
       if (GENDERS.includes(gender)) ent.gender = gender;
       if (appearance) ent.appearance = clip(appearance, 1000);
