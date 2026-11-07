@@ -72,8 +72,11 @@ export function normalizeLivingMount(raw = {}) {
     skinSuitId: clip(raw?.skinSuitId, 120),
     skinFaceMode: raw?.skinFaceMode === 'neck' ? 'neck' : 'full', // 'full' = 全脸覆面拟态, 'neck' = 收缩至颈部露原貌
     skinOrganOut: raw?.skinOrganOut !== false, // true = 充血释出, false = 收纳回阴蒂口
+    skinVoiceRole: clip(raw?.skinVoiceRole, 300),
     fleshRingId: clip(raw?.fleshRingId, 120),
-    fleshExtendMode: ['idle', 'forward', 'backward'].includes(raw?.fleshExtendMode) ? raw.fleshExtendMode : 'idle'
+    fleshExtendMode: ['idle', 'forward', 'backward'].includes(raw?.fleshExtendMode) ? raw.fleshExtendMode : 'idle',
+    fleshFaceMode: raw?.fleshFaceMode === 'neck' ? 'neck' : 'full', // 'full' = 后方延展全脸覆面, 'neck' = 后方延展褪至颈部露原貌
+    fleshVoiceRole: clip(raw?.fleshVoiceRole, 300)
   };
 }
 
@@ -185,7 +188,7 @@ export function normalizeCatalogItem(raw = {}) {
     owned: raw?.owned === true,
     source: ['shop', 'fusion', 'restock'].includes(raw?.source) ? raw.source : 'shop',
     sourceTargetName: clip(raw?.sourceTargetName, 80),
-    voiceRole: clip(raw?.voiceRole || raw?.sourceTargetName, 300),
+    voiceRole: raw?.voiceRole !== undefined ? clip(raw.voiceRole, 300) : clip(raw?.sourceTargetName, 300),
     effectKind: clip(raw?.effectKind, 40),
     gender: GENDERS.includes(raw?.gender) ? raw.gender : (category === 'skin_suit' || category === 'flesh_ring' ? '扶她' : ''),
     appearance: clip(raw?.appearance, 1000),
@@ -238,6 +241,7 @@ export function defaultXeno() {
       reservedNote: '寄生之术模块预留位（待设定完成后启用）'
     },
     items: INITIAL_MALL_ITEMS.map(item => normalizeCatalogItem(structuredClone(item))),
+    itemVoiceBindings: {},
     pendingActionNote: ''
   };
 }
@@ -245,12 +249,28 @@ export function defaultXeno() {
 export function normalizeXeno(raw) {
   const base = defaultXeno();
   if (!raw || typeof raw !== 'object') return base;
+  const itemVoiceBindings = {};
+  if (raw.itemVoiceBindings && typeof raw.itemVoiceBindings === 'object') {
+    for (const [k, v] of Object.entries(raw.itemVoiceBindings)) {
+      const id = clip(k, 120), val = clip(v, 300);
+      if (id && val) itemVoiceBindings[id] = val;
+    }
+  }
   const existingItems = Array.isArray(raw.items) ? raw.items.map(normalizeCatalogItem) : [];
   const byId = new Map(existingItems.map(i => [i.id, i]));
   // Ensure all built-in catalog items exist while preserving their owned/edited state
   for (const builtin of INITIAL_MALL_ITEMS) {
-    if (!byId.has(builtin.id)) existingItems.push(normalizeCatalogItem(structuredClone(builtin)));
+    if (!byId.has(builtin.id)) {
+      const normBuiltin = normalizeCatalogItem(structuredClone(builtin));
+      existingItems.push(normBuiltin);
+      byId.set(normBuiltin.id, normBuiltin);
+    }
   }
+  for (const item of existingItems) {
+    if (item.voiceRole) itemVoiceBindings[item.id] = item.voiceRole;
+    else if (itemVoiceBindings[item.id]) item.voiceRole = itemVoiceBindings[item.id];
+  }
+  const protagonist = normalizeEntity(raw.protagonist, true);
   const targets = Array.isArray(raw.targets)
     ? raw.targets.filter(t => isValidRoleName(t?.name)).slice(0, 60).map(t => normalizeEntity(t, false))
     : [];
@@ -262,6 +282,27 @@ export function normalizeXeno(raw) {
   }
   for (const t of targets) {
     poolMap.set(t.name, t);
+  }
+  for (const ent of [protagonist, ...targets, ...poolMap.values()]) {
+    if (!ent?.livingMount) continue;
+    if (ent.livingMount.skinSuitId) {
+      const skin = byId.get(ent.livingMount.skinSuitId);
+      const v = clip(skin?.voiceRole || itemVoiceBindings[ent.livingMount.skinSuitId] || ent.livingMount.skinVoiceRole || skin?.sourceTargetName, 300);
+      if (v) {
+        ent.livingMount.skinVoiceRole = v;
+        itemVoiceBindings[ent.livingMount.skinSuitId] = v;
+        if (skin && !skin.voiceRole) skin.voiceRole = v;
+      }
+    }
+    if (ent.livingMount.fleshRingId) {
+      const ring = byId.get(ent.livingMount.fleshRingId);
+      const v = clip(ring?.voiceRole || itemVoiceBindings[ent.livingMount.fleshRingId] || ent.livingMount.fleshVoiceRole || ring?.sourceTargetName, 300);
+      if (v) {
+        ent.livingMount.fleshVoiceRole = v;
+        itemVoiceBindings[ent.livingMount.fleshRingId] = v;
+        if (ring && !ring.voiceRole) ring.voiceRole = v;
+      }
+    }
   }
   const selectedTarget = targets.some(t => t.name === raw.selectedTarget)
     ? raw.selectedTarget
@@ -284,7 +325,7 @@ export function normalizeXeno(raw) {
     bodyModTarget,
     cogModTarget,
     protagonistCleared: raw.protagonistCleared === true,
-    protagonist: normalizeEntity(raw.protagonist, true),
+    protagonist,
     targets,
     targetPool: [...poolMap.values()].slice(0, 120),
     possession: {
@@ -326,6 +367,7 @@ export function normalizeXeno(raw) {
       reservedNote: clip(raw.parasite?.reservedNote, 400) || base.parasite.reservedNote
     },
     items: existingItems.slice(0, 200),
+    itemVoiceBindings,
     pendingActionNote: clip(raw.pendingActionNote, 1000)
   };
 }
@@ -463,6 +505,7 @@ export function parsePoolVoiceRef(ref, voicePool = []) {
     voice,
     model: found?.model || '',
     name: found?.name || fallbackName || voice,
+    language: found?.language || '',
     style: found?.style || '',
     gender: found?.gender || '',
     age: found?.age || ''
@@ -482,14 +525,67 @@ export function formatVoiceRoleLabel(ref, voicePool = []) {
  * 2. 肉体互换 (Body Swap): 双向互换后双方肉体音色永久对调；单向夺舍后主角永久使用目标 B 的音色。
  * 3. 融合之术 (Fusion): 融合期间开口说话使用目标 B 的音色；主角心声保留主角自己的原音色。
  * 4. 活体皮躯 (Skin Suit): 仅在「全脸覆面」(skinFaceMode === 'full') 时开口使用皮躯绑定的音色；「露原貌」(neck) 恢复本人当前肉体音色。
- * 5. 活体肉躯 (Flesh Ring): 仅在「后方全身延展」(fleshExtendMode === 'backward') 时开口使用肉躯绑定的音色；静息/前方延展保持本人当前肉体音色。
+ * 5. 活体肉躯 (Flesh Ring): 仅在「后方全身延展」且「全脸覆面」(fleshExtendMode === 'backward' && fleshFaceMode === 'full') 时开口使用肉躯绑定的音色；「露原貌」(neck) 或静息/前方延展恢复本人当前肉体音色。
  * 6. 肉体改造 (Body Mod): 若肉体绑定了新建/指定的音色角色 (`entity.voiceRole`)，则使用该角色音色。
  */
-export function resolveXenoVoiceRole(xeno, speakerName, {inner = false} = {}) {
+function itemMatchesSpeaker(item, rawName) {
+  if (!item || !rawName) return false;
+  const clean = s => String(s || '').replace(/[【】\[\]()（）]/g, '').trim();
+  const prefix = String(item.name || '').split(/[·・(（]/)[0].trim();
+  return [item.name, item.shortName, item.sourceTargetName, prefix, clean(item.name), clean(item.shortName)]
+    .some(candidate => candidate && candidate === rawName);
+}
+
+function resolveMountVoice(xeno, m) {
+  if (!m) return '';
+  const items = xeno?.items || [];
+  const bindings = xeno?.itemVoiceBindings || {};
+  if (m.skinSuitId && (m.skinFaceMode || 'full') === 'full') {
+    const skin = items.find(i => i.id === m.skinSuitId);
+    const skinVoice = clip(skin?.voiceRole || bindings[m.skinSuitId] || m.skinVoiceRole || skin?.sourceTargetName, 300);
+    if (skinVoice) return skinVoice;
+  }
+  if (m.fleshRingId && m.fleshExtendMode === 'backward' && (m.fleshFaceMode || 'full') === 'full') {
+    const ring = items.find(i => i.id === m.fleshRingId);
+    const ringVoice = clip(ring?.voiceRole || bindings[m.fleshRingId] || m.fleshVoiceRole || ring?.sourceTargetName, 300);
+    if (ringVoice) return ringVoice;
+  }
+  return '';
+}
+
+export function resolveXenoVoiceRole(xeno, speakerName, {inner = false, routes = []} = {}) {
   const rawName = String(speakerName ?? '').trim();
   if (!rawName || !xeno || xeno.enabled === false) return rawName;
-  const isProt = (xeno.protagonist?.name && rawName === xeno.protagonist.name) || rawName === '主角';
-  const actor = isProt ? xeno.protagonist : (xeno.targets || []).find(t => t.name === rawName);
+  const routeList = Array.isArray(routes) ? routes : [];
+  const protRoute = routeList.find(r => r?.name?.trim() && roleTypeOf(r) === 'protagonist');
+  const isProtByRoute = !!(protRoute && (protRoute.name.trim() === rawName || (protRoute.aliases || []).includes(rawName)));
+  let isProt = (xeno.protagonist?.name && rawName === xeno.protagonist.name) || rawName === '主角' || isProtByRoute;
+  let actor = isProt ? xeno.protagonist : (xeno.targets || []).find(t => t.name === rawName);
+
+  // If the speaker is worn as a full-face skin_suit or backward flesh_ring and the story tagged the line with the suit's name
+  const items = xeno.items || [];
+  if (!actor) {
+    for (const ent of [xeno.protagonist, ...(xeno.targets || [])]) {
+      const m = ent?.livingMount;
+      if (!m) continue;
+      if (m.skinSuitId && (m.skinFaceMode || 'full') === 'full') {
+        const skin = items.find(i => i.id === m.skinSuitId);
+        if (itemMatchesSpeaker(skin, rawName)) {
+          actor = ent;
+          isProt = ent === xeno.protagonist;
+          break;
+        }
+      }
+      if (m.fleshRingId && m.fleshExtendMode === 'backward' && (m.fleshFaceMode || 'full') === 'full') {
+        const ring = items.find(i => i.id === m.fleshRingId);
+        if (itemMatchesSpeaker(ring, rawName)) {
+          actor = ent;
+          isProt = ent === xeno.protagonist;
+          break;
+        }
+      }
+    }
+  }
   if (!actor) return rawName;
 
   // 心声（脑内独白）：附身/融合时使用主角本体原音色；穿戴皮躯/肉躯时心声仍为自身肉体音色
@@ -509,20 +605,10 @@ export function resolveXenoVoiceRole(xeno, speakerName, {inner = false} = {}) {
   }
 
   // 检查最外层活体挂载（皮躯全脸覆面 / 肉躯后方全身延展）
-  const items = xeno.items || [];
   const mounts = bodyEntity !== actor ? [actor.livingMount, bodyEntity.livingMount] : [bodyEntity.livingMount];
   for (const m of mounts) {
-    if (!m) continue;
-    if (m.skinSuitId && m.skinFaceMode === 'full') {
-      const skin = items.find(i => i.id === m.skinSuitId);
-      const skinVoice = clip(skin?.voiceRole || skin?.sourceTargetName, 300);
-      if (skinVoice) return skinVoice;
-    }
-    if (m.fleshRingId && m.fleshExtendMode === 'backward') {
-      const ring = items.find(i => i.id === m.fleshRingId);
-      const ringVoice = clip(ring?.voiceRole || ring?.sourceTargetName, 300);
-      if (ringVoice) return ringVoice;
-    }
+    const mountedVoice = resolveMountVoice(xeno, m);
+    if (mountedVoice) return mountedVoice;
   }
 
   return bodyEntity.voiceRole || bodyEntity.name || rawName;
@@ -536,8 +622,8 @@ export function resolveLineRoute(settings, line) {
   const direct = findRoute(routes, role);
   const canonName = direct?.name || role;
   const inner = line?.inner === true || lineEffect(line) === 'inner';
-  const targetVoiceRole = resolveXenoVoiceRole(settings?.xeno, canonName, {inner});
-  if (targetVoiceRole && targetVoiceRole !== canonName) {
+  const targetVoiceRole = resolveXenoVoiceRole(settings?.xeno, canonName, {inner, routes});
+  if (targetVoiceRole) {
     const poolVoice = parsePoolVoiceRef(targetVoiceRole, settings?.voicePool);
     if (poolVoice) {
       const base = direct ? structuredClone(direct) : {
@@ -553,6 +639,7 @@ export function resolveLineRoute(settings, line) {
         engine: poolVoice.engine,
         voice: poolVoice.voice,
         model,
+        language: poolVoice.language || base.language || settings?.general?.defaultLanguage || 'zh',
         bindings: {
           ...(base.bindings || {}),
           [poolVoice.engine]: {
@@ -564,14 +651,16 @@ export function resolveLineRoute(settings, line) {
         voiceSourceRole: `收藏音色·${poolVoice.name}`
       };
     }
-    const mapped = findRoute(routes, targetVoiceRole);
-    if (mapped) {
-      return {
-        ...structuredClone(mapped),
-        id: direct?.id || mapped.id,
-        name: canonName,
-        voiceSourceRole: mapped.name
-      };
+    if (targetVoiceRole !== canonName) {
+      const mapped = findRoute(routes, targetVoiceRole);
+      if (mapped) {
+        return {
+          ...structuredClone(mapped),
+          id: direct?.id || mapped.id,
+          name: canonName,
+          voiceSourceRole: mapped.name
+        };
+      }
     }
   }
   return direct;
@@ -582,8 +671,8 @@ export function effectiveSpeakingRoutes(settings) {
   const routes = Array.isArray(settings?.routes) ? settings.routes : [];
   return routes.map(r => {
     if (!r?.name) return r;
-    const targetVoiceRole = resolveXenoVoiceRole(settings?.xeno, r.name, {inner: false});
-    if (targetVoiceRole && targetVoiceRole !== r.name) {
+    const targetVoiceRole = resolveXenoVoiceRole(settings?.xeno, r.name, {inner: false, routes});
+    if (targetVoiceRole) {
       const poolVoice = parsePoolVoiceRef(targetVoiceRole, settings?.voicePool);
       if (poolVoice) {
         const model = poolVoice.model || settings?.connections?.[poolVoice.engine]?.model || '';
@@ -592,6 +681,7 @@ export function effectiveSpeakingRoutes(settings) {
           engine: poolVoice.engine,
           voice: poolVoice.voice,
           model,
+          language: poolVoice.language || r.language,
           bindings: {
             ...(r.bindings || {}),
             [poolVoice.engine]: {
@@ -603,17 +693,19 @@ export function effectiveSpeakingRoutes(settings) {
           voiceSourceRole: `收藏音色·${poolVoice.name}`
         };
       }
-      const mapped = findRoute(routes, targetVoiceRole);
-      if (mapped && (mapped.voice?.trim() || mapped.language || mapped.engine)) {
-        return {
-          ...structuredClone(r),
-          engine: mapped.engine,
-          voice: mapped.voice,
-          model: mapped.model,
-          language: mapped.language || r.language,
-          bindings: structuredClone(mapped.bindings || {}),
-          voiceSourceRole: mapped.name
-        };
+      if (targetVoiceRole !== r.name) {
+        const mapped = findRoute(routes, targetVoiceRole);
+        if (mapped && (mapped.voice?.trim() || mapped.language || mapped.engine)) {
+          return {
+            ...structuredClone(r),
+            engine: mapped.engine,
+            voice: mapped.voice,
+            model: mapped.model,
+            language: mapped.language || r.language,
+            bindings: structuredClone(mapped.bindings || {}),
+            voiceSourceRole: mapped.name
+          };
+        }
       }
     }
     return r;
@@ -636,7 +728,7 @@ export function effectiveEntityView(xeno, entity) {
     gender = skin.gender || gender;
     appearance = e.livingMount.skinFaceMode === 'full'
       ? `【皮躯全脸覆面：${skin.shortName}】${skin.appearance || e.appearance}`
-      : `【皮躯露原貌：面部为${e.name}原貌，颈部以下为${skin.shortName}】${skin.appearance || e.appearance}`;
+      : `【皮躯露原貌：面部为${e.name || '穿戴者'}原貌，颈部以下为${skin.shortName}】${skin.appearance || e.appearance}`;
     if (skin.bodyBuild) bodyBuild = `【皮躯体态】${skin.bodyBuild}`;
     if (skin.physiology) {
       const organState = e.livingMount.skinOrganOut ? '扶她器官充血释出态' : '扶她器官收纳隐藏态';
@@ -647,7 +739,10 @@ export function effectiveEntityView(xeno, entity) {
     if (e.livingMount.fleshExtendMode === 'backward') {
       // 后方延展：全身被新躯体包裹覆盖
       gender = ring.gender || '扶她';
-      if (ring.appearance) appearance = `【肉躯后方全身延展：${ring.shortName}】${ring.appearance}`;
+      const ringFullFace = (e.livingMount.fleshFaceMode || 'full') === 'full';
+      appearance = ringFullFace
+        ? `【肉躯后方全身延展·全脸覆面：${ring.shortName}】${ring.appearance || e.appearance}`
+        : `【肉躯后方延展·露原貌：面部为${e.name || '穿戴者'}原貌，颈部以下为${ring.shortName}】${ring.appearance || e.appearance}`;
       if (ring.bodyBuild) bodyBuild = `【肉躯外躯体态】${ring.bodyBuild}`;
       if (ring.physiology) physiology = `【肉躯生理】${ring.physiology}`;
     } else if (e.livingMount.fleshExtendMode === 'forward') {
@@ -675,8 +770,11 @@ export function effectiveEntityView(xeno, entity) {
     ? `${skin.name}（${e.livingMount.skinFaceMode === 'full' ? '全脸覆面' : '褪至颈部露原貌'} · ${e.livingMount.skinOrganOut ? '器官释出' : '器官收纳'}）`
     : '未穿戴';
   const ringModeMap = {idle: '静息饰品形态', forward: '前方延展（肉棒重构）', backward: '后方延展（全身躯体重构）'};
+  const ringFaceSuffix = e.livingMount.fleshExtendMode === 'backward'
+    ? ((e.livingMount.fleshFaceMode || 'full') === 'neck' ? ' · 褪至颈部露原貌' : ' · 全脸覆面')
+    : '';
   const ringText = ring
-    ? `${ring.name}（${ringModeMap[e.livingMount.fleshExtendMode] || '静息'}）`
+    ? `${ring.name}（${ringModeMap[e.livingMount.fleshExtendMode] || '静息'}${ringFaceSuffix}）`
     : '未安装';
 
   const voreText = e.voreStorage.length
@@ -697,6 +795,8 @@ export function effectiveEntityView(xeno, entity) {
     }
   } else if (skin && e.livingMount.skinFaceMode === 'neck') {
     voiceStateText = `皮躯露原貌：恢复【${spokenLabel || e.name || '本人'}】音色`;
+  } else if (ring && e.livingMount.fleshExtendMode === 'backward' && e.livingMount.fleshFaceMode === 'neck') {
+    voiceStateText = `肉躯露原貌：恢复【${spokenLabel || e.name || '本人'}】音色`;
   }
 
   return {
@@ -1014,6 +1114,8 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
 
   if (chosenBranch === '皮躯化') {
     const suitId = `fusion_skin_${target.id}`;
+    const prevSkin = next.items.find(i => i.id === suitId);
+    const boundVoice = clip(prevSkin?.voiceRole || next.itemVoiceBindings?.[suitId] || target.voiceRole || target.name, 300);
     const item = normalizeCatalogItem({
       id: suitId,
       name: `${target.name}·活体转化皮躯`,
@@ -1024,7 +1126,8 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
       owned: true,
       source: 'fusion',
       sourceTargetName: target.name,
-      voiceRole: target.voiceRole || target.name,
+      voiceRole: boundVoice,
+      imageData: prevSkin?.imageData || '',
       gender: target.gender,
       appearance: target.appearance,
       bodyBuild: target.bodyBuild,
@@ -1032,6 +1135,7 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
       summary: `由「${target.name}」融合解除时皮躯化生成的完整人形活体皮躯（已存入衣柜，可穿戴或再次融合还原）`,
       rawDesign: `<skin_suit_design name="${target.name}·活体转化皮躯">\n[外观视觉还原]\n- 原型角色: ${target.name}（${target.identity}）\n- 外貌特征: ${target.appearance}\n[体态参数]\n- 体型身材: ${target.bodyBuild}\n- 生理构造: ${target.physiology}\n[活体穿戴机能]\n- 背部脊椎隐形开口穿入，无缝贴合，支持全脸覆面拟态或收缩至颈部露原貌，意识永久沉睡。\n</skin_suit_design>`
     });
+    if (boundVoice) next.itemVoiceBindings[suitId] = boundVoice;
     next.items = [item, ...next.items.filter(i => i.id !== suitId)];
     target.currentBody = `已转化为皮躯（${item.name}）`;
     target.changeReason = '融合解除·皮躯化（已存入衣柜）';
@@ -1039,6 +1143,8 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
     next.pendingActionNote = `【本轮异构终端操作：融合解除·皮躯化】主角解除与「${target.name}」的融合，并将「${target.name}」的肉体转化为一件完整的活体【皮躯】存入衣柜，其原本意识陷入永久沉睡。`;
   } else if (chosenBranch === '肉躯化') {
     const ringId = `fusion_ring_${target.id}`;
+    const prevRing = next.items.find(i => i.id === ringId);
+    const boundVoice = clip(prevRing?.voiceRole || next.itemVoiceBindings?.[ringId] || target.voiceRole || target.name, 300);
     const item = normalizeCatalogItem({
       id: ringId,
       name: `${target.name}·凝缩活体肉躯环`,
@@ -1049,7 +1155,8 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
       owned: true,
       source: 'fusion',
       sourceTargetName: target.name,
-      voiceRole: target.voiceRole || target.name,
+      voiceRole: boundVoice,
+      imageData: prevRing?.imageData || '',
       gender: '扶她',
       ringAppearance: `由${target.name}肉体凝缩而成的温热活体肉质圆环，锚定于阴茎口/阴蒂口`,
       forwardExtension: `向前方增殖重构出极具侵略性的肉棒器官（承载${target.name}的生理特征）`,
@@ -1060,6 +1167,7 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
       summary: `由「${target.name}」融合解除时肉躯化凝缩而成的活体肉躯环（已存入衣柜，可佩戴延展或再次融合还原）`,
       rawDesign: `<flesh_ring_design name="${target.name}·凝缩活体肉躯环">\n[基底环体]\n- 由「${target.name}」肉体凝缩而成的温热肉环，扣合阴茎口/阴蒂口建立神经直连。\n[前方重构：器官形态]\n- 向前方增殖构筑完整肉棒。\n[后方延展：外躯体态]\n- 外貌: ${target.appearance}\n- 体态: ${target.bodyBuild}\n- 生理: ${target.physiology}\n</flesh_ring_design>`
     });
+    if (boundVoice) next.itemVoiceBindings[ringId] = boundVoice;
     next.items = [item, ...next.items.filter(i => i.id !== ringId)];
     target.currentBody = `已凝缩为肉躯环（${item.name}）`;
     target.changeReason = '融合解除·肉躯化（已存入衣柜）';
@@ -1262,17 +1370,21 @@ export function xenoEquipItem(state, {targetKey = '__protagonist__', itemId, mod
 
   if (item.category === 'skin_suit') {
     entity.livingMount.skinSuitId = item.id;
-    if (mode === 'neck' || mode === 'full') entity.livingMount.skinFaceMode = mode;
-    next.pendingActionNote = `【本轮衣柜操作：穿戴活体皮躯】「${entity.name}」从背部脊椎裂口穿入了【${item.name}】（${entity.livingMount.skinFaceMode === 'full' ? '活体组织向上蔓延覆盖全脸，完全拟态为皮躯容貌' : '头部组织收缩至颈部，露出原本面孔'}），建立双向神经感官直连。`;
+    entity.livingMount.skinFaceMode = mode === 'neck' ? 'neck' : 'full';
+    entity.livingMount.skinVoiceRole = clip(item.voiceRole || next.itemVoiceBindings?.[item.id] || item.sourceTargetName, 300);
+    next.pendingActionNote = `【本轮衣柜操作：穿戴活体皮躯】「${entity.name || '主角'}」从背部脊椎裂口穿入了【${item.name}】（${entity.livingMount.skinFaceMode === 'full' ? '活体组织向上蔓延覆盖全脸，完全拟态为皮躯容貌与声带音色' : '头部组织收缩至颈部，露出原本面孔与本人音色'}），建立双向神经感官直连。`;
   } else if (item.category === 'flesh_ring') {
     entity.livingMount.fleshRingId = item.id;
     entity.livingMount.fleshExtendMode = ['idle', 'forward', 'backward'].includes(mode) ? mode : 'forward';
+    if (mode === 'backward' || !entity.livingMount.fleshFaceMode) entity.livingMount.fleshFaceMode = 'full';
+    entity.livingMount.fleshVoiceRole = clip(item.voiceRole || next.itemVoiceBindings?.[item.id] || item.sourceTargetName, 300);
+    const faceNote = entity.livingMount.fleshFaceMode === 'neck' ? '头部收缩至颈部露原貌（保持本人音色）' : '全脸覆面拟态（切换为肉躯音色）';
     const modeDesc = {
       idle: '静息饰品形态（紧扣在阴茎口/阴蒂口上）',
       forward: `前方延展形态（向前方增殖重构出巨型肉棒：${item.forwardExtension}）`,
-      backward: `后方延展形态（向后方全身蔓延包裹，彻底重构为：${item.backwardExtension}）`
+      backward: `后方延展形态（向后方全身蔓延包裹，${faceNote}，彻底重构为：${item.backwardExtension}）`
     }[entity.livingMount.fleshExtendMode];
-    next.pendingActionNote = `【本轮衣柜操作：佩戴活体肉躯】「${entity.name}」在阴茎口/阴蒂口扣合佩戴了【${item.name}】，当前意念延展形态为：${modeDesc}。`;
+    next.pendingActionNote = `【本轮衣柜操作：佩戴活体肉躯】「${entity.name || '主角'}」在阴茎口/阴蒂口扣合佩戴了【${item.name}】，当前意念延展形态为：${modeDesc}。`;
   } else if (item.category === 'apparel') {
     const slot = ['outerwear', 'underwear', 'privacyCover', 'accessories'].includes(item.slot) ? item.slot : 'outerwear';
     entity.outfit[slot] = `${item.name}（${item.summary}）`;
@@ -1280,7 +1392,7 @@ export function xenoEquipItem(state, {targetKey = '__protagonist__', itemId, mod
     if (/风衣/.test(item.name) && (mode === 'open' || mode === 'cover')) {
       entity.outfit.coatPose = mode;
     }
-    next.pendingActionNote = `【本轮衣柜操作：更换着装】「${entity.name}」穿戴了【${item.name}】。`;
+    next.pendingActionNote = `【本轮衣柜操作：更换着装】「${entity.name || '主角'}」穿戴了【${item.name}】。`;
   }
   return next;
 }
@@ -1288,10 +1400,21 @@ export function xenoEquipItem(state, {targetKey = '__protagonist__', itemId, mod
 export function xenoUpdateMountOption(state, {targetKey = '__protagonist__', patch = {}}) {
   const next = normalizeXeno(state);
   const entity = getEntity(next, targetKey) || next.protagonist;
-  if (patch.skinFaceMode) entity.livingMount.skinFaceMode = patch.skinFaceMode === 'neck' ? 'neck' : 'full';
+  if (patch.skinFaceMode) {
+    entity.livingMount.skinFaceMode = patch.skinFaceMode === 'neck' ? 'neck' : 'full';
+    next.pendingActionNote = entity.livingMount.skinFaceMode === 'neck'
+      ? `【本轮衣柜操作：皮躯头部收缩露原貌】「${entity.name || '主角'}」令活体皮躯头部组织向下收缩至颈部，露出原本面容并恢复本人声带音色。`
+      : `【本轮衣柜操作：皮躯全脸覆面】「${entity.name || '主角'}」令活体皮躯头部组织向上蔓延覆盖全脸，完全拟态为皮躯容貌与声带音色。`;
+  }
   if (typeof patch.skinOrganOut === 'boolean') entity.livingMount.skinOrganOut = patch.skinOrganOut;
   if (patch.fleshExtendMode && ['idle', 'forward', 'backward'].includes(patch.fleshExtendMode)) {
     entity.livingMount.fleshExtendMode = patch.fleshExtendMode;
+  }
+  if (patch.fleshFaceMode) {
+    entity.livingMount.fleshFaceMode = patch.fleshFaceMode === 'neck' ? 'neck' : 'full';
+    next.pendingActionNote = entity.livingMount.fleshFaceMode === 'neck'
+      ? `【本轮衣柜操作：肉躯头部收缩露原貌】「${entity.name || '主角'}」令后方延展的活体肉躯头部组织向下收缩至颈部，露出原本面容并恢复本人声带音色。`
+      : `【本轮衣柜操作：肉躯全脸覆面】「${entity.name || '主角'}」令后方延展的活体肉躯头部组织向上蔓延覆盖全脸，完全拟态为肉躯外躯容貌与声带音色。`;
   }
   if (patch.coatPose && ['cover', 'open'].includes(patch.coatPose)) {
     entity.outfit.coatPose = patch.coatPose;
@@ -1308,10 +1431,12 @@ export function xenoUnequipSlot(state, {targetKey = '__protagonist__', slot}) {
   const entity = getEntity(next, targetKey) || next.protagonist;
   if (slot === 'skin_suit') {
     entity.livingMount.skinSuitId = '';
+    entity.livingMount.skinVoiceRole = '';
     next.pendingActionNote = `【本轮衣柜操作：脱卸皮躯】「${entity.name}」令背部脊椎接口裂开，从活体皮躯中脱出，恢复自身原本肉体。`;
   } else if (slot === 'flesh_ring') {
     entity.livingMount.fleshRingId = '';
     entity.livingMount.fleshExtendMode = 'idle';
+    entity.livingMount.fleshVoiceRole = '';
     next.pendingActionNote = `【本轮衣柜操作：取下肉躯】「${entity.name}」令肉躯组织收缩回根部环体并取下肉躯环。`;
   } else if (['outerwear', 'underwear', 'privacyCover', 'accessories'].includes(slot)) {
     entity.outfit[slot] = slot === 'underwear' ? '真空（未穿内衣裤）' : '无';

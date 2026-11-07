@@ -39,9 +39,13 @@ export function wardrobeApp(ctx) {
     const items = xeno.items || [];
     const skin = entity.livingMount.skinSuitId ? items.find(i => i.id === entity.livingMount.skinSuitId) : null;
     const ring = entity.livingMount.fleshRingId ? items.find(i => i.id === entity.livingMount.fleshRingId) : null;
-    const voicePool = api.getState().voicePool || [];
-    const skinVoiceLabel = skin ? formatVoiceRoleLabel(skin.voiceRole || skin.sourceTargetName, voicePool) : '';
-    const ringVoiceLabel = ring ? formatVoiceRoleLabel(ring.voiceRole || ring.sourceTargetName, voicePool) : '';
+    const state = api.getState();
+    const routes = (state.routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
+    const voicePool = state.voicePool || [];
+    const skinVoiceCur = skin ? (skin.voiceRole || xeno.itemVoiceBindings?.[skin.id] || entity.livingMount.skinVoiceRole || skin.sourceTargetName || '') : '';
+    const ringVoiceCur = ring ? (ring.voiceRole || xeno.itemVoiceBindings?.[ring.id] || entity.livingMount.fleshVoiceRole || ring.sourceTargetName || '') : '';
+    const skinVoiceLabel = skin ? formatVoiceRoleLabel(skinVoiceCur, voicePool) : '';
+    const ringVoiceLabel = ring ? formatVoiceRoleLabel(ringVoiceCur, voicePool) : '';
     const view = effectiveEntityView(xeno, entity);
     const hasCoat = /风衣/.test(entity.outfit.outerwear);
 
@@ -71,9 +75,14 @@ export function wardrobeApp(ctx) {
             </div>
             ${skin ? `
               <p class="slot-desc">${esc(skin.summary || skin.bodyBuild)}</p>
-              <div class="xeno-row-between" style="margin:2px 0 6px;gap:6px">
+              <div class="xeno-row-between" style="margin:2px 0 4px;gap:6px">
                 <span class="xeno-hint" style="margin:0">🎙️ 皮躯音色：<b>${esc(skinVoiceLabel || '未绑定（保持本人音色）')}</b>（全脸覆面生效）</span>
                 <button type="button" class="xeno-mini-btn" data-action="pick-item-fav-voice" data-id="${esc(skin.id)}">♡ 从收藏夹选</button>
+              </div>
+              <div style="margin-bottom:6px">
+                <select class="xeno-select" data-change="slot-item-voice" data-id="${esc(skin.id)}" aria-label="选择皮躯绑定音色">
+                  ${renderVoiceBindSelectOptions({currentValue: skinVoiceCur, emptyLabel: '（不切换音色，保持穿戴者本人音色）', routes, voicePool})}
+                </select>
               </div>
               <div class="xeno-row-controls">
                 <button type="button" class="xeno-mini-btn ${entity.livingMount.skinFaceMode === 'full' ? 'primary' : ''}" data-action="skin-face" data-mode="full">全脸覆面（皮躯音色）</button>
@@ -92,14 +101,23 @@ export function wardrobeApp(ctx) {
             </div>
             ${ring ? `
               <p class="slot-desc">${esc(ring.summary || ring.ringAppearance)}</p>
-              <div class="xeno-row-between" style="margin:2px 0 6px;gap:6px">
-                <span class="xeno-hint" style="margin:0">🎙️ 肉躯音色：<b>${esc(ringVoiceLabel || '未绑定（保持本人音色）')}</b>（仅后方延展生效）</span>
+              <div class="xeno-row-between" style="margin:2px 0 4px;gap:6px">
+                <span class="xeno-hint" style="margin:0">🎙️ 肉躯音色：<b>${esc(ringVoiceLabel || '未绑定（保持本人音色）')}</b>（后方延展·全脸覆面生效）</span>
                 <button type="button" class="xeno-mini-btn" data-action="pick-item-fav-voice" data-id="${esc(ring.id)}">♡ 从收藏夹选</button>
+              </div>
+              <div style="margin-bottom:6px">
+                <select class="xeno-select" data-change="slot-item-voice" data-id="${esc(ring.id)}" aria-label="选择肉躯绑定音色">
+                  ${renderVoiceBindSelectOptions({currentValue: ringVoiceCur, emptyLabel: '（不切换音色，保持穿戴者本人音色）', routes, voicePool})}
+                </select>
               </div>
               <div class="xeno-row-controls">
                 <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'idle' ? 'primary' : ''}" data-action="ring-mode" data-mode="idle">静息饰品形态</button>
                 <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'forward' ? 'primary' : ''}" data-action="ring-mode" data-mode="forward">前方延展(肉棒重构)</button>
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'backward' ? 'primary' : ''}" data-action="ring-mode" data-mode="backward">后方延展(全身+肉躯音色)</button>
+                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'backward' ? 'primary' : ''}" data-action="ring-mode" data-mode="backward">后方延展(全身重构)</button>
+              </div>
+              <div class="xeno-row-controls" style="margin-top:4px">
+                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'backward' && (entity.livingMount.fleshFaceMode || 'full') === 'full' ? 'primary' : ''}" data-action="ring-face" data-mode="full">全脸覆面（肉躯音色）</button>
+                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'backward' && entity.livingMount.fleshFaceMode === 'neck' ? 'primary' : ''}" data-action="ring-face" data-mode="neck">露原貌（本人音色）</button>
               </div>
             ` : '<small class="slot-empty">从下方「肉躯库」选择活体肉躯环扣合于阴茎口/阴蒂口</small>'}
           </div>
@@ -205,7 +223,7 @@ export function wardrobeApp(ctx) {
     const state = api.getState();
     const routes = (state.routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
     const voicePool = state.voicePool || [];
-    const curVoice = item.voiceRole || item.sourceTargetName || '';
+    const curVoice = item.voiceRole || state.xeno?.itemVoiceBindings?.[item.id] || item.sourceTargetName || '';
     const d = ctx.dialog(item.name, `
       <div class="xeno-sheet-form">
         ${item.imageData ? `<img class="wardrobe-sheet-img" src="${esc(item.imageData)}" alt="">` : ''}
@@ -214,7 +232,7 @@ export function wardrobeApp(ctx) {
         ${isLiving ? `
           <div class="xeno-field-inline">
             <div class="xeno-row-between" style="margin-bottom:4px">
-              <span>🎙️ 绑定声带音色（${item.category === 'skin_suit' ? '全脸覆面时生效' : '后方全身延展时生效'}）</span>
+              <span>🎙️ 绑定声带音色（${item.category === 'skin_suit' ? '全脸覆面时生效' : '后方延展·全脸覆面时生效'}）</span>
               <button type="button" class="xeno-mini-btn primary" data-pick-fav-voice>♡ 从音色收藏夹选</button>
             </div>
             <select class="xeno-select" data-item="voiceRole">
@@ -233,13 +251,21 @@ export function wardrobeApp(ctx) {
         </div>
       </div>
     `);
+    d.body.addEventListener('change', e => {
+      const sel = e.target.closest('[data-item="voiceRole"]');
+      if (!sel) return;
+      const voiceRole = sel.value.trim();
+      api.xenoAct('saveItem', {id: item.id, voiceRole});
+      ctx.notify(voiceRole ? `已保存「${item.shortName || item.name}」绑定音色：${formatVoiceRoleLabel(voiceRole, api.getState().voicePool || [])}` : '已清除该单品的音色绑定');
+    });
     d.body.addEventListener('click', e => {
       if (e.target.closest('[data-sheet-cancel]')) d.close(null);
       if (e.target.closest('[data-pick-fav-voice]')) {
         const sel = d.body.querySelector('[data-item="voiceRole"]');
         openVoicePoolPickerDialog(ctx, {
           currentValue: sel?.value || '',
-          onSelect: ref => {
+          onSelect: (ref, label) => {
+            api.xenoAct('saveItem', {id: item.id, voiceRole: ref});
             if (sel) {
               const latest = api.getState();
               sel.innerHTML = renderVoiceBindSelectOptions({
@@ -250,6 +276,7 @@ export function wardrobeApp(ctx) {
               });
               sel.value = ref;
             }
+            ctx.notify(ref ? `已为「${item.shortName || item.name}」保存绑定${label}` : '已清除该单品的音色绑定');
           }
         });
         return;
@@ -257,7 +284,7 @@ export function wardrobeApp(ctx) {
       if (e.target.closest('[data-sheet-save]')) {
         const read = k => d.body.querySelector(`[data-item="${k}"]`)?.value?.trim() ?? '';
         api.xenoAct('saveItem', {
-          ...item,
+          id: item.id,
           name: read('name') || item.name,
           summary: read('summary'),
           voiceRole: isLiving ? read('voiceRole') : item.voiceRole,
@@ -317,6 +344,10 @@ export function wardrobeApp(ctx) {
       api.xenoAct('updateMountOption', {targetKey, patch: {fleshExtendMode: el.dataset.mode}});
       return;
     }
+    if (act === 'ring-face') {
+      api.xenoAct('updateMountOption', {targetKey, patch: {fleshExtendMode: 'backward', fleshFaceMode: el.dataset.mode}});
+      return;
+    }
     if (act === 'coat-pose') {
       api.xenoAct('updateMountOption', {targetKey, patch: {coatPose: el.dataset.pose}});
       return;
@@ -325,9 +356,9 @@ export function wardrobeApp(ctx) {
       const item = xeno.items.find(i => i.id === el.dataset.id);
       if (!item) return;
       openVoicePoolPickerDialog(ctx, {
-        currentValue: item.voiceRole || item.sourceTargetName || '',
+        currentValue: item.voiceRole || xeno.itemVoiceBindings?.[item.id] || item.sourceTargetName || '',
         onSelect: (ref, label) => {
-          api.xenoAct('saveItem', {...item, voiceRole: ref});
+          api.xenoAct('saveItem', {id: item.id, voiceRole: ref});
           ctx.notify(ref ? `已为「${item.shortName || item.name}」绑定${label}` : '已清除该装备的音色绑定');
         }
       });
@@ -412,13 +443,21 @@ export function wardrobeApp(ctx) {
       api.xenoAct('selectWardrobeTarget', {key: el.value});
       return;
     }
+    if (el.dataset.change === 'slot-item-voice') {
+      const item = xenoState().items.find(i => i.id === el.dataset.id);
+      if (!item) return;
+      const voiceRole = el.value.trim();
+      api.xenoAct('saveItem', {id: item.id, voiceRole});
+      ctx.notify(voiceRole ? `已为「${item.shortName || item.name}」绑定音色：${formatVoiceRoleLabel(voiceRole, api.getState().voicePool || [])}` : '已清除该装备的音色绑定');
+      return;
+    }
     if (el.dataset.change === 'wardrobe-item-file') {
       const file = el.files?.[0];
       const item = xenoState().items.find(i => i.id === uploadTargetItemId);
       el.value = '';
       if (file && item) {
         const imageData = await blobToDataUrl(ctx.win, file);
-        api.xenoAct('saveItem', {...item, imageData});
+        api.xenoAct('saveItem', {id: item.id, imageData});
         ctx.notify(`已上传「${item.shortName}」图片并同步至商城与衣柜`);
       }
     }

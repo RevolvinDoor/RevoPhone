@@ -612,7 +612,11 @@ export function xenoApp(ctx) {
         const sel = d.body.querySelector('[data-edit="voiceRole"]');
         openVoicePoolPickerDialog(ctx, {
           currentValue: sel?.value || '',
-          onSelect: ref => {
+          onSelect: (ref, label) => {
+            api.xenoAct('applyBodyMod', {
+              targetKey: isProt ? '__protagonist__' : entity.name,
+              patch: {voiceRole: ref}
+            });
             if (sel) {
               const latest = api.getState();
               sel.innerHTML = renderVoiceBindSelectOptions({
@@ -623,6 +627,7 @@ export function xenoApp(ctx) {
               });
               sel.value = ref;
             }
+            ctx.notify(ref ? `已绑定${label}` : '已恢复默认本人音色');
           }
         });
         return;

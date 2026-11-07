@@ -645,14 +645,28 @@ export class TTSBackend {
                 case 'selectCogModTarget': xeno.cogModTarget = String(p.key || '__protagonist__'); return xeno;
                 case 'deleteAnchor': xeno.possession.anchors = xeno.possession.anchors.filter(a => a.name !== p.name); return xeno;
                 case 'saveItem': {
-                    const item = normalizeCatalogItem(p);
-                    const idx = xeno.items.findIndex(i => i.id === item.id);
-                    if (idx >= 0) xeno.items[idx] = { ...xeno.items[idx], ...item };
+                    const idx = xeno.items.findIndex(i => i.id === p?.id);
+                    const merged = idx >= 0 ? { ...xeno.items[idx], ...p } : p;
+                    const item = normalizeCatalogItem(merged);
+                    if (idx >= 0) xeno.items[idx] = item;
                     else xeno.items.unshift(item);
+                    xeno.itemVoiceBindings ||= {};
+                    if ('voiceRole' in p) {
+                        if (item.voiceRole) xeno.itemVoiceBindings[item.id] = item.voiceRole;
+                        else delete xeno.itemVoiceBindings[item.id];
+                    } else if (item.voiceRole) {
+                        xeno.itemVoiceBindings[item.id] = item.voiceRole;
+                    }
+                    for (const ent of [xeno.protagonist, ...(xeno.targets || []), ...(xeno.targetPool || [])]) {
+                        if (!ent?.livingMount) continue;
+                        if (ent.livingMount.skinSuitId === item.id) ent.livingMount.skinVoiceRole = item.voiceRole || '';
+                        if (ent.livingMount.fleshRingId === item.id) ent.livingMount.fleshVoiceRole = item.voiceRole || '';
+                    }
                     return xeno;
                 }
                 case 'deleteItem': {
                     xeno.items = xeno.items.filter(i => i.id !== p.itemId);
+                    if (xeno.itemVoiceBindings && p.itemId) delete xeno.itemVoiceBindings[p.itemId];
                     return xeno;
                 }
                 case 'clearPendingNote': xeno.pendingActionNote = ''; return xeno;
@@ -1807,16 +1821,20 @@ export class TTSBackend {
     /** Who the picture rules name: the open card's people and the given speakers (null: everyone). */
     drawCast(speakers = []) { return drawCast(this.cardState(), this.space, speakers); }
     /** The roles that speak in a card's story belong to that card's contacts. Saved only when something changed. */
-    tagRoles(names, key = this.space.key) {
+    tagRoles(names, key = this.space.key, userName = '') {
         if (!key || !names?.length) return false;
         const want = [...new Set(names.map(n => String(n || '').trim()).filter(n => n && !isPlaceholderRole(n) && n !== NARRATOR))];
         if (!want.length) return false;
         const next = this.getState();
+        const cleanUser = String(userName || next.xeno?.protagonist?.name || '').trim();
         let changed = false;
         for (const name of want) {
-            const route = findRoute(cardRoutes(next.routes, key), name);
+            const scoped = cardRoutes(next.routes, key);
+            const route = findRoute(scoped, name);
             if (!route) {
-                next.routes.push(normalizeRoute({ id: crypto.randomUUID(), name, roleType: 'normal', engine: 'fish', voice: '', model: '', language: '', card: key, cards: [key] }));
+                const hasProt = scoped.some(r => roleTypeOf(r) === 'protagonist');
+                const isUserRole = !hasProt && cleanUser && cleanUser !== '主角' && name === cleanUser;
+                next.routes.push(normalizeRoute({ id: crypto.randomUUID(), name, roleType: isUserRole ? 'protagonist' : 'normal', engine: 'fish', voice: '', model: '', language: '', card: key, cards: [key] }));
                 changed = true;
             }
         }

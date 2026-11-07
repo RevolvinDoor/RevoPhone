@@ -50,7 +50,7 @@ export function openVoicePoolPickerDialog(ctx, {currentValue = '', onSelect} = {
   const state = ctx.api.getState();
   const pool = state.voicePool || [];
   const cur = String(currentValue || '').trim();
-  const d = ctx.dialog('💖 从音色收藏夹选择音色', pool.length ? `
+  const html = pool.length ? `
     <div class="xeno-sheet-form">
       <p class="xeno-hint">点击下方收藏的音色即可直接绑定为声带音色：</p>
       <div class="group" style="max-height:52vh;overflow-y:auto;margin:6px 0">
@@ -86,7 +86,26 @@ export function openVoicePoolPickerDialog(ctx, {currentValue = '', onSelect} = {
         <button type="button" class="primary" data-pool-go-roles>前往「角色」App 管理收藏夹</button>
       </div>
     </div>
-  `);
+  `;
+
+  // Mount as a stacked overlay when another sheet is already open so we never close the parent sheet (`sheet?.close(null)`)
+  const screen = ctx.doc?.querySelector?.('.screen') || ctx.doc?.body;
+  const hasExistingOverlay = !!screen?.querySelector?.('.overlay');
+  let d;
+  if (hasExistingOverlay && screen) {
+    const overlay = ctx.doc.createElement('div');
+    overlay.className = 'overlay';
+    overlay.style.zIndex = '60';
+    overlay.innerHTML = `<section class="sheet" role="dialog" aria-modal="true" aria-label="从音色收藏夹选择音色"><header class="sheet-header"><h2>💖 从音色收藏夹选择音色</h2><button class="nav-button" data-sheet-close aria-label="关闭">${icon('close')}</button></header><div class="sheet-body">${html}</div></section>`;
+    screen.append(overlay);
+    const close = () => { if (overlay.isConnected) overlay.remove(); };
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay || e.target.closest('[data-sheet-close]')) close();
+    });
+    d = {body: overlay.querySelector('.sheet-body'), close};
+  } else {
+    d = ctx.dialog('💖 从音色收藏夹选择音色', html);
+  }
 
   d.body.addEventListener('click', e => {
     if (e.target.closest('[data-pool-close]')) { d.close(null); return; }
@@ -205,7 +224,7 @@ export async function generateItemPreview(ctx, item) {
   if (!photo?.blob) throw Error('读取生成的商品图片失败');
   const imageData = await blobToDataUrl(ctx.win, photo.blob);
   if (item.id && !item.id.startsWith('draft_')) {
-    api.xenoAct('saveItem', {...item, imageData});
+    api.xenoAct('saveItem', {id: item.id, imageData});
   }
   return imageData;
 }
