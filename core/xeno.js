@@ -2,9 +2,10 @@
 // three new apps: 1. 异构终端 (xeno), 2. 衣柜 (wardrobe), 3. 购物商城 (mall).
 // Replaces TavernDB with zero-latency local actions, on-demand rule injection, and automatic story state sync.
 
-import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS} from './xeno-catalog.js';
+import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS, XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset} from './xeno-catalog.js';
 import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {lineEffect} from './voice-fx.js';
+export {XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset};
 
 export const GENDERS = Object.freeze(['男', '女', '扶她']);
 export const POSSESSION_MODES = Object.freeze(['浅层共鸣', '意识共存', '完全占据', '认知覆盖']);
@@ -213,6 +214,8 @@ export function defaultXeno() {
     autoUpdateTag: true,
     worldCarrier: 'auto',
     freeShop: false,
+    activePreset: 'xeno-default',
+    presets: [defaultXenoPreset()],
     selectedTarget: '',
     wardrobeTarget: '__protagonist__',
     bodyModTarget: '__protagonist__',
@@ -317,11 +320,19 @@ export function normalizeXeno(raw) {
   const cogModTarget = targets.some(t => t.name === rawCogTarget)
     ? rawCogTarget
     : (selectedTarget || '__protagonist__');
+  const rawPresets = Array.isArray(raw.presets) && raw.presets.length
+    ? raw.presets.slice(0, 20).map(normalizeXenoPreset)
+    : [defaultXenoPreset()];
+  const activePreset = rawPresets.some(p => p.id === raw.activePreset)
+    ? raw.activePreset
+    : rawPresets[0].id;
   return {
     enabled: raw.enabled !== false,
     autoUpdateTag: raw.autoUpdateTag !== false,
     worldCarrier: WORLD_CARRIERS.some(([k]) => k === raw.worldCarrier) ? raw.worldCarrier : 'auto',
     freeShop: raw.freeShop === true,
+    activePreset,
+    presets: rawPresets,
     selectedTarget,
     wardrobeTarget: raw.wardrobeTarget === '__protagonist__' || targets.some(t => t.name === raw.wardrobeTarget) ? raw.wardrobeTarget : '__protagonist__',
     bodyModTarget,
@@ -372,6 +383,69 @@ export function normalizeXeno(raw) {
     itemVoiceBindings,
     pendingActionNote: clip(raw.pendingActionNote, 1000)
   };
+}
+
+export function normalizeXenoPreset(raw) {
+  const base = defaultXenoPreset();
+  if (!raw || typeof raw !== 'object') return base;
+  const pos = ['in_chat', 'before_prompt', 'in_prompt'].includes(raw.injection?.position)
+    ? raw.injection.position
+    : base.injection.position;
+  const depth = Number.isFinite(Number(raw.injection?.depth))
+    ? Math.max(0, Math.min(10000, Math.round(Number(raw.injection.depth))))
+    : base.injection.depth;
+  const role = ['system', 'user', 'assistant'].includes(raw.injection?.role)
+    ? raw.injection.role
+    : base.injection.role;
+  const statusDepth = Number.isFinite(Number(raw.statusDepth))
+    ? Math.max(0, Math.min(10000, Math.round(Number(raw.statusDepth))))
+    : base.statusDepth;
+  const rawEntries = Array.isArray(raw.entries) ? raw.entries : [];
+  const byId = new Map();
+  const entries = [];
+  for (const e of rawEntries) {
+    if (!e || typeof e !== 'object') continue;
+    const id = clip(e.id, 64) || crypto.randomUUID();
+    if (byId.has(id)) continue;
+    const builtin = DEFAULT_XENO_ENTRIES.find(b => b.id === id);
+    const scope = ['story', 'task', 'mall'].includes(e.scope) ? e.scope : (builtin?.scope || 'story');
+    const triggerMode = ['auto', 'always'].includes(e.triggerMode) ? e.triggerMode : (builtin?.triggerMode || 'always');
+    const normEntry = {
+      id,
+      title: clip(e.title, 80) || builtin?.title || '自定义提示词条目',
+      scope,
+      triggerMode,
+      enabled: e.enabled !== false,
+      text: typeof e.text === 'string' ? e.text.slice(0, 20000) : (builtin?.text || '')
+    };
+    byId.set(id, normEntry);
+    entries.push(normEntry);
+  }
+  for (const builtin of DEFAULT_XENO_ENTRIES) {
+    if (!byId.has(builtin.id)) {
+      entries.push({...builtin});
+    }
+  }
+  return {
+    id: clip(raw.id, 64) || base.id,
+    name: clip(raw.name, 60) || base.name,
+    injection: {position: pos, depth, role},
+    statusDepth,
+    entries
+  };
+}
+
+export function activeXenoPreset(xeno) {
+  const presets = Array.isArray(xeno?.presets) && xeno.presets.length ? xeno.presets : [defaultXenoPreset()];
+  return presets.find(p => p.id === xeno?.activePreset) || presets[0];
+}
+
+export function xenoPromptEntryText(xeno, entryId) {
+  const preset = activeXenoPreset(xeno);
+  const entry = preset.entries?.find(e => e.id === entryId);
+  if (!entry) return XENO_PROMPT_DEFAULTS[entryId] || '';
+  if (entry.enabled === false) return '';
+  return String(entry.text ?? '');
 }
 
 /** Extracts per-chat session state (excluding global mall/wardrobe catalog & global preferences) for chat isolation & floor snapshots. */
@@ -1593,9 +1667,11 @@ export function buildEntityPortraitPrompt(xeno, entity) {
 
 // ==================== 6. SillyTavern Prompt Injection & Auto-Sync ====================
 
-export function xenoPromptPlan(xeno) {
+export function xenoPromptPlan(xeno, presetOverride = null) {
   if (!xeno || xeno.enabled === false) return [];
   const state = normalizeXeno(xeno);
+  const preset = presetOverride ? normalizeXenoPreset(presetOverride) : activeXenoPreset(state);
+  const entryMap = new Map((preset.entries || []).map(e => [e.id, e]));
   const blocks = [];
 
   const carrierNote = {
@@ -1645,14 +1721,6 @@ export function xenoPromptPlan(xeno) {
   }
 
   // 2. On-demand rule injection: only include rules for active states/equipment to save tokens!
-  const activeRuleBlocks = [XENO_RULE_TEXTS.coreTerms];
-  if (state.possession.active || state.possession.anchors.length) {
-    activeRuleBlocks.push(XENO_RULE_TEXTS.possession);
-  }
-  if (state.fusion.active) {
-    activeRuleBlocks.push(XENO_RULE_TEXTS.fusion);
-  }
-
   const allEntities = [state.protagonist, ...state.targets];
   const wornSkinIds = new Set(allEntities.map(e => e.livingMount.skinSuitId).filter(Boolean));
   const wornRingIds = new Set(allEntities.map(e => e.livingMount.fleshRingId).filter(Boolean));
@@ -1660,11 +1728,24 @@ export function xenoPromptPlan(xeno) {
     allEntities.flatMap(e => ['outerwearItemId', 'underwearItemId', 'privacyCoverItemId', 'accessoriesItemId'].map(k => e.outfit[k])).filter(Boolean)
   );
 
-  if (wornSkinIds.size) activeRuleBlocks.push(XENO_RULE_TEXTS.skinSuit);
-  if (wornRingIds.size) activeRuleBlocks.push(XENO_RULE_TEXTS.fleshRing);
-  if (allEntities.some(e => e.voreStorage.length > 0)) activeRuleBlocks.push(XENO_RULE_TEXTS.vore);
-  if (allEntities.some(e => e.predatorTail !== 'none' || ORIFICE_SLOTS.some(([k]) => e.orificeMods[k] !== '常态'))) {
-    activeRuleBlocks.push(XENO_RULE_TEXTS.alienation);
+  const isTriggered = id => {
+    if (id === 'coreTerms') return true;
+    if (id === 'possession') return state.possession.active || state.possession.anchors.length > 0;
+    if (id === 'fusion') return state.fusion.active;
+    if (id === 'skinSuit') return wornSkinIds.size > 0;
+    if (id === 'fleshRing') return wornRingIds.size > 0;
+    if (id === 'vore') return allEntities.some(e => e.voreStorage.length > 0);
+    if (id === 'alienation') return allEntities.some(e => e.predatorTail !== 'none' || ORIFICE_SLOTS.some(([k]) => e.orificeMods[k] !== '常态'));
+    return true;
+  };
+
+  const activeRuleBlocks = [];
+  for (const e of preset.entries || []) {
+    if (e.enabled === false || !String(e.text || '').trim()) continue;
+    if (e.id === 'autoSync' || e.scope === 'task' || e.scope === 'mall') continue;
+    if (e.triggerMode === 'always' || isTriggered(e.id)) {
+      activeRuleBlocks.push(String(e.text).trim());
+    }
   }
 
   // Inject the exact XML design blocks (<skin_suit_design>, <flesh_ring_design>, <apparel_design>) only for currently worn items
@@ -1679,28 +1760,37 @@ export function xenoPromptPlan(xeno) {
   }
 
   if (state.autoUpdateTag) {
-    statusLines.push(
-      '',
-      '【状态自动同步协议】',
-      '1. 当本轮剧情中有【新登场的女性/扶她重要角色】首次亮相，或【已登记的目标角色/主角】发生换装、爆衣或身体特征变化时，在最终正文彻底结束后的最末尾输出一次完整闭合的状态块：<xeno_update>姓名|身份|性别(男/女/扶她)|外貌特征|体型身材|生理特征|外搭衣物|内衣裤装</xeno_update>（若有多名角色登场或变化则一行一人，每行固定8列）。',
-      '2. 思考过程/思维链中在心里核对即可，严禁在思维链内预演或写出 xeno_update 标签字样，严禁产生半截未闭合标签，也严禁将 tts 台词写进状态块内。'
-    );
+    const autoSyncEntry = entryMap.get('autoSync');
+    const autoSyncText = autoSyncEntry
+      ? (autoSyncEntry.enabled !== false ? String(autoSyncEntry.text || '').trim() : '')
+      : XENO_PROMPT_DEFAULTS.autoSync;
+    if (autoSyncText) {
+      statusLines.push('', autoSyncText);
+    }
   }
 
-  blocks.push({
-    key: 'sttts.entry.xeno-rules',
-    text: activeRuleBlocks.join('\n\n') + (designBlocks.length ? '\n\n' + designBlocks.join('\n\n') : ''),
-    position: 1,
-    depth: 2,
-    role: 0
-  });
+  const posCode = preset.injection?.position === 'in_prompt' ? 0 : preset.injection?.position === 'before_prompt' ? 2 : 1;
+  const roleCode = preset.injection?.role === 'user' ? 1 : preset.injection?.role === 'assistant' ? 2 : 0;
+  const rulesDepth = Number.isFinite(Number(preset.injection?.depth)) ? Number(preset.injection.depth) : 2;
+  const statusDepth = Number.isFinite(Number(preset.statusDepth)) ? Number(preset.statusDepth) : 1;
+
+  const rulesText = activeRuleBlocks.join('\n\n') + (designBlocks.length ? '\n\n' + designBlocks.join('\n\n') : '');
+  if (rulesText.trim()) {
+    blocks.push({
+      key: 'sttts.entry.xeno-rules',
+      text: rulesText,
+      position: posCode,
+      depth: rulesDepth,
+      role: roleCode
+    });
+  }
 
   blocks.push({
     key: 'sttts.entry.xeno-status',
     text: statusLines.join('\n'),
-    position: 1,
-    depth: 1,
-    role: 0
+    position: posCode,
+    depth: statusDepth,
+    role: roleCode
   });
 
   return blocks;

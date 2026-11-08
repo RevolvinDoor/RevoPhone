@@ -532,6 +532,9 @@ export function xenoApp(ctx) {
               ${WORLD_CARRIERS.map(([k, label]) => `<option value="${esc(k)}" ${xeno.worldCarrier === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}
             </select>
           </label>
+          <div class="xeno-row-controls" style="margin-top:6px">
+            <button type="button" class="xeno-btn secondary full" data-action="open-xeno-presets">📝 手动修改异构提示词（前往「预设 · 异构」）</button>
+          </div>
         </section>
       ` : ''}
       ${xeno.pendingActionNote ? `
@@ -704,6 +707,7 @@ export function xenoApp(ctx) {
     if (act === 'open-wardrobe') { ctx.open('wardrobe'); return; }
     if (act === 'open-mall') { ctx.open('mall'); return; }
     if (act === 'open-roles') { ctx.open('roles'); return; }
+    if (act === 'open-xeno-presets') { ctx.open('presets'); ctx.showPresetKind?.('xeno'); return; }
     if (act === 'toggle-xeno-settings') { settingsOpen = !settingsOpen; v.refresh(); return; }
     if (act === 'toggle-xeno-enabled') { api.saveXeno({enabled: !xeno.enabled}); return; }
     if (act === 'toggle-xeno-autosync') { api.saveXeno({autoUpdateTag: !xeno.autoUpdateTag}); return; }

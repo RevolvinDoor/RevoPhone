@@ -3,17 +3,22 @@ import {icon, glyph} from './icons.js';
 import {APPS} from './apps.js';
 import {MARK_CHOICES} from '../core/voice-fx.js';
 import {CONTRACT_PROMPT, READING_PROMPT, DEFAULT_PROMPT, DEFAULT_FORMAT, FREE_FORMAT, FREE_PROMPT, FREE_CONTRACT_PROMPT} from '../core/protocol.js';
+import {XENO_PROMPT_DEFAULTS} from '../core/xeno.js';
 import {saveFile} from '../download.js';
 import {promptRulesSheet} from './prompt-rules.js';
 // The voice preset's rule entries that can go back to what ships.
-const RULE_DEFAULTS = {contract: CONTRACT_PROMPT, reading: READING_PROMPT};
+const RULE_DEFAULTS = {contract: CONTRACT_PROMPT, reading: READING_PROMPT, ...XENO_PROMPT_DEFAULTS};
 
 const positions = [['in_chat', '聊天内'], ['before_prompt', '主提示词之前'], ['in_prompt', '主提示词之后']];
 const roles = [['system', '系统'], ['user', '用户'], ['assistant', '助手']];
 // Preset kinds: voice (dialogue tags), chat (phone chat replies, 朋友圈, and bringing chats into the story), drawing
-// (<img> tags in the chat text). A chat rule says where it is used: 私聊, 群聊, 朋友圈.
-const KINDS = [['tts', '配音', 'listen'], ['chat', '聊天', 'chat'], ['draw', '绘图', 'draw']];
+// (<img> tags in the chat text), xeno (异构终端 / 衣柜 / 商城 rules & workbenches).
+const KINDS = [['tts', '配音', 'listen'], ['chat', '聊天', 'chat'], ['draw', '绘图', 'draw'], ['xeno', '异构', 'xeno']];
 const USES = [['dm', '私聊'], ['group', '群聊'], ['moments', '朋友圈'], ['call', '电话'], ['forum', '论坛'], ['peek', '查手机'], ['story', '正文']];
+const XENO_TRIGGERS = [
+  ['auto', '按需注入（对应能力/装备激活时注入正文，省 Token）'],
+  ['always', '常驻注入（只要开启异构终端就始终注入正文）']
+];
 // Drawing rules: which engines an entry is sent with (none ticked or all ticked: every engine).
 const ENGINE_USES = [['nai', 'NovelAI'], ['gpt', 'GPT 生图'], ['comfy', 'ComfyUI']];
 // One preset as a file (导出 / 导入): to keep, to share, or to hand to an AI to rewrite and bring back.
@@ -46,14 +51,16 @@ export function presetsApp(ctx) {
   const mark = () => { dirty.add(draftKey()); const el = v.root.querySelector('[data-save-state]'); if (el) el.textContent = '未保存'; };
   /** A fresh copy of the shipped preset of a kind: new entry ids, no preset id. */
   const shipped = k => {
-    const base = structuredClone(k === 'chat' ? api.defaultChatPreset : k === 'draw' ? api.defaultDrawPreset : api.defaultVoicePreset);
+    const base = structuredClone(k === 'xeno' ? api.defaultXenoPreset : k === 'chat' ? api.defaultChatPreset : k === 'draw' ? api.defaultDrawPreset : api.defaultVoicePreset);
     // The voice preset's built-in entries keep their ids (the rules and 心声和电话 are known by them); others get new ones.
-    base.entries = base.entries.map(e => ({...e, id: e.id && (k !== 'tts' || ['dialogue', 'reading', 'contract', 'effects'].includes(e.id)) ? e.id : crypto.randomUUID()}));
+    base.entries = base.entries.map(e => ({...e, id: e.id && ((k === 'xeno' && XENO_PROMPT_DEFAULTS[e.id]) || (k === 'tts' && ['dialogue', 'reading', 'contract', 'effects'].includes(e.id)) || (k !== 'tts' && k !== 'xeno')) ? e.id : crypto.randomUUID()}));
     return base;
   };
   const tile = app => { const [t1, t2, tac] = APPS[app].colors; return `<span class="mini-tile" style="--t1:${t1};--t2:${t2};--tac:${tac}">${glyph(app)}</span>`; };
   // Operations differ only in which backend list they touch.
-  const ops = k => k === 'draw'
+  const ops = k => k === 'xeno'
+    ? {list: () => api.getState().xeno?.presets || [], active: () => api.getState().xeno?.activePreset, save: p => api.saveXenoPreset(p), remove: id => api.deleteXenoPreset(id), use: id => api.selectXenoPreset(id), preview: p => api.previewXenoPrompt(p), validate: () => ''}
+    : k === 'draw'
     ? {list: () => api.getState().draw.presets, active: () => api.getState().draw.activePreset, save: p => api.saveDrawPreset(p), remove: id => api.deleteDrawPreset(id), use: id => api.saveDraw({activePreset: id}), preview: p => api.previewDrawPrompt(p), validate: () => ''}
     : k === 'chat'
     ? {list: () => api.getState().chat.presets, active: () => api.getState().chat.activePreset, save: p => api.saveChatPreset(p), remove: id => api.deleteChatPreset(id), use: id => api.selectChatPreset(id), preview: p => api.previewChatPrompt(p), validate: p => api.validateChatPreset(p)}
@@ -73,16 +80,22 @@ export function presetsApp(ctx) {
     let body;
     {
       const o = ops(kind), active = o.active();
-      const draw = api.getState().draw;
+      const state = api.getState(), draw = state.draw, xeno = state.xeno;
+      const activeXeno = kind === 'xeno' ? (o.list().find(p => p.id === active) || o.list()[0]) : null;
       body = (kind === 'draw' && !draw.enabled ? '<p class="hint">正文出图没有开启，在「设置 · 正文」里打开后，使用中的绘图预设才会加进聊天请求。</p>' : '')
-        + o.list().map(p => `<button class="preset-card" data-action="edit-preset" data-kind="${kind}" data-id="${esc(p.id)}"${p.id === active ? ' data-active' : ''}>${tile(app)}<span><strong>${esc(p.name || '未命名预设')}</strong><small>${kind === 'chat' ? `读正文 ${p.context} 条 · 聊天记录 ${p.history} 条` : kind === 'draw' ? `每条回复 ${p.count} 张 · ${p.entries.length} 条规则` : `${p.entries.length} 条规则 · ${esc(positions.find(x => x[0] === p.injection.position)?.[1] || '')}`}</small></span>${p.id === active ? plate('使用中') : icon('next')}</button>`).join('')
+        + (kind === 'xeno' && xeno?.enabled === false ? '<p class="hint">异构终端提示词注入当前已关闭，可在「异构终端」右上角设置中开启。</p>' : '')
+        + o.list().map(p => `<button class="preset-card" data-action="edit-preset" data-kind="${kind}" data-id="${esc(p.id)}"${p.id === active ? ' data-active' : ''}>${tile(app)}<span><strong>${esc(p.name || '未命名预设')}</strong><small>${kind === 'chat' ? `读正文 ${p.context} 条 · 聊天记录 ${p.history} 条` : kind === 'draw' ? `每条回复 ${p.count} 张 · ${p.entries.length} 条规则` : `${p.entries.length} 条提示词 · ${esc(positions.find(x => x[0] === p.injection?.position)?.[1] || '聊天内')}`}</small></span>${p.id === active ? plate('使用中') : icon('next')}</button>`).join('')
+        + (activeXeno ? `${groupTitle('当前生效提示词（点击直接手动修改）', btn('quick-add-xeno-entry', icon('add') + '新增提示词', 'chip-button'))}
+          <div class="group entry-list">${(activeXeno.entries || []).map((e, i) => `<div class="setting-row entry-row${e.enabled ? '' : ' off'}"><button type="button" class="entry-open" data-action="quick-open-xeno-entry" data-id="${esc(activeXeno.id)}" data-index="${i}"><span class="row-text"><strong>${esc(e.title || '未命名提示词')}</strong><small>${esc(ruleNote(e, false, false, true))}</small></span></button><input class="switch" type="checkbox" data-quick-xeno-on="${i}" data-id="${esc(activeXeno.id)}" aria-label="启用「${esc(e.title || '未命名提示词')}」" ${e.enabled ? 'checked' : ''}></div>`).join('')}</div>` : '')
         + `<div class="actions">${btn('restore-default', icon('refresh') + '加回默认预设', 'text-button')}${help(kind === 'draw'
           ? '绘图预设是给正文模型看的出图规则：什么时候出图、标签怎么写。画师串和固定 tag 在绘图 App 的“画风”里。'
           : kind === 'chat'
           ? '聊天预设决定手机里的联系人怎么回消息、朋友圈怎么发、能看到多少剧情，以及“带进剧情”时怎么写进下一次正文。每条规则可以选用在私聊、群聊还是朋友圈。手机聊天和朋友圈单独生成，不会写进正文。'
+          : kind === 'xeno'
+          ? '异构预设包含「异构终端」「衣柜」「购物商城」的全部提示词（附身、融合、皮躯、肉躯、丸吞、改造、自动同步协议、洞察扫描及商城进货比例尺/打版工作台）。点击上方任意条目即可直接手动修改提示词内容、切换按需/常驻注入或恢复默认。'
           : '配音预设让模型把台词写成带 TTS 标签的格式。角色配音不在预设里，切换预设不会改动角色。')}</div>`;
     }
-    v.draw(heading('预设', btn('add-menu', icon('add'), 'round-button', `aria-label="新增${label}预设"`), 'Preset · 3 类') + tabs + `<button class="list-row" data-action="system-rules">${icon('sliders')}<span><strong>系统提示词</strong><small>输出格式、附加规则与请求模板</small></span>${icon('next')}</button>` + body);
+    v.draw(heading('预设', btn('add-menu', icon('add'), 'round-button', `aria-label="新增${label}预设"`), 'Preset · 4 类') + tabs + `<button class="list-row" data-action="system-rules">${icon('sliders')}<span><strong>系统提示词</strong><small>输出格式、附加规则与请求模板</small></span>${icon('next')}</button>` + body);
   }
 
   /** The 世界书 line: how much is left out (picked in a sheet), and the tags cleaned away (status bars). */
@@ -174,13 +187,27 @@ export function presetsApp(ctx) {
   let storyList = null;
   // The editor keeps to what is changed most (name, format, the rules); the rest folds away, each rule is one row that
   // opens in a sheet, and what is rare (发送预览, 恢复成默认内容, 删除预设) sits in the 「⋯」 of the title.
-  const ruleHelp = (e, draw, chat) => draw ? '可以用 {{出图格式}}、{{出图数量}}、{{角色列表}}。插件会在最后自动加上格式和张数的硬性要求。'
+  const ruleHelp = (e, draw, chat, xeno) => xeno
+    ? (e.scope === 'mall' ? '商城点击「AI 进货」时发送给模型的提示词。可直接修改身高、罩杯、扶她尺寸比例尺或 XML 设计栏位要求；改乱了可点下方「恢复这一条」。'
+      : e.scope === 'task' ? '点击「洞察推荐」或「从剧情同步」时发送给模型的提取提示词。请保留输出标签（如 <insight> 或 <xeno_sync>）及竖线分隔列顺序，以便自动解析。'
+      : e.id === 'autoSync' ? '附在实时状态栏末尾，指示正文模型在角色新登场、换装或身体变化时输出 <xeno_update> 同步块。'
+      : '注入正文的异构设定与玩法规则，可自由修改文案、增删细节或改为常驻注入。点击下方「恢复这一条」可随时还原默认内容。')
+    : draw ? '可以用 {{出图格式}}、{{出图数量}}、{{角色列表}}。插件会在最后自动加上格式和张数的硬性要求。'
     : chat ? '可以用 {{用户}}、{{对象}}；写语音消息规则时用 {{语音格式}}（手机固定用默认的台词格式，不跟配音预设走）、{{可发语音}}。用在朋友圈的规则只能用 {{用户}}。插件会在最后自动加上输出格式的硬性要求。'
     : e.id === 'reading' ? '{{朗读规则}} 会换成这段剧情里每个说话者按自己的引擎和模型该怎么写（情绪、语气标签）。可以在前后加字；不想要就停用这一条。'
     : e.id === 'contract' ? '{{格式}} 换成上面的台词格式；{{错误示例}} {{正确示例}} 会按台词格式自动写出例子，改了格式也不会对不上。可以随便改，改乱了点「恢复这一条」。'
     : '启用规则的合计文字需包含 {{格式}} 和 {{语言}}。';
   /** The small line under a rule's row: where it goes, or how it starts. */
-  function ruleNote(e, draw, chat) {
+  function ruleNote(e, draw, chat, xeno = false) {
+    if (xeno) {
+      const tag = e.scope === 'mall' ? '商城进货工作台'
+        : e.scope === 'task' ? '主动扫描/同步任务'
+        : e.id === 'autoSync' ? '正文状态栏末尾协议'
+        : e.triggerMode === 'always' ? '正文常驻注入' : '正文按需注入（激活时生效）';
+      const modified = RULE_DEFAULTS[e.id] && e.text !== RULE_DEFAULTS[e.id] ? ' · 已手动修改' : '';
+      const preview = String(e.text || '').replace(/\s+/g, ' ').trim().slice(0, 32);
+      return `${tag}${modified}${preview ? ' · ' + preview : ''}`;
+    }
     if (chat) { const used = USES.filter(([u]) => (e.use || []).includes(u)).map(([, l]) => l); return used.length ? used.join(' · ') : '哪里都没用'; }
     if (draw) return e.engines?.length ? '只给 ' + ENGINE_USES.filter(([k]) => e.engines.includes(k)).map(([, l]) => l).join('、') : '三个引擎都用';
     const text = String(e.text || '').replace(/\s+/g, ' ').trim();
@@ -188,10 +215,11 @@ export function presetsApp(ctx) {
   }
   const fold = (group, title, note, body, info = '') => `<details data-group="${group}"><summary>${esc(title)}${info ? ' ' + help(info) : ''}${note ? `<small class="fold-note">${esc(note)}</small>` : ''}</summary><div class="fold-body">${body}</div></details>`;
   function renderEditor() {
-    const p = current, o = ops(currentKind), draw = currentKind === 'draw', chat = currentKind === 'chat';
+    const p = current, o = ops(currentKind), draw = currentKind === 'draw', chat = currentKind === 'chat', xeno = currentKind === 'xeno';
     const used = p.id && p.id === o.active();
     const books = (p.loreSkipBooks || []).length, entries = (p.loreSkipEntries || []).length;
     const basics = chat ? ''
+      : xeno ? field('实时状态栏插入深度', input('statusDepth', p.statusDepth ?? 1, 'number', 'min="0" max="10000" step="1"'), '主角与目标实时状态栏（含本轮强制执行指令与 <xeno_update> 协议）在聊天内的插入深度，默认深度 1。')
       : draw ? field('每条回复出图数量', input('count', p.count ?? 1, 'number', `min="1" max="${api.drawCountMax}" step="1"`), '每条回复固定出这么多张图。规则里写 {{出图数量}} 会换成这个数字；插件还会在规则最后加一段硬性要求，让张数更稳定。张数越多，出图越久。\n\n规则里写 {{出图格式}} 会换成下面这段（回复后单独配图时，还会多一行「位置」）；{{角色列表}} 会换成已登记的角色和他们的固定外貌。别的插件要排除出图内容时，排除标签填 <img></img>。\n\n' + api.picTagFormat)
       : field('正文显示', select('voiceLayout', p.format===FREE_FORMAT?'free':'paired', [['paired','译文与原文配对'],['free','自由正文 · 只渲染 tts 标签']]), '自由正文保留对白的语言和排版，英语、双语括号都可以。标签内仍写角色、情绪、朗读原文。') + field('台词格式', textArea('format', p.format, 'class="code short" rows="3"'), '配对模式：{译文}、{角色}、{情绪}、{文本} 各保留一次。自由正文模式：<tts>{角色}|{情绪}|{文本}</tts>，前面的正文不限制格式。译文供阅读，原语言供语音生成。默认格式是成对的 <tts></tts>，别的插件要排除语音原文时，排除标签填 <tts></tts>。\n\n这里的格式只管正文；手机里的语音消息和电话固定用默认格式，不跟着改。');
     const marks = p.marks || {inner: [], phone: []}, marked = (marks.inner || []).length + (marks.phone || []).length;
@@ -204,26 +232,29 @@ export function presetsApp(ctx) {
           `${toggle('lore', '带上世界书', p.lore !== false, '聊天、电话、朋友圈、论坛和查手机按触发条件带上酒馆的世界书：和写正文时一样，常驻的条目，以及在名字、最近的正文和聊天里触发关键词的条目（当前角色卡的世界书、全局和聊天绑定的世界书都算）。人设写在世界书里的话要打开。\n\n条目多的话会多占一些上下文。')}${p.lore !== false ? loreFields(p) + field('世界书最多（字）', input('loreMax', p.loreMax ?? 30000, 'number', 'min="0" step="1000"'), '手机读世界书时最多放这么多字，只放整条。0 表示插件不另外限制，只按酒馆「世界书」设置里的预算（占上下文的百分比）来。手机的每次请求（聊天、朋友圈、论坛、查手机、电话）都按这些条件读取世界书，放得越多越费 token，也越慢。') : ''}`)
         + memoryFields(p)
         + fold('preset-bring', '带进剧情', '', `${field('带进剧情的写法', textArea('bring', p.bring, 'class="code" rows="4"'), '选中的聊天消息会按这段文字注入下一次正文，只用一次。需要包含 {{聊天记录}}；也可以用 {{用户}}、{{对象}}。')}${injection(p.injection)}`, '带进剧情的文字插在正文请求的哪里。深度与身份仅在聊天内插入时生效。')
-      : (draw ? '' : fold('preset-marks', '心声和电话', marked ? `多认 ${marked} 种写法` : '看情绪字段', marksFields(p)))
+      : (draw || xeno ? '' : fold('preset-marks', '心声和电话', marked ? `多认 ${marked} 种写法` : '看情绪字段', marksFields(p)))
         + fold('preset-injection', '默认插入设置', positions.find(x => x[0] === p.injection.position)?.[1] || '', injection(p.injection), '深度与身份仅在聊天内插入时生效；条目可以单独覆盖。');
-    v.draw(heading(p.id ? '编辑预设' : '新预设', btn('preset-more', icon('more'), 'round-button', 'aria-label="更多"'), draw ? 'Drawing Preset' : chat ? 'Chat Preset' : 'Voice Preset')
+    v.draw(heading(p.id ? '编辑预设' : '新预设', btn('preset-more', icon('more'), 'round-button', 'aria-label="更多"'), xeno ? 'Xeno Preset' : draw ? 'Drawing Preset' : chat ? 'Chat Preset' : 'Voice Preset')
       + `<div class="group pad">${field('名称', input('name', p.name))}${basics}</div>${folds}
-        ${groupTitle(draw ? '出图规则' : chat ? '规则' : '提示词条目', btn('add-entry', icon('add') + '条目', 'chip-button'))}
-        <div class="group entry-list">${p.entries.map((e, i) => `<div class="setting-row entry-row${e.enabled ? '' : ' off'}"><button type="button" class="entry-open" data-action="open-entry" data-index="${i}"><span class="row-text"><strong>${esc(e.title || '未命名条目')}</strong><small>${esc(ruleNote(e, draw, chat))}</small></span></button><input class="switch" type="checkbox" data-entry-on="${i}" aria-label="启用「${esc(e.title || '未命名条目')}」" ${e.enabled ? 'checked' : ''}></div>`).join('') || '<p class="hint">还没有规则，点右上角「条目」加一条。</p>'}</div>
+        ${groupTitle(xeno ? '异构提示词条目（点击修改）' : draw ? '出图规则' : chat ? '规则' : '提示词条目', btn('add-entry', icon('add') + '条目', 'chip-button'))}
+        <div class="group entry-list">${p.entries.map((e, i) => `<div class="setting-row entry-row${e.enabled ? '' : ' off'}"><button type="button" class="entry-open" data-action="open-entry" data-index="${i}"><span class="row-text"><strong>${esc(e.title || '未命名条目')}</strong><small>${esc(ruleNote(e, draw, chat, xeno))}</small></span></button><input class="switch" type="checkbox" data-entry-on="${i}" aria-label="启用「${esc(e.title || '未命名条目')}」" ${e.enabled ? 'checked' : ''}></div>`).join('') || '<p class="hint">还没有规则，点右上角「条目」加一条。</p>'}</div>
         <div class="savebar"><span class="save-state" data-save-state>${dirty.has(draftKey()) ? '未保存' : '草稿'}</span>${p.id && !used ? btn('use-preset', '使用', 'secondary') : ''}${btn('save-preset', '保存预设', 'primary')}</div>`);
   }
   /** One rule in a sheet: name, where it goes, the text; moving and deleting at the bottom. */
   function openEntry(i) {
     const e = current?.entries[i];
     if (!e) return;
-    const draw = currentKind === 'draw', chat = currentKind === 'chat';
+    const draw = currentKind === 'draw', chat = currentKind === 'chat', xeno = currentKind === 'xeno';
+    const showXenoTrigger = xeno && (!e.scope || e.scope === 'story') && e.id !== 'autoSync';
     const d = ctx.dialog(e.title || '未命名条目', `<div data-entry="${i}">
       ${field('名称', input('title', e.title))}
+      ${showXenoTrigger ? field('注入时机', select('triggerMode', e.triggerMode || 'auto', XENO_TRIGGERS), '按需注入可大幅节省上下文 Token；若希望模型在未激活该能力前就熟知规则，可改为常驻注入。') : ''}
       ${draw ? `<div class="field"><span>用在哪个引擎${help('勾了哪个，用那个引擎画图时才把这条规则发给模型。都勾或都不勾就是三个都用。在绘图 App 顶上选用哪个画。')}</span><div class="use-row">${ENGINE_USES.map(([u, l]) => `<label class="use-chip"><input type="checkbox" data-engine-use="${u}" ${!e.engines?.length || e.engines.includes(u) ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>` : ''}
       ${chat ? `<div class="field"><span>用在${help('私聊、群聊、朋友圈、电话、论坛、查手机都是各自单独的一次请求。勾了哪几个，这条规则就在那几次请求里各出现一次。勾「正文」的话，写正文时也带上。')}</span><div class="use-row">${USES.map(([u, l]) => `<label class="use-chip"><input type="checkbox" data-use="${u}" ${(e.use || []).includes(u) ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>` : ''}
-      ${field(draw || chat ? '规则' : '提示词', textArea('text', e.text, 'class="code" rows="10"'), ruleHelp(e, draw, chat))}
-      ${!draw && !chat ? toggle('customInjection', '单独设置插入位置', !!e.injection) + (e.injection ? injection(e.injection, i) : '') : ''}
-      <div class="entry-tools">${btn('entry-up', icon('up') + '上移', 'text-button', i === 0 ? 'disabled' : '')}${btn('entry-down', icon('down') + '下移', 'text-button', i === current.entries.length - 1 ? 'disabled' : '')}${!draw && !chat && RULE_DEFAULTS[e.id] ? btn('entry-default', icon('refresh') + '恢复这一条', 'text-button') : ''}${btn('delete-entry', icon('trash') + '删除', 'text-button danger-text')}</div></div>`);
+      ${field(draw || chat ? '规则' : '提示词', textArea('text', e.text, 'class="code" rows="12"'), ruleHelp(e, draw, chat, xeno))}
+      ${!draw && !chat && !xeno ? toggle('customInjection', '单独设置插入位置', !!e.injection) + (e.injection ? injection(e.injection, i) : '') : ''}
+      <div class="entry-tools">${btn('entry-up', icon('up') + '上移', 'text-button', i === 0 ? 'disabled' : '')}${btn('entry-down', icon('down') + '下移', 'text-button', i === current.entries.length - 1 ? 'disabled' : '')}${!draw && !chat && RULE_DEFAULTS[e.id] ? btn('entry-default', icon('refresh') + '恢复这一条', 'text-button') : ''}${!XENO_PROMPT_DEFAULTS[e.id] ? btn('delete-entry', icon('trash') + '删除', 'text-button danger-text') : ''}</div>
+      <div class="actions" style="margin-top:10px">${btn('entry-save-now', '保存修改', 'primary')}</div></div>`);
     let next = null;
     d.onClose(() => { render(); if (next !== null) openEntry(next); });
     d.body.addEventListener('input', ev => { const el = ev.target; if (el.matches('[data-field]') && el.type !== 'checkbox' && el.tagName !== 'SELECT') update(el, false); });
@@ -244,6 +275,9 @@ export function presetsApp(ctx) {
         current.entries[i] = {...current.entries[i], text: current.format===FREE_FORMAT&&e.id==='contract'?FREE_CONTRACT_PROMPT:RULE_DEFAULTS[e.id]};
         d.body.querySelector('[data-field=text]').value = current.entries[i].text;
         mark(); ctx.notify('这一条换回默认了，记得保存');
+      } else if (action === 'entry-save-now') {
+        save();
+        d.close();
       } else if (action === 'delete-entry') {
         if (await ctx.confirm('删除这条规则？', '保存预设后生效。')) { current.entries.splice(i, 1); mark(); render(); }
       }
@@ -279,6 +313,7 @@ export function presetsApp(ctx) {
       if (key === 'customInjection') { if (el.checked) entry.injection = structuredClone(current.injection); else delete entry.injection; }
       else entry[key] = el.type === 'checkbox' ? el.checked : el.value;
     } else if (key.startsWith('memory.')) { current.memory = {...current.memory}; current.memory[key.slice(7)] = el.type === 'checkbox' ? el.checked : Number(el.value); }
+    else if (key === 'statusDepth') current.statusDepth = Number(el.value);
     else current[key] = el.type === 'checkbox' ? el.checked : el.value;
     mark();
     if (redraw) render();
@@ -313,6 +348,17 @@ export function presetsApp(ctx) {
     entry.enabled = el.checked;
     el.closest('.entry-row')?.classList.toggle('off', !el.checked);
     mark();
+  });
+  v.on('change', '[data-quick-xeno-on]', el => {
+    const presetId = el.dataset.id;
+    const idx = Number(el.dataset.quickXenoOn);
+    const p = structuredClone(ops('xeno').list().find(x => x.id === presetId) || ops('xeno').list()[0]);
+    if (!p?.entries?.[idx]) return;
+    p.entries[idx].enabled = el.checked;
+    ops('xeno').save(p);
+    drafts.delete('xeno:' + p.id);
+    el.closest('.entry-row')?.classList.toggle('off', !el.checked);
+    ctx.notify(`${p.entries[idx].enabled ? '已启用' : '已停用'}「${p.entries[idx].title}」`);
   });
   v.on('change', '[data-field]', el => {
     if (current && (el.type === 'checkbox' || el.tagName === 'SELECT')) update(el, true);
@@ -357,6 +403,21 @@ export function presetsApp(ctx) {
         break;
       }
       case 'edit-preset': edit(el.dataset.kind || 'tts', el.dataset.id); break;
+      case 'quick-open-xeno-entry': {
+        kind = 'xeno';
+        edit('xeno', el.dataset.id || ops('xeno').active());
+        openEntry(Number(el.dataset.index));
+        break;
+      }
+      case 'quick-add-xeno-entry': {
+        kind = 'xeno';
+        edit('xeno', ops('xeno').active());
+        current.entries.push({id: crypto.randomUUID(), title: '自定义异构提示词', scope: 'story', triggerMode: 'always', enabled: true, text: ''});
+        mark();
+        render();
+        openEntry(current.entries.length - 1);
+        break;
+      }
       // Adds the shipped preset again, for when it was deleted or edited beyond repair. Nothing else changes.
       case 'restore-default': {
         const names = ops(kind).list().map(p => p.name), base = shipped(kind);
@@ -371,7 +432,7 @@ export function presetsApp(ctx) {
       case 'use-preset': save(); ops(currentKind).use(current.id); render(); break;
       case 'lore-pick': await pickLore(); break;
       case 'add-entry':
-        current.entries.push({id: crypto.randomUUID(), title: '新条目', enabled: true, text: '', ...(currentKind === 'chat' ? {use: ['dm', 'group']} : {})});
+        current.entries.push({id: crypto.randomUUID(), title: currentKind === 'xeno' ? '自定义异构提示词' : '新条目', enabled: true, text: '', ...(currentKind === 'chat' ? {use: ['dm', 'group']} : currentKind === 'xeno' ? {scope: 'story', triggerMode: 'always'} : {})});
         mark();
         render();
         openEntry(current.entries.length - 1);
@@ -398,7 +459,7 @@ export function presetsApp(ctx) {
   });
   function newPreset() {
     currentKind = kind;
-    current = drafts.get(kind + ':new') || {...shipped(kind), name: kind === 'chat' ? '新聊天预设' : kind === 'draw' ? '新出图规则' : '新预设'};
+    current = drafts.get(kind + ':new') || {...shipped(kind), name: kind === 'xeno' ? '新异构预设' : kind === 'chat' ? '新聊天预设' : kind === 'draw' ? '新出图规则' : '新预设'};
     drafts.set(kind + ':new', current);
     render();
   }

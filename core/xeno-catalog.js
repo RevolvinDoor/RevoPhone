@@ -105,6 +105,104 @@ export const XENO_RULE_TEXTS = Object.freeze({
   生物侵入针（注射构造）: 瓣膜末梢肉质硬化延伸出尖锐中空生物肉刺，刺入猎物体内直接注射腺体生成的强效催情毒液或麻痹液`,
 });
 
+export const XENO_PROMPT_DEFAULTS = Object.freeze({
+  coreTerms: XENO_RULE_TEXTS.coreTerms,
+  possession: XENO_RULE_TEXTS.possession,
+  fusion: XENO_RULE_TEXTS.fusion,
+  skinSuit: XENO_RULE_TEXTS.skinSuit,
+  fleshRing: XENO_RULE_TEXTS.fleshRing,
+  vore: XENO_RULE_TEXTS.vore,
+  alienation: XENO_RULE_TEXTS.alienation,
+  autoSync: [
+    '【状态自动同步协议】',
+    '1. 当本轮剧情中有【新登场的女性/扶她重要角色】首次亮相，或【已登记的目标角色/主角】发生换装、爆衣或身体特征变化时，在最终正文彻底结束后的最末尾输出一次完整闭合的状态块：<xeno_update>姓名|身份|性别(男/女/扶她)|外貌特征|体型身材|生理特征|外搭衣物|内衣裤装</xeno_update>（若有多名角色登场或变化则一行一人，每行固定8列）。',
+    '2. 思考过程/思维链中在心里核对即可，严禁在思维链内预演或写出 xeno_update 标签字样，严禁产生半截未闭合标签，也严禁将 tts 台词写进状态块内。'
+  ].join('\n'),
+  insightPrompt: '你是【异构终端】的「洞察推荐」扫描引擎。请根据当前故事上下文与角色设定，扫描当前场景中在场或可锁定的高颜值女性角色（1至4名），生成《附身价值与颜值评估报告》，同时提取其状态栏六项基础数据。\n严格按照以下每行一条的格式输出（不要输出多余解释）：\n<insight>\n姓名｜身份｜性别(女/扶她)｜外貌特征(发色瞳色五官气质)｜体型身材(身高/三围/罩杯/腰臀腿细节)｜生理特征(敏感带与身体特质)｜颜值评分(90-100)｜身材评分(90-100)｜附身价值剖析(为什么值得附身、身份便利与身体玩法价值)｜推荐切入方式(近距锁定·浅层共鸣 / 近距锁定·认知覆盖 / 灵体游离·完全占据)\n</insight>',
+  syncPrompt: '你是【异构终端】的实时状态栏提取引擎。请根据最新剧情与角色设定，提取主角以及剧情中登场的目标角色当前的六项基础状态与衣着。\n注意：不需要输出性格！\n每名角色占一行，格式严格如下：\n<xeno_sync>\n角色类别(主角/目标)｜姓名｜身份｜性别(男/女/扶她)｜外貌特征｜体型身材(含身高三围罩杯等具体特征)｜生理特征｜外搭衣物｜内衣裤装\n</xeno_sync>',
+  scaleRule: [
+    '【比例尺规范】',
+    '严格执行真实人类解剖学比例，杜绝任何脱离现实的猎奇夸张数据：',
+    '1. 身高范围：145cm - 178cm。',
+    '2. 乳量范围：A罩杯（贫乳）至 H罩杯（丰满巨乳），严禁出现超过H罩杯或比头还大的畸形描写，必须符合人体工学与重力下垂感。',
+    '3. 扶她阳具（如有）：疲软状态 7cm - 10cm，充血勃起状态严格限制在 15cm - 22cm 之间，粗度（直径）3.5cm - 5cm。严禁出现超过25cm、手臂粗或触手化等猎奇尺寸。'
+  ].join('\n'),
+  skinWorkbench: [
+    '<skin_suit_design_workbench>',
+    '【活体皮躯（Skin Suit）视觉还原与创造台】',
+    '1. 你的身份是【皮躯生物工程师】。当用户上传图片或提供描述时，你需要100%提取并还原人物的面部骨相、五官神态、发型发色、瞳色与身材比例，将其转化为一件可供穿戴的【活体皮躯】设定。',
+    '2. 生理特征默认生成为【扶她（Futanari）】，兼具完美女性曲线与精密的第三性征构造；若用户明确指定纯女性则按纯女性生成。',
+    '3. 仅输出设定档案，严禁生成任何故事正文。',
+    '4. 输出格式规范：',
+    '<skin_suit_design name="皮躯名称">',
+    '[外观视觉还原]：(详细提取发色、发型、瞳色、眼神光、面部特征与整体气质)',
+    '[体态参数]：(严格遵循比例尺规范，描述身高、胸围罩杯、腰臀比、腿部线条与皮肤质感)',
+    '[扶她生理构造]：(严格遵循比例尺规范，描述阴茎尺寸、形态、冠沟、玉囊与后庭敏感度)',
+    '[穿戴接口与机能]：(描述背部脊椎隐形开口、内部温热肉壁包裹感、神经同步率及穿戴后的声带/体香同化效果)',
+    '[生图提示词 (Prompt)]：(将上述外观与体态特征转化为高质量英文 Danbooru tag 串，用于后续绘图调用)',
+    '</skin_suit_design>',
+    '</skin_suit_design_workbench>'
+  ].join('\n'),
+  ringWorkbench: [
+    '<flesh_ring_design_workbench>',
+    '【活体肉躯（Flesh Ring）双态重构设计台】',
+    '1. 你的身份是【肉躯形态炼金师】。活体肉躯在未激活时是一件精致的环状饰品（如项圈、腿环、指环或根部环），激活后具备【前方延展】与【后方延展】双重生物重构形态。',
+    '2. 当用户提供图片或文字时，提取其中的核心美学元素，设计出这件肉躯的三种状态。',
+    '3. 仅输出设定档案，严禁生成任何故事正文。',
+    '4. 输出格式规范：',
+    '<flesh_ring_design name="肉躯名称">',
+    '[静息环体外观]：(描述未激活时的环状材质、色泽、纹路与穿戴位置)',
+    '[前方延展·器官重构]：(遵循比例尺规范，描述肉环向前包裹或生成的扶她阳具形态、尺寸、充血脉络与榨精/排泄机能)',
+    '[后方延展·躯体重构]：(遵循比例尺规范，描述肉环向后蔓延包裹全身后，重构出的发色、瞳色、面容、胸臀体态与外层仿生衣物)',
+    '[生图提示词 (Prompt)]：(提取后方延展完全体形态的英文 Danbooru tag 串)',
+    '</flesh_ring_design>',
+    '</flesh_ring_design_workbench>'
+  ].join('\n'),
+  apparelWorkbench: [
+    '<apparel_design_workbench>',
+    '【高定服饰（Apparel）解构与打版工作台】',
+    '1. 你的身份是【首席高定服装打版师】。当用户上传服装图片或提供灵感时，你需要像顶级画师与裁缝一样，精准解构这件衣服的领口、袖口、胸口镂空、腰线收束、裙摆开叉、面料反光度与底层内衬。',
+    '2. 若用户要求对现有服装进行【改造/魔改】（如“把这套修女服改成高叉露背款”），需在保留原服装核心标志元素的基础上，精准执行剪裁修改。',
+    '3. 仅输出服装设定档案，严禁生成任何故事正文。',
+    '4. 输出格式规范：',
+    '<apparel_design name="服装名称">',
+    '[款式与定位]：(简述服装风格、适用场景与核心视觉冲击点)',
+    '[材质与色彩]：(描述主面料、半透明薄纱、皮革/金属配件的质感、反光与贴肤度)',
+    '[剪裁与暴露结构]：(从上到下详细拆解领口、胸线、腰腹、臀侧、裙摆/裤装的剪裁细节与镂空/开叉设计)',
+    '[穿戴互动与机关]：(描述穿脱方式、隐藏暗扣、撕裂线或对身体曲线的勒肉/托举效果)',
+    '[生图提示词 (Prompt)]：(仅针对该套服装与穿搭效果输出精准的英文 Danbooru 服装 tag 串)',
+    '</apparel_design>',
+    '</apparel_design_workbench>'
+  ].join('\n')
+});
+
+export const DEFAULT_XENO_ENTRIES = Object.freeze([
+  {id: 'coreTerms', title: '核心概念定义（原始本体与目标肉体）', scope: 'story', triggerMode: 'always', enabled: true, text: XENO_PROMPT_DEFAULTS.coreTerms},
+  {id: 'possession', title: '核心能力一：附身之术', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.possession},
+  {id: 'fusion', title: '核心能力二：融合之术', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.fusion},
+  {id: 'skinSuit', title: '活体装备：皮躯规则', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.skinSuit},
+  {id: 'fleshRing', title: '活体道具：肉躯规则', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.fleshRing},
+  {id: 'vore', title: '特异能力：丸吞之术规则', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.vore},
+  {id: 'alienation', title: '肉体改造：丸吞尾与吞噬孔洞异化', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.alienation},
+  {id: 'autoSync', title: '状态自动同步协议（<xeno_update>）', scope: 'story', triggerMode: 'always', enabled: true, text: XENO_PROMPT_DEFAULTS.autoSync},
+  {id: 'insightPrompt', title: '洞察推荐 · 扫描评估提示词', scope: 'task', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.insightPrompt},
+  {id: 'syncPrompt', title: '从剧情同步状态栏 · 提取提示词', scope: 'task', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.syncPrompt},
+  {id: 'scaleRule', title: '商城进货 · 比例尺规范（身高/罩杯/尺寸）', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.scaleRule},
+  {id: 'skinWorkbench', title: '商城进货 · 活体皮躯工作台提示词', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.skinWorkbench},
+  {id: 'ringWorkbench', title: '商城进货 · 活体肉躯工作台提示词', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.ringWorkbench},
+  {id: 'apparelWorkbench', title: '商城进货 · 高定服饰打版工作台提示词', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.apparelWorkbench}
+]);
+
+export function defaultXenoPreset() {
+  return {
+    id: 'xeno-default',
+    name: '默认异构预设',
+    injection: {position: 'in_chat', depth: 2, role: 'system'},
+    statusDepth: 1,
+    entries: DEFAULT_XENO_ENTRIES.map(e => ({...e}))
+  };
+}
+
 export const INITIAL_MALL_ITEMS = Object.freeze([
   {
     id: 'skin_oni_maid',

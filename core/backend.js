@@ -44,6 +44,7 @@ import { vibeKey, readVibeFile, imageVibe, mergeVibe, encodingFor, withEncoding,
 import {
     normalizeXeno, normalizeCatalogItem, ensureTarget, syncXenoWithRoutes, extractXenoSession, mergeXenoSession,
     applyXenoUpdateFromText,
+    defaultXenoPreset, normalizeXenoPreset, activeXenoPreset, xenoPromptPlan,
     xenoStartPossession, xenoSetPossessionMode, xenoToggleOrganSync, xenoReleasePossession, xenoBodySwap,
     xenoStartFusion, xenoSetFusionMode, xenoToggleFusionController, xenoReleaseFusion, xenoRestoreFromLivingItem,
     xenoStartVore, xenoUpdateVore, xenoRemoveVore,
@@ -973,6 +974,53 @@ export class TTSBackend {
             }
             return xeno;
         });
+    }
+    saveXenoPreset(rawPreset) {
+        const preset = normalizeXenoPreset({ ...clone(rawPreset || {}), id: rawPreset?.id || ('xeno-' + crypto.randomUUID()) });
+        this.saveXeno(xeno => {
+            const list = Array.isArray(xeno.presets) ? xeno.presets.slice() : [defaultXenoPreset()];
+            const idx = list.findIndex(p => p.id === preset.id);
+            if (idx >= 0) list[idx] = preset;
+            else list.push(preset);
+            xeno.presets = list;
+            if (!xeno.activePreset || !list.some(p => p.id === xeno.activePreset)) {
+                xeno.activePreset = preset.id;
+            }
+            return xeno;
+        });
+        return clone(preset);
+    }
+    deleteXenoPreset(id) {
+        return this.saveXeno(xeno => {
+            const list = Array.isArray(xeno.presets) ? xeno.presets : [defaultXenoPreset()];
+            if (!list.some(p => p.id === id)) return xeno;
+            if (list.length <= 1) throw Error('请至少保留一个异构提示词预设');
+            xeno.presets = list.filter(p => p.id !== id);
+            if (xeno.activePreset === id) xeno.activePreset = xeno.presets[0].id;
+            return xeno;
+        });
+    }
+    selectXenoPreset(id) {
+        return this.saveXeno(xeno => {
+            const list = Array.isArray(xeno.presets) ? xeno.presets : [defaultXenoPreset()];
+            if (!list.some(p => p.id === id)) throw Error('预设不存在');
+            xeno.activePreset = id;
+            return xeno;
+        });
+    }
+    previewXenoPrompt(preset) {
+        const state = this.cardState();
+        const xeno = { ...clone(state.xeno), enabled: true };
+        const blocks = xenoPromptPlan(xeno, preset || activeXenoPreset(xeno));
+        const p = preset ? normalizeXenoPreset(preset) : activeXenoPreset(xeno);
+        const getEntry = id => (p.entries || []).find(e => e.id === id);
+        const scenes = [
+            ['━━ 正文注入预览（当前状态实际发送内容） ━━', blocks.map(b => `【${b.key} · 深度 ${b.depth}】\n${b.text}`).join('\n\n') || '（当前没有启用的正文注入内容）'],
+            ['━━ 洞察推荐扫描（点击扫描评估报告时发送） ━━', getEntry('insightPrompt')?.text || ''],
+            ['━━ 从剧情同步状态栏（点击从剧情同步时发送） ━━', getEntry('syncPrompt')?.text || ''],
+            ['━━ 商城进货工作台（比例尺 + 皮躯/肉躯/服饰打版） ━━', ['scaleRule', 'skinWorkbench', 'ringWorkbench', 'apparelWorkbench'].map(k => getEntry(k)?.text || '').filter(Boolean).join('\n\n')]
+        ];
+        return scenes.map(([title, body]) => `${title}\n\n${body}`).join('\n\n');
     }
     walletTopup(amount, note = '商城零钱充值') {
         const n = Number(amount);
@@ -2619,6 +2667,7 @@ export class TTSBackend {
             wallet: () => this.wallet(), buyDecoration: (kind, key) => this.buyDecoration(kind, key), saveGift: gift => this.saveGift(gift), deleteGift: id => this.deleteGift(id),
             walletTopup: (amount, note) => this.walletTopup(amount, note),
             saveXeno: patch => this.saveXeno(patch), xenoAct: (action, payload) => this.xenoAct(action, payload), buyXenoItem: (itemId, options) => this.buyXenoItem(itemId, clone(options || {})),
+            saveXenoPreset: preset => this.saveXenoPreset(preset), deleteXenoPreset: id => this.deleteXenoPreset(id), selectXenoPreset: id => this.selectXenoPreset(id), previewXenoPrompt: preset => this.previewXenoPrompt(preset),
             sendPaid: (threadId, message) => this.sendPaid(threadId, message), takeSent: (threadId, messageId, accept) => this.takeSent(threadId, messageId, accept !== false),
             shopCatalog: () => clone({ premium: PREMIUM, kinds: DECOR_KINDS, gifts: shopGifts(this.settings.chat.wallet), ledgerKinds: LEDGER_KINDS }), saveContact: contact => this.saveContact(contact), deleteContact: id => this.deleteContact(id), chatContacts: all => clone(all ? chatContacts(this.settings) : this.contacts()), addRoleContact: name => this.addRoleContact(name),
             listThreads: () => this.threads(), getThread: id => this.chats.get(id), chatUnread: async () => (await this.threads()).reduce((n, t) => n + (t.muted ? 0 : t.unread), 0),
@@ -2643,7 +2692,7 @@ export class TTSBackend {
         return Object.freeze({ apiVersion: BACKEND_API_VERSION, defaultPrompt: DEFAULT_PROMPT, defaultFormat: DEFAULT_FORMAT,
             picTagFormat: PIC_TAG_FORMAT, defaultDrawRule: DEFAULT_DRAW_RULE, drawCountMax: DRAW_COUNT_MAX, defaultChatPreset: Object.freeze((({ id, ...rest }) => rest)(defaultChat().presets[0])),
             // The shipped presets of each kind, without ids: for 恢复默认 in the preset app.
-            defaultVoicePreset: Object.freeze((({ id, ...rest }) => rest)(freshState().presets[0])), defaultDrawPreset: Object.freeze((({ id, ...rest }) => rest)(defaultDraw().presets[0])),
+            defaultVoicePreset: Object.freeze((({ id, ...rest }) => rest)(freshState().presets[0])), defaultDrawPreset: Object.freeze((({ id, ...rest }) => rest)(defaultDraw().presets[0])), defaultXenoPreset: Object.freeze((({ id, ...rest }) => rest)(defaultXenoPreset())),
             drawCatalog: Object.freeze({ models: NAI_MODELS, modelNames: NAI_MODEL_NAMES, samplers: NAI_SAMPLERS, schedules: NAI_SCHEDULES, engines: DRAW_ENGINES, engineNames: DRAW_ENGINE_NAMES, gptModels: GPT_IMAGE_MODELS, gptQualities: GPT_QUALITIES, comfyWorkflow: DEFAULT_COMFY_WORKFLOW }),
             phoneCatalog: Object.freeze({ apps: PHONE_APPS, wallpapers: PHONE_WALLPAPERS, glyphs: PHONE_GLYPHS, skins: PHONE_SKINS }),
             ...Object.fromEntries(Object.entries(methods).map(([name, fn]) => [name, (...args) => { if(name==='reportDiagnostic'&&this.closed)return; this.assertOpen(); const failed = error => { if (!['reportDiagnostic','getRequestLogs','clearRequestLogs'].includes(name)) this.reportDiagnostic('小手机操作', {operation: name, message: error?.message || String(error), stack: error?.stack}, error?.name === 'AbortError'||error?.operation==='subscription' ? 'warn' : 'error'); throw error; }; try { const result = fn(...args); return result?.catch ? result.catch(failed) : result; } catch (error) { return failed(error); } }])),
