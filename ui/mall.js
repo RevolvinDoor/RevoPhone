@@ -47,6 +47,7 @@ export function mallApp(ctx) {
   let restockText = '';
   let restockImage = '';
   let restockAutoDraw = false;
+  let restocking = false;
   let uploadTargetItemId = '';
   const drawingIds = new Set();
 
@@ -201,7 +202,7 @@ export function mallApp(ctx) {
   }
 
   function renderRestockPanel() {
-    const busy = api.xenoBusy?.('restock');
+    const busy = restocking || !!api.xenoBusy?.('restock');
     const xeno = xenoState();
     const curPosePrompt = xenoPromptEntryText(xeno, 'mallPosePrompt');
     return `
@@ -488,18 +489,27 @@ export function mallApp(ctx) {
       return;
     }
     if (act === 'run-restock') {
+      if (restocking || api.xenoBusy?.('restock')) return;
       restockText = v.root.querySelector('#mall-restock-text')?.value || '';
       const poseInput = v.root.querySelector('#mall-pose-prompt-input');
       if (poseInput && poseInput.value.trim() !== xenoPromptEntryText(xeno, 'mallPosePrompt').trim()) {
         savePosePrompt(poseInput.value.trim());
       }
+      restocking = true;
+      v.refresh();
       await v.busy(el, async () => {
-        const created = await api.mallRestock({
-          category: restockCategory,
-          slot: restockCategory === 'apparel' ? restockSlot : restockCategory,
-          text: restockText,
-          imageData: restockImage
-        });
+        let created = null;
+        try {
+          created = await api.mallRestock({
+            category: restockCategory,
+            slot: restockCategory === 'apparel' ? restockSlot : restockCategory,
+            text: restockText,
+            imageData: restockImage
+          });
+        } finally {
+          restocking = false;
+          v.refresh();
+        }
         if (created?.category) activeShelf = created.category;
         const needAutoDraw = restockAutoDraw && !restockImage && created?.id;
         restockText = '';

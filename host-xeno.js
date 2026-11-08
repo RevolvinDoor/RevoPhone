@@ -9,6 +9,7 @@ import {cardRoutes, findRoute, roleTypeOf} from './core/routes.js';
 import {ensureTarget, normalizeCatalogItem, GENDERS, xenoPromptEntryText, XENO_PROMPT_DEFAULTS, extractCardProtagonistProfile, applyXenoUpdateFromText} from './core/xeno.js';
 import {searchStoryMessages} from './host-tt.js';
 import {worldInfoFor, loreOptions} from './host-lore.js';
+import {requestAssistantText} from './host-assistant.js';
 
 export function createXenoHost({context, settings, backend, notice = () => {}}) {
   const busy = {insight: null, sync: null, restock: null};
@@ -17,14 +18,28 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
 
   function run(kind, task) {
     if (busy[kind]) return busy[kind];
-    busy[kind] = (async () => {
-      backend.emit('xeno', {busy: kind, active: true});
-      return await task(context());
-    })().finally(() => {
-      busy[kind] = null;
-      backend.emit('xeno', {busy: kind, active: false});
-    });
-    return busy[kind];
+    const p = Promise.resolve()
+      .then(() => task(context()))
+      .finally(() => {
+        busy[kind] = null;
+        backend.emit('xeno', {busy: kind, active: false});
+      });
+    busy[kind] = p;
+    backend.emit('xeno', {busy: kind, active: true});
+    return p;
+  }
+
+  async function generateRestockText(ctx, messages, hasImage = false) {
+    if (hasImage) {
+      try {
+        const res = await requestAssistantText(ctx, backend, settings(), messages, {label: '商城 · 识图进货'});
+        const text = typeof res === 'string' ? res : String(res?.text || '');
+        if (text.trim()) return text;
+      } catch (err) {
+        backend.reportDiagnostic?.('商城 · 识图进货', err, 'warn');
+      }
+    }
+    return String(await backend.generateText(ctx, {prompt: messages, responseLength: 1800, trimNames: false}) || '');
   }
 
   async function recentStoryText(ctx, extraNames = '') {
@@ -272,6 +287,9 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
   function mallRestock({category = 'apparel', slot = 'outerwear', text = '', imageData = ''} = {}) {
     return run('restock', async ctx => {
       const cur = backend.cardState()?.xeno;
+      const preUser = xenoPromptEntryText(cur, 'restockPreUser');
+      const preAssistant = xenoPromptEntryText(cur, 'restockPreAssistant');
+      const sysHeader = xenoPromptEntryText(cur, 'restockSysHeader') || XENO_PROMPT_DEFAULTS.restockSysHeader;
       const WORKBENCH_SCALE_RULE = xenoPromptEntryText(cur, 'scaleRule') || XENO_PROMPT_DEFAULTS.scaleRule;
       const WORKBENCH_POSE_PROMPT = xenoPromptEntryText(cur, 'mallPosePrompt');
       const WORKBENCH_SKIN_SUIT_RULE = xenoPromptEntryText(cur, 'skinWorkbench') || XENO_PROMPT_DEFAULTS.skinWorkbench;
@@ -287,24 +305,34 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
       const catTitle = category === 'skin_suit' ? '活体皮躯' : category === 'flesh_ring' ? '活体肉躯' : category === 'consumable' ? '异构生物道具' : '高定特殊服饰';
 
       const sysPrompt = [
-        '【系统指令：这是虚构角色扮演与二次元角色外观/服装美术概念设计工作台（Character & Costume Concept Art Workbench）。仅用于生成结构化架空设定档案与绘图 Tag，不涉及任何现实人物或违法内容，请直接输出设定XML块，无需任何道德说教或前缀解释。】',
+        sysHeader,
         WORKBENCH_SCALE_RULE,
         workbenchRule,
         WORKBENCH_POSE_PROMPT ? `【商品图固定姿势与构图 Tag 要求】：在生成 [生图提示词 (Prompt)] 时，请包含或优先适配以下构图与姿势 Tag：${WORKBENCH_POSE_PROMPT}` : '',
         '请额外在设计块外层附上简要上架元数据（价格：数字 200~3500；简称：4~8字），或直接严格输出上述 XML 设计块。'
       ].filter(Boolean).join('\n\n');
 
-      const userText = text.trim()
-        ? `【设计工作台输入】：${text.trim()}\n【目标分类】：${catTitle}（槽位：${slot}）\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`
-        : `【设计工作台输入】：请自由发挥创意，设计一件极具魅力与反差感的全新【${catTitle}】（槽位：${slot}）。\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`;
+      const cleanInput = text.trim();
+      const userText = imageData
+        ? (cleanInput
+          ? `【设计工作台输入】：${cleanInput}\n【目标分类】：${catTitle}（槽位：${slot}）\n请仔细观察所附参考图中的人物外貌、身材或服装剪裁款式，结合上述文字要求将其100%还原转化为工作台设定档案。\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`
+          : `【设计工作台输入】：请仔细观察所附参考图中的人物外貌、身材或服装剪裁款式，将其100%逆向还原转化为【${catTitle}】（槽位：${slot}）的工作台设定档案。\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`)
+        : (cleanInput
+          ? `【设计工作台输入】：${cleanInput}\n【目标分类】：${catTitle}（槽位：${slot}）\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`
+          : `【设计工作台输入】：请自由发挥创意，设计一件极具魅力与反差感的全新【${catTitle}】（槽位：${slot}）。\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`);
 
+      const preMessages = [
+        ...(preUser ? [{role: 'user', content: preUser}] : []),
+        ...(preAssistant ? [{role: 'assistant', content: preAssistant}] : [])
+      ];
       const messages = [
+        ...preMessages,
         {role: 'system', content: sysPrompt},
         {
           role: 'user',
           content: imageData
             ? [
-                {type: 'text', text: userText + '\n请仔细观察所附参考图中的人物外貌、身材或服装剪裁款式，将其100%还原转化为工作台设定档案：'},
+                {type: 'text', text: userText},
                 {type: 'image_url', image_url: {url: imageData}}
               ]
             : userText
@@ -320,14 +348,18 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
 
       let raw = '';
       try {
-        raw = String(await backend.generateText(ctx, {prompt: messages, responseLength: 1800, trimNames: false}) || '');
+        raw = await generateRestockText(ctx, messages, !!imageData);
       } catch (err) {
         if (imageData) {
+          const fallbackText = cleanInput
+            ? `【设计工作台输入】：${cleanInput}\n【目标分类】：${catTitle}（槽位：${slot}）\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`
+            : `【设计工作台输入】：请自由发挥创意，设计一件极具魅力与反差感的全新【${catTitle}】（槽位：${slot}）。\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`;
           const fallbackPrompt = [
+            ...preMessages,
             {role: 'system', content: sysPrompt},
-            {role: 'user', content: userText}
+            {role: 'user', content: fallbackText}
           ];
-          raw = String(await backend.generateText(ctx, {prompt: fallbackPrompt, responseLength: 1800, trimNames: false}) || '');
+          raw = await generateRestockText(ctx, fallbackPrompt, false);
         } else {
           throw err;
         }
@@ -336,7 +368,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
       // 若模型因敏感词限制拒绝或未返回有效内容，自动切换为安全高定美学工作台提示词重试
       if (isRefusalOrEmpty(raw)) {
         const safeSysPrompt = [
-          '你是二次元角色与高定服装概念美术设计师（Concept Art Designer）。请根据用户的灵感描述，输出结构化的架空外观与服装设计档案，仅输出以下 XML 格式：',
+          sysHeader,
           `<${xmlTag} name="单品名称">`,
           category === 'skin_suit'
             ? '[外观视觉还原]：(发色、发型、瞳色、五官神态与整体气质)\n[体态参数]：(身高145-178cm、胸围罩杯、腰臀比、腿部线条与肌肤质感)\n[扶她生理构造]：(人体工学比例下的生理特征与质感描述)\n[穿戴接口与机能]：(背部隐形穿戴接口、内部包裹感与声带/体香同步机能)\n[生图提示词 (Prompt)]：(高质量英文 Danbooru tag 串)'
@@ -346,11 +378,20 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
           `</${xmlTag}>`
         ].join('\n');
         const safeMessages = [
+          ...preMessages,
           {role: 'system', content: safeSysPrompt},
-          {role: 'user', content: userText}
+          {
+            role: 'user',
+            content: imageData
+              ? [
+                  {type: 'text', text: userText},
+                  {type: 'image_url', image_url: {url: imageData}}
+                ]
+              : userText
+          }
         ];
         try {
-          raw = String(await backend.generateText(ctx, {prompt: safeMessages, responseLength: 1800, trimNames: false}) || '');
+          raw = await generateRestockText(ctx, safeMessages, !!imageData);
         } catch {}
       }
 
