@@ -3,7 +3,7 @@
 // recent story messages and the chat history. Nothing is written into the story unless the user brings a chat
 // into it; that text is injected once, into the next story reply.
 import {currentDm, currentWindow} from './core/chats.js';
-import {buildChatRequest, parseChatReply, bringText, plainStory, activeChatPreset, messageLine, cleanTagged, chatContacts, storyTextRule, phoneAfterRule, phoneParts, inSpace} from './core/chat.js';
+import {buildChatRequest, parseChatReply, bringText, plainStory, activeChatPreset, messageLine, cleanTagged, chatContacts, storyTextRule, phoneAfterRule, phoneParts, inSpace, isCallForbiddenRole} from './core/chat.js';
 import {worldInfoFor, loreOptions} from './host-lore.js';
 import {pictureInputs, photoCast, photoTags, tagTextRequest, tagTextAnswer} from './core/draw.js';
 import {storyLines} from './core/moments.js';
@@ -159,7 +159,7 @@ export function createChatHost({context, settings, backend, notice, memory = nul
       // 「[朋友圈] …」: posted to 朋友圈 while chatting, not a chat message.
       if (item.kind === 'moment') { posts.push({author: item.from, text: item.text, source: 'chat', space: thread?.space || backend.cardKey()}); continue; }
       // 「[打电话] …」: the contact calls right after this reply (private chats only; one call).
-      if (item.kind === 'call') { if (thread.type === 'dm' && !calling) calling = item; continue; }
+      if (item.kind === 'call') { if (thread.type === 'dm' && !calling && !isCallForbiddenRole(item.from, settings(), backend.here?.()) && item.from !== userName()) calling = item; continue; }
       if (item.kind !== 'claim') { out.push(item); continue; }
       const kinds = item.what ? [item.what] : item.action === 'return' ? ['transfer'] : ['redpacket', 'transfer', 'gift'];
       const target = thread.messages.findLast(m => m.from === 'me' && kinds.includes(m.kind) && m.state === 'sent' && !taken.has(m.id));

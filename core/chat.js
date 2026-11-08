@@ -6,7 +6,7 @@
 import {promptText, promptOn} from './prompt-rules.js';
 import {normalizeWallet, defaultWallet, PREMIUM, guessEmoji, yuan} from './wallet.js';
 import {parseDialogue, isPlaceholderRole} from './protocol.js';
-import {cardRoutes} from './routes.js';
+import {cardRoutes, roleTypeOf} from './routes.js';
 import {money} from './chats.js';
 import {callSummary} from './call.js';
 import {languageName} from './languages.js';
@@ -340,6 +340,19 @@ export const activeChatPreset = chat => chat.presets.find(p => p.id === chat.act
 export const inSpace = (item, space) => !space?.key || !item?.space || item.space === space.key;
 /** The space to filter by: the open card's, when partition is on and a card is open; else null (everything). */
 export const activeSpace = (settings, space) => settings.chat?.partition === 'card' && space?.key ? space : null;
+/** True when `name` is the protagonist or narrator role and must not make or receive phone calls. */
+export function isCallForbiddenRole(name, settings, space = null) {
+  const clean = String(name ?? '').trim();
+  if (!clean || clean === '旁白' || clean === '主角' || clean === '我') return true;
+  const routes = settings?.routes || [];
+  const scoped = space?.key ? cardRoutes(routes, space.key) : routes;
+  const matched = scoped.filter(r => r?.name?.trim() === clean);
+  const list = matched.length ? matched : routes.filter(r => r?.name?.trim() === clean);
+  if (list.some(r => roleTypeOf(r) === 'protagonist' || roleTypeOf(r) === 'narrator')) return true;
+  const protName = String(settings?.xeno?.protagonist?.name || '').trim();
+  if (protName && clean === protName) return true;
+  return false;
+}
 export function chatContacts(settings, space = null) {
   // A card's contacts: its own character(s), the roles that have spoken (or been named) in its story, roles added to
   // it, and contacts added under it. A role no story has met yet is in none until one does: it used to be in every
@@ -347,10 +360,11 @@ export function chatContacts(settings, space = null) {
   // made while a card is open belongs to that card; any role can be added from 联系人 →「＋」.
   const scoped = space?.key ? cardRoutes(settings.routes, space.key) : (settings.routes || []);
   const here = r => !space?.key || (space.members || []).includes(r.name) || r.card === space.key || (Array.isArray(r.cards) && r.cards.includes(space.key));
-  const roles = scoped.filter(r => !isPlaceholderRole(r.name) && r.name !== '旁白' && here(r)).map(r => ({name: r.name, source: 'role', voice: !!r.voice, engine: r.voice ? r.engine : 'none', language: r.language || settings.general.defaultLanguage,
+  const protName = String(settings?.xeno?.protagonist?.name || '').trim();
+  const roles = scoped.filter(r => !isPlaceholderRole(r.name) && r.name !== '旁白' && roleTypeOf(r) !== 'protagonist' && roleTypeOf(r) !== 'narrator' && (!protName || r.name.trim() !== protName) && here(r)).map(r => ({name: r.name, source: 'role', voice: !!r.voice, engine: r.voice ? r.engine : 'none', language: r.language || settings.general.defaultLanguage,
     // 角色资料: written in the 角色 App, else a contact of the same name's (a contact given a voice keeps who they are).
     persona: String(r.persona || settings.chat.contacts.find(c => c.name === r.name && inSpace(c, space))?.persona || '').slice(0, CHAT_LIMITS.persona)}));
-  const manual = settings.chat.contacts.filter(c => !roles.some(r => r.name === c.name) && inSpace(c, space)).map(c => ({name: c.name, source: 'manual', id: c.id, voice: false, engine: 'none', language: '', persona: c.persona}));
+  const manual = settings.chat.contacts.filter(c => !roles.some(r => r.name === c.name) && !isCallForbiddenRole(c.name, settings, space) && inSpace(c, space)).map(c => ({name: c.name, source: 'manual', id: c.id, voice: false, engine: 'none', language: '', persona: c.persona}));
   return [...roles, ...manual];
 }
 

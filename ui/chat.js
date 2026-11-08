@@ -7,7 +7,8 @@ import {openImageViewer} from '../image-viewer.js';
 import {editTags} from '../host-ask.js';
 import {saveFile, downloadAction, shareAction, shareFile, canShareFiles} from '../download.js';
 import {momentsPanel, momentsNew, momentsSeen} from './moments.js';
-import {PROFILE_STATUS, BUBBLES, FRAMES, BACKGROUNDS, parseStickers} from '../core/chat.js';
+import {PROFILE_STATUS, BUBBLES, FRAMES, BACKGROUNDS, parseStickers, isCallForbiddenRole} from '../core/chat.js';
+import {roleTypeOf} from '../core/routes.js';
 import {callSummary} from '../core/call.js';
 import {pendant} from './pendants.js';
 import {memorySheet} from './chat-memory.js';
@@ -77,6 +78,7 @@ export function chatApp(ctx) {
   const remarks = () => api.getState().chat.remarks || {};
   const shown = name => name === 'me' ? name : remarks()[name] || name;
   const you = who => who === 'me' ? '你' : shown(who);
+  const canCall = name => !!api.callDial && !!name && !isCallForbiddenRole(name, api.getState()) && name !== (api.userName?.() || myName());
   // mode: list (the tabs) · thread · profile (a contact's card) · me (the user's card and 个性装扮) · contact-edit
   // selecting: the messages picked (null when not picking); pickFor: what for, 'bring' (带进剧情) or 'delete' (多选删除).
   let mode = 'list', tab = 'msgs', search = '', searching = false, profileOf = '', threadId = null, thread = null, selecting = null, pickFor = 'bring', contactDraft = null, epoch = 0, stick = false;
@@ -236,7 +238,7 @@ export function chatApp(ctx) {
   }
   /** ＋ in 联系人: a role from the 角色 App that is not here yet, or someone outside the story by hand. */
   function addContact() {
-    const here = new Set(api.chatContacts().map(c => c.name)), roles = api.getState().routes.filter(r => r.name?.trim() && !here.has(r.name));
+    const here = new Set(api.chatContacts().map(c => c.name)), roles = api.getState().routes.filter(r => r.name?.trim() && !here.has(r.name) && roleTypeOf(r) !== 'protagonist' && roleTypeOf(r) !== 'narrator' && !isCallForbiddenRole(r.name, api.getState()));
     const d = ctx.dialog('添加联系人', `<div class="pick-list">
       ${roles.map(r => `<button class="list-row" data-add-role="${esc(r.name)}">${avatar(r.name, r.voice ? r.engine : 'none', 36)}<span><strong>${esc(r.name)}</strong><small>角色 App 里的角色${r.voice ? ' · 能发语音' : ''}</small></span>${icon('add')}</button>`).join('')}
       <button class="list-row" data-add-role="">${icon('edit')}<span><strong>手动添加</strong><small>剧情之外的人（同学、店员、网友……），写上人设就能聊</small></span></button></div>
@@ -263,7 +265,7 @@ export function chatApp(ctx) {
     const star = starred().includes(c.name), manual = c.source === 'manual' && api.getState().chat.contacts.find(x => x.name === c.name);
     v.draw(`<div class="qq-card" data-engine="${c.engine}"><span class="qq-card-cover" aria-hidden="true"></span>${avatar(c.name, c.engine, 84)}<h2>${esc(shown(c.name))}</h2>${shown(c.name) !== c.name ? `<p class="qq-card-real">昵称：${esc(c.name)}</p>` : ''}<p>${esc(signatureOf(c))}</p>
         <div class="qq-card-tags"><span class="chip">${c.source === 'role' ? '角色' : '手动联系人'}</span>${c.voice ? '<span class="chip">能发语音</span>' : ''}${star ? '<span class="chip">★ 特别关心</span>' : ''}</div></div>
-      <div class="actions">${btn('profile-chat', icon('chat') + '发消息', 'primary')}${api.callDial ? btn('profile-call', icon('phone') + '打电话', 'secondary') : ''}${btn('profile-moments', icon('moments') + 'TA 的动态', 'secondary')}</div>
+      <div class="actions">${btn('profile-chat', icon('chat') + '发消息', 'primary')}${canCall(c.name) ? btn('profile-call', icon('phone') + '打电话', 'secondary') : ''}${btn('profile-moments', icon('moments') + 'TA 的动态', 'secondary')}</div>
       <div class="group">${btn('remark', `${icon('edit')}<span><strong>设置备注</strong><small>${esc(remarks()[c.name] || '只有你看得到，聊天里显示这个名字')}</small></span>`, 'list-row')}${btn('avatar-pick', `${icon('image')}<span><strong>换头像</strong><small>${esc(avatarState(c.name))}</small></span>`, 'list-row', `data-key="${esc(c.name)}"`)}${btn('star', `<span>${star ? '★ 取消特别关心' : '☆ 设为特别关心'}</span>`, 'list-row')}${manual ? `<button class="list-row" data-action="contact-edit" data-id="${esc(manual.id)}">${icon('edit')}<span><strong>编辑资料和人设</strong></span></button>` : ''}</div>
       <div class="actions">${btn('unfriend', '删除好友', 'danger')}</div>`);
   }
@@ -445,7 +447,7 @@ export function chatApp(ctx) {
     const bg = look.backgroundPhoto ? 'photo' : look.background, scene = chatScene(bg);
     drawThread(`<div class="chat-thread${selecting ? ' selecting' : ''}" data-thread="${esc(threadId)}" data-bubble="${esc(look.bubble)}" data-bg="${esc(bg)}"${scene ? ` data-scene data-tone="${sceneDark(bg) ? 'dark' : 'light'}"` : ''}>
       <div class="th-head" data-engine="${group ? 'none' : engine(thread.members[0])}">${threadAvatar(thread, 38)}<div class="th-title"><strong>${esc(group ? thread.name : shown(thread.members[0] || thread.name))}</strong><small>${esc(sub)}</small></div>
-        ${btn('bring', selecting ? '取消' : icon('book') + `<span class="bring-label">${thread.story ? '一直带着' : '带进剧情'}</span>`, 'chip-button', selecting ? '' : `aria-label="带进剧情" title="${thread.story ? '正文一直记得这段聊天' : '带进剧情'}"${thread.story ? ' data-on' : ''}`)}${!group && api.callDial ? btn('call', icon('phone'), 'round-button call-go', 'aria-label="语音通话"') : ''}${btn('thread-menu', icon('more'), 'round-button', 'aria-label="更多"')}</div>
+        ${btn('bring', selecting ? '取消' : icon('book') + `<span class="bring-label">${thread.story ? '一直带着' : '带进剧情'}</span>`, 'chip-button', selecting ? '' : `aria-label="带进剧情" title="${thread.story ? '正文一直记得这段聊天' : '带进剧情'}"${thread.story ? ' data-on' : ''}`)}${!group && canCall(thread.members[0]) ? btn('call', icon('phone'), 'round-button call-go', 'aria-label="语音通话"') : ''}${btn('thread-menu', icon('more'), 'round-button', 'aria-label="更多"')}</div>
       <div class="msgs-wrap">${scene}<div class="msgs" role="log" aria-live="polite" data-keep-scroll="msgs-${esc(threadId)}">${list.length ? list.map((m, i) => messageHTML(m, i, list)).join('') : `<p class="chat-empty">${live ? '发几条消息都行，发完点右下角的气泡按钮让对方回复；输入框空着时发送键就会变成它。也可以直接点它，让对方先开口。' : '在酒馆里打开小手机时，联系人才会回复。'}</p>`}
         ${bring?.threadId === threadId ? `<div class="sys">${icon('book')}${bring.count} 条消息会带进下一次正文 ${btn('cancel-bring', '取消', 'text-button')}</div>` : ''}
         ${typer !== null ? `<div class="msg typing-row" data-engine="${typer ? engine(typer) : 'none'}">${avatar(typer || '…', typer ? engine(typer) : 'none', 34)}<div class="m-body"><div class="chat-bubble typing" aria-label="对方正在输入"><i></i><i></i><i></i></div></div></div>` : ''}</div></div>
@@ -1113,9 +1115,9 @@ export function chatApp(ctx) {
     const said = m.lines?.length ? `<div class="call-log">${m.lines.map(l => `<p><b>${esc(who(l))}：</b>${esc(l.translation || l.text)}</p>`).join('')}</div>` : '';
     const mail = m.voicemail?.length ? `<p class="help-copy"><b>语音留言：</b>${esc(m.voicemail.map(l => l.translation || l.text).join(' '))}</p>` : '';
     const d = sheet(callSummary(m), `${said || mail ? '' : '<p class="help-copy">这通电话没有说话内容。</p>'}${mail}${said}
-      <div class="actions">${m.voicemail?.length && ctx.routeFor(name)?.voice ? btn('call-mail', icon('play', true) + '听留言', 'secondary') : ''}${api.callDial ? btn('call-back', icon('phone') + '回拨', 'primary') : ''}</div>`, {
+      <div class="actions">${m.voicemail?.length && ctx.routeFor(name)?.voice ? btn('call-mail', icon('play', true) + '听留言', 'secondary') : ''}${canCall(name) ? btn('call-back', icon('phone') + '回拨', 'primary') : ''}</div>`, {
       'call-mail': () => api.speak(m.voicemail.map(l => ({role: name, text: l.text, translation: l.translation, emotion: l.emotion}))),
-      'call-back': async () => { d.close(); await api.callDial(name); }
+      'call-back': async () => { if (!canCall(name)) { ctx.notify('主角和旁白角色不能打电话', {error: true}); return; } d.close(); await api.callDial(name); }
     });
   }
   /** 置顶 / 免打扰 / 标为已读 / 删除, from a long press (or right click) on a conversation. */
@@ -1366,8 +1368,8 @@ export function chatApp(ctx) {
       case 'me-voice': voiceTextSheet(); break;
       case 'me-calls': callsSheet(); break;
       case 'avatar-pick': await avatarSheet(el.dataset.key); break;
-      case 'call': await api.callDial(thread.members[0]); break;
-      case 'profile-call': await api.callDial(profileOf); break;
+      case 'call': if (!canCall(thread.members[0])) { ctx.notify('主角和旁白角色不能打电话', {error: true}); break; } await api.callDial(thread.members[0]); break;
+      case 'profile-call': if (!canCall(profileOf)) { ctx.notify('主角和旁白角色不能打电话', {error: true}); break; } await api.callDial(profileOf); break;
       case 'call-log': { const m = find(); if (m) callLog(m); break; }
       case 'me-presets': ctx.open('presets'); ctx.showPresetKind?.('chat'); break;
       case 'dm-open': await openDm(el.dataset.name); break;

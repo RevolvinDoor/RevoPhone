@@ -220,8 +220,10 @@ export function defaultXeno() {
     wardrobeTarget: '__protagonist__',
     bodyModTarget: '__protagonist__',
     cogModTarget: '',
+    cardKey: '',
     protagonistCleared: false,
     protagonist: normalizeEntity({}, true),
+    cardProtagonists: {},
     targets: [],
     targetPool: [],
     possession: {
@@ -276,6 +278,15 @@ export function normalizeXeno(raw) {
     else if (itemVoiceBindings[item.id]) item.voiceRole = itemVoiceBindings[item.id];
   }
   const protagonist = normalizeEntity(raw.protagonist, true);
+  const cardProtagonists = {};
+  if (raw.cardProtagonists && typeof raw.cardProtagonists === 'object') {
+    for (const [k, v] of Object.entries(raw.cardProtagonists).slice(0, 100)) {
+      const ck = clip(k, 300);
+      if (ck && v && typeof v === 'object') {
+        cardProtagonists[ck] = normalizeEntity(v, true);
+      }
+    }
+  }
   const targets = Array.isArray(raw.targets)
     ? raw.targets.filter(t => isValidRoleName(t?.name)).slice(0, 60).map(t => normalizeEntity(t, false))
     : [];
@@ -337,8 +348,10 @@ export function normalizeXeno(raw) {
     wardrobeTarget: raw.wardrobeTarget === '__protagonist__' || targets.some(t => t.name === raw.wardrobeTarget) ? raw.wardrobeTarget : '__protagonist__',
     bodyModTarget,
     cogModTarget,
+    cardKey: clip(raw.cardKey, 300),
     protagonistCleared: raw.protagonistCleared === true,
     protagonist,
+    cardProtagonists,
     targets,
     targetPool: [...poolMap.values()].slice(0, 120),
     possession: {
@@ -410,13 +423,20 @@ export function normalizeXenoPreset(raw) {
     const builtin = DEFAULT_XENO_ENTRIES.find(b => b.id === id);
     const scope = ['story', 'task', 'mall'].includes(e.scope) ? e.scope : (builtin?.scope || 'story');
     const triggerMode = ['auto', 'always'].includes(e.triggerMode) ? e.triggerMode : (builtin?.triggerMode || 'always');
+    let entryText = typeof e.text === 'string' ? e.text.slice(0, 20000) : (builtin?.text || '');
+    if (id === 'autoSync' && entryText.includes('1. 当本轮剧情中有【新登场的女性/扶她重要角色】首次亮相') && builtin?.text) {
+      entryText = builtin.text;
+    }
+    if (id === 'syncPrompt' && entryText.startsWith('你是【异构终端】的实时状态栏提取引擎。请根据最新剧情与角色设定') && builtin?.text) {
+      entryText = builtin.text;
+    }
     const normEntry = {
       id,
       title: clip(e.title, 80) || builtin?.title || '自定义提示词条目',
       scope,
       triggerMode,
       enabled: e.enabled !== false,
-      text: typeof e.text === 'string' ? e.text.slice(0, 20000) : (builtin?.text || '')
+      text: entryText
     };
     byId.set(id, normEntry);
     entries.push(normEntry);
@@ -458,6 +478,7 @@ export function extractXenoSession(xeno) {
     return copy;
   };
   return {
+    cardKey: norm.cardKey,
     selectedTarget: norm.selectedTarget,
     wardrobeTarget: norm.wardrobeTarget,
     bodyModTarget: norm.bodyModTarget,
@@ -472,21 +493,52 @@ export function extractXenoSession(xeno) {
   };
 }
 
+export function cleanBaselineProtagonist(prot, state = null) {
+  const p = normalizeEntity(prot, true);
+  const snap = (state?.possession?.active || state?.fusion?.active || p.baseSnapshot) ? p.baseSnapshot : null;
+  return normalizeEntity({
+    id: '__protagonist__',
+    name: p.name,
+    identity: p.identity,
+    gender: snap?.gender || p.gender,
+    appearance: snap?.appearance || p.appearance,
+    bodyBuild: snap?.bodyBuild || p.bodyBuild,
+    physiology: snap?.physiology || p.physiology,
+    originalBody: p.originalBody,
+    currentBody: p.originalBody,
+    voiceRole: snap?.voiceRole || p.voiceRole,
+    outfit: p.outfit,
+    portraitData: p.portraitData
+  }, true);
+}
+
 /** Merges a per-chat session snapshot (or fresh session when null) with the global catalog & global settings in `globalXeno`. */
-export function mergeXenoSession(globalXeno, session = null) {
+export function mergeXenoSession(globalXeno, session = null, cardKey = '') {
   const base = normalizeXeno(globalXeno);
   const fresh = defaultXeno();
-  const s = session && typeof session === 'object' ? session : fresh;
+  const targetCard = clip(cardKey || session?.cardKey || base.cardKey, 300);
+  const validSession = session && typeof session === 'object' && (!session.cardKey || !targetCard || session.cardKey === targetCard)
+    ? session
+    : null;
+  const s = validSession || fresh;
+  const cardBaseProt = (!validSession && targetCard && base.cardProtagonists?.[targetCard])
+    ? cleanBaselineProtagonist(base.cardProtagonists[targetCard])
+    : null;
+  const mergedPoolMap = new Map();
+  for (const t of base.targetPool || []) if (t?.name) mergedPoolMap.set(t.name, t);
+  for (const t of Array.isArray(s.targetPool) ? s.targetPool : []) if (t?.name) mergedPoolMap.set(t.name, t);
   return normalizeXeno({
     ...base,
+    cardKey: targetCard,
+    cardProtagonists: base.cardProtagonists,
     selectedTarget: s.selectedTarget ?? fresh.selectedTarget,
     wardrobeTarget: s.wardrobeTarget ?? fresh.wardrobeTarget,
     bodyModTarget: s.bodyModTarget ?? fresh.bodyModTarget,
     cogModTarget: s.cogModTarget ?? fresh.cogModTarget,
-    protagonistCleared: s.protagonistCleared ?? fresh.protagonistCleared,
-    protagonist: s.protagonist ?? fresh.protagonist,
+    protagonistCleared: validSession ? (s.protagonistCleared ?? false) : false,
+    protagonist: validSession ? (s.protagonist ?? fresh.protagonist) : (cardBaseProt || fresh.protagonist),
     targets: Array.isArray(s.targets) ? s.targets : fresh.targets,
-    targetPool: Array.isArray(s.targetPool) ? s.targetPool : fresh.targetPool,
+    targetPool: [...mergedPoolMap.values()],
     possession: s.possession ?? fresh.possession,
     fusion: s.fusion ?? fresh.fusion,
     pendingActionNote: s.pendingActionNote ?? ''
@@ -517,29 +569,66 @@ export function ensureTarget(xeno, name, patch = {}) {
  * - Roles marked `normal` ('普通角色') form `xeno.targets`.
  * - Roles marked `narrator` ('旁白角色') are excluded from targets.
  */
-export function syncXenoWithRoutes(xeno, routes = []) {
+export function syncXenoWithRoutes(xeno, routes = [], cardKey = '') {
   const out = normalizeXeno(xeno);
   const list = Array.isArray(routes) ? routes : [];
+  const cleanCardKey = clip(cardKey, 300);
   const pool = new Map();
   for (const t of out.targetPool || []) pool.set(t.name, t);
   for (const t of out.targets || []) pool.set(t.name, t);
+
+  // If switching from one character card to another, save the outgoing card's protagonist and load the incoming card's protagonist
+  if (cleanCardKey && out.cardKey && out.cardKey !== cleanCardKey) {
+    if (!out.protagonistCleared && (out.protagonist.name || out.protagonist.appearance || out.protagonist.bodyBuild || out.protagonist.physiology || out.protagonist.identity)) {
+      out.cardProtagonists[out.cardKey] = cleanBaselineProtagonist(out.protagonist, out);
+    }
+    out.protagonist = out.cardProtagonists[cleanCardKey]
+      ? cleanBaselineProtagonist(out.cardProtagonists[cleanCardKey])
+      : normalizeEntity({}, true);
+    out.protagonistCleared = false;
+    out.possession.active = false;
+    out.possession.targetName = '';
+    out.possession.organSync = false;
+    out.fusion.active = false;
+    out.fusion.targetName = '';
+    out.pendingActionNote = '';
+  }
+  if (cleanCardKey) out.cardKey = cleanCardKey;
+
+  const savedCardProt = out.cardKey ? out.cardProtagonists?.[out.cardKey] : null;
+  if (savedCardProt && !out.protagonistCleared) {
+    if (!out.protagonist.name && savedCardProt.name) out.protagonist.name = savedCardProt.name;
+    if (!out.protagonist.identity && savedCardProt.identity) out.protagonist.identity = savedCardProt.identity;
+    if (!out.possession.active && !out.fusion.active) {
+      if (!out.protagonist.gender && savedCardProt.gender) out.protagonist.gender = savedCardProt.gender;
+      if (!out.protagonist.appearance && savedCardProt.appearance) out.protagonist.appearance = savedCardProt.appearance;
+      if (!out.protagonist.bodyBuild && savedCardProt.bodyBuild) out.protagonist.bodyBuild = savedCardProt.bodyBuild;
+      if (!out.protagonist.physiology && savedCardProt.physiology) out.protagonist.physiology = savedCardProt.physiology;
+      if (!out.protagonist.originalBody && savedCardProt.originalBody) out.protagonist.originalBody = savedCardProt.originalBody;
+      if (!out.protagonist.voiceRole && savedCardProt.voiceRole) out.protagonist.voiceRole = savedCardProt.voiceRole;
+    }
+  }
 
   const protRoute = list.find(r => r?.name?.trim() && roleTypeOf(r) === 'protagonist');
   if (protRoute && !out.protagonistCleared) {
     const pName = clip(protRoute.name, 80);
     const prevName = out.protagonist.name;
     const pooled = pool.get(pName);
-    if (prevName !== pName && pooled) {
-      out.protagonist = normalizeEntity({...pooled, ...out.protagonist, id: '__protagonist__', name: pName}, true);
+    if (prevName !== pName && pooled && !out.protagonist.appearance) {
+      out.protagonist = normalizeEntity({...out.protagonist, ...pooled, id: '__protagonist__', name: pName}, true);
     } else {
       out.protagonist.name = pName;
     }
     if (protRoute.persona?.trim() && !out.protagonist.identity) {
       out.protagonist.identity = clip(protRoute.persona, 300);
     }
-    if (protRoute.appearance?.trim() && !out.protagonist.appearance) {
+    if (protRoute.appearance?.trim() && !out.possession.active && !out.fusion.active && !out.protagonist.appearance) {
       out.protagonist.appearance = clip(protRoute.appearance, 1000);
     }
+  }
+
+  if (out.cardKey && !out.protagonistCleared && (out.protagonist.name || out.protagonist.appearance || out.protagonist.bodyBuild || out.protagonist.physiology || out.protagonist.identity)) {
+    out.cardProtagonists[out.cardKey] = cleanBaselineProtagonist(out.protagonist, out);
   }
 
   const normalRoutes = list.filter(r => r?.name?.trim() && isValidRoleName(r.name) && roleTypeOf(r) === 'normal' && (!out.protagonist.name || r.name.trim() !== out.protagonist.name));
@@ -1403,6 +1492,9 @@ export function xenoResetProtagonist(state, {resetTargets = false} = {}) {
   const next = normalizeXeno(state);
   next.protagonist = normalizeEntity({}, true);
   next.protagonistCleared = true;
+  if (next.cardKey && next.cardProtagonists) {
+    delete next.cardProtagonists[next.cardKey];
+  }
   next.possession.active = false;
   next.possession.targetName = '';
   next.possession.organSync = false;
@@ -1683,15 +1775,17 @@ export function xenoPromptPlan(xeno, presetOverride = null) {
 
   // 1. Always inject the live Protagonist & Active Targets Status Overview (replacing TavernDB tables)
   const pView = effectiveEntityView(state, state.protagonist);
+  const protNeedSync = !pView.appearance && !pView.bodyBuild && !pView.physiology;
   const statusLines = [
     '【异构终端 · 实时状态数据库（最高优先级事实基准，替代原数据库表）】',
     carrierNote,
     '',
-    `■ 主角状态栏（${pView.name}）：`,
-    `- 姓名：${pView.name} ｜ 身份：${pView.identity} ｜ 当前显性性别：${pView.gender}`,
-    `- 外貌特征：${pView.appearance}`,
-    `- 体型身材：${pView.bodyBuild}`,
-    `- 生理特征：${pView.physiology}`,
+    `■ 主角状态栏（${pView.name || '主角'}）：`,
+    `- 姓名：${pView.name || '（跟随当前角色卡/用户设定）'} ｜ 身份：${pView.identity || '（跟随当前角色卡/用户设定）'} ｜ 当前显性性别：${pView.gender || '（跟随当前角色卡/用户设定）'}`,
+    `- 外貌特征：${pView.appearance || '（待同步：请严格跟随当前角色卡、角色卡世界书、开场白与用户人设中的主角外观设定，并在本轮末尾 <xeno_update> 第一行补全主角状态栏）'}`,
+    `- 体型身材：${pView.bodyBuild || '（待同步：请严格跟随当前角色卡与人设中的主角身高/体型/身材设定）'}`,
+    `- 生理特征：${pView.physiology || '（待同步：请严格跟随当前角色卡与人设中的主角生理特征设定）'}`,
+    ...(protNeedSync ? ['- [主角外观同步指令] 当前主角外观尚未写入终端，请务必遵循当前角色卡与世界书对主角（{{user}}）的外观/身份/身材设定，并在本轮正文末尾 <xeno_update> 中第一行输出主角完整8项数据！'] : []),
     `- [详情] 原始肉体：${pView.originalBody} ｜ 当前肉体：${pView.currentBody} ｜ 变更原因：${pView.changeReason}`,
     `- [详情] 本体托管状态：${pView.hostingState}`,
     `- [详情] 声带与音色：${pView.voiceStateText}`,
@@ -1819,6 +1913,7 @@ export function applyXenoUpdateFromText(state, text, options = {}) {
   const next = normalizeXeno(state);
   const routes = Array.isArray(options?.routes) ? options.routes : [];
   const protNameHint = clip(options?.protagonistName, 80);
+  const cardMembers = new Set((Array.isArray(options?.cardMembers) ? options.cardMembers : []).map(n => String(n || '').trim()).filter(Boolean));
   let changed = false;
   for (const m of matches) {
     const lines = String(m[1] || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -1826,12 +1921,36 @@ export function applyXenoUpdateFromText(state, text, options = {}) {
       if (/<\/?tts\b|<\/?xeno_update\b|[<>“”"]/i.test(line)) continue;
       const parts = line.split(/[|｜]/).map(s => s.trim());
       if (parts.length < 6) continue;
-      const [name, identity, gender, appearance, bodyBuild, physiology, outerwear, underwear] = parts;
+      // Support both 8-column (姓名|身份|性别|...) and 9-column (角色类别(主角/目标)|姓名|身份|性别|...) formats
+      let roleHint = '', rawName = '', identity = '', gender = '', appearance = '', bodyBuild = '', physiology = '', outerwear = '', underwear = '';
+      if (parts.length >= 7 && !GENDERS.includes(parts[2]) && GENDERS.includes(parts[3])) {
+        [roleHint, rawName, identity, gender, appearance, bodyBuild, physiology, outerwear = '', underwear = ''] = parts;
+      } else {
+        [rawName, identity, gender, appearance, bodyBuild, physiology, outerwear = '', underwear = ''] = parts;
+      }
+      let name = String(rawName || '').trim();
+      let nameMarkedProt = false;
+      const prefixMatch = name.match(/^(?:主角|男主角?|女主角?|使用者|玩家)[（(:：·\s]\s*([^）)]+?)\s*[）)]?$/);
+      const suffixMatch = name.match(/^([^（(]+?)\s*[（(](?:主角|男主角?|女主角?|使用者|玩家|user)[）)]$/i);
+      if (prefixMatch) {
+        name = prefixMatch[1].trim();
+        nameMarkedProt = true;
+      } else if (suffixMatch) {
+        name = suffixMatch[1].trim();
+        nameMarkedProt = true;
+      } else if (/^(?:主角|男主角?|女主角?|使用者|玩家|\{\{user\}\}|user|你|我)$/i.test(name)) {
+        nameMarkedProt = true;
+        name = next.protagonist.name || (protNameHint && protNameHint !== '主角' ? protNameHint : '主角');
+      }
       if (!isValidRoleName(name) || name === '角色名' || name === '角色姓名' || name === '旁白') continue;
       if (!GENDERS.includes(gender)) continue;
       const matchedRoute = findRoute(routes, name);
       if (matchedRoute && roleTypeOf(matchedRoute) === 'narrator') continue;
+      const identityMarksProt = /(?:^|[，、/\s（(])(?:男主角?|女主角?|主角本人|使用者|玩家角色)(?:$|[，、/\s）)])/.test(identity) && !cardMembers.has(name);
       const isProt = (matchedRoute && roleTypeOf(matchedRoute) === 'protagonist')
+        || nameMarkedProt
+        || /主角|男主|女主|使用者|user/i.test(roleHint)
+        || identityMarksProt
         || name === next.protagonist.name
         || (protNameHint && name === protNameHint)
         || name === '主角';
@@ -1839,7 +1958,7 @@ export function applyXenoUpdateFromText(state, text, options = {}) {
       if (isProt) {
         ent = next.protagonist;
         next.protagonistCleared = false;
-        if (!ent.name && name !== '主角') ent.name = clip(name, 80);
+        if (name && name !== '主角') ent.name = clip(name, 80);
       } else {
         ent = ensureTarget(next, name);
       }
@@ -1854,5 +1973,137 @@ export function applyXenoUpdateFromText(state, text, options = {}) {
       changed = true;
     }
   }
+  if (changed && next.cardKey && !next.protagonistCleared && (next.protagonist.name || next.protagonist.appearance || next.protagonist.bodyBuild || next.protagonist.physiology || next.protagonist.identity)) {
+    next.cardProtagonists[next.cardKey] = cleanBaselineProtagonist(next.protagonist, next);
+  }
   return changed ? next : null;
+}
+
+/**
+ * Extracts protagonist baseline attributes from the active SillyTavern Character Card, its embedded character_book,
+ * the opening message (`chat[0].mes` or `first_mes`), the card's `protagonist` route in `角色` App, and `persona_description`.
+ */
+export function extractCardProtagonistProfile(ctx, routes = [], cardKey = '') {
+  const list = Array.isArray(routes) ? routes : [];
+  const protRoute = list.find(r => r?.name?.trim() && roleTypeOf(r) === 'protagonist');
+  const userRaw = String(ctx?.name1 || '').trim();
+  const userName = (!userRaw || /^(?:user|\{\{user\}\})$/i.test(userRaw)) ? '' : clip(userRaw, 80);
+  const charCard = ctx?.characters?.[ctx?.characterId] || null;
+  const cardName = String(charCard?.name || '').trim();
+
+  const replaceMacros = s => String(s || '')
+    .replaceAll('{{user}}', userName || '主角')
+    .replaceAll('{{char}}', cardName || '角色')
+    .replace(/<user>/gi, userName || '主角')
+    .replace(/<char>/gi, cardName || '角色');
+
+  // Gather protagonist-specific blocks from the Character Card's embedded worldbook (`character_book`)
+  const bookEntries = charCard?.data?.character_book?.entries || charCard?.character_book?.entries || [];
+  const entriesArray = Array.isArray(bookEntries) ? bookEntries : Object.values(bookEntries || {});
+  const protBookBlocks = [];
+  for (const entry of entriesArray) {
+    if (!entry || entry.enabled === false || entry.disable === true) continue;
+    const comment = String(entry.comment || entry.name || '').trim();
+    const keys = Array.isArray(entry.keys || entry.key) ? (entry.keys || entry.key).join(' ') : String(entry.keys || entry.key || '');
+    const content = replaceMacros(entry.content || '');
+    if (!content.trim()) continue;
+    const headerHit = /主角|男主|女主|使用者|玩家|user|人设/i.test(comment + ' ' + keys) || (userName && (comment.includes(userName) || keys.includes(userName)));
+    if (headerHit && (!cardName || !comment.includes(cardName))) {
+      protBookBlocks.push(content.slice(0, 2000));
+    }
+  }
+
+  // Gather protagonist-specific sections from charCard.description / scenario / opening message
+  const descText = replaceMacros([charCard?.description, charCard?.scenario].filter(Boolean).join('\n'));
+  const openingText = replaceMacros(ctx?.chat?.[0]?.mes || charCard?.first_mes || '');
+  const sectionRe = /(?:^|\n)\s*(?:[#*>-]+\s*|[\[【「『<]\s*)(?:主角|男主角?|女主角?|玩家|使用者|user|扮演角色)[^\]】」』>\n]*(?:[\]】」』>])?\s*[:：]?\s*\n([\s\S]{10,1200}?)(?=\n\s*(?:[#*]{1,4}\s+|[\[【「『<][^\]】」』>\n]{2,25}[\]】」』>]\s*(?:\n|$))|$)/gi;
+  const cardSections = [];
+  for (const m of descText.matchAll(sectionRe)) {
+    if (m[1]?.trim()) cardSections.push(m[1].trim());
+  }
+  for (const m of openingText.matchAll(sectionRe)) {
+    if (m[1]?.trim()) cardSections.push(m[1].trim());
+  }
+
+  const personaText = replaceMacros(ctx?.powerUserSettings?.persona_description || '').trim();
+  const routePersona = replaceMacros(protRoute?.persona || '').trim();
+  const routeAppearance = replaceMacros(protRoute?.appearance || '').trim();
+
+  const combinedCardProtText = [...protBookBlocks, ...cardSections].join('\n').trim();
+  const sourceText = [combinedCardProtText, routePersona, personaText].filter(Boolean).join('\n');
+
+  const pickField = regex => {
+    for (const block of [combinedCardProtText, routePersona, personaText]) {
+      if (!block) continue;
+      const m = block.match(regex);
+      if (m?.[1]?.trim()) return m[1].trim().replace(/^[|:：\s]+|[|:：\s]+$/g, '');
+    }
+    return '';
+  };
+
+  const extractedName = pickField(/(?:^|\n)\s*[-*•]?\s*(?:主角姓名|姓名|名字|真名|角色名)\s*[:：]\s*([^\n｜|（(]{1,24})/i);
+  const finalName = clip(
+    (protRoute?.name && isValidRoleName(protRoute.name) ? protRoute.name : '')
+    || (extractedName && isValidRoleName(extractedName) && extractedName !== cardName ? extractedName : '')
+    || (userName && isValidRoleName(userName) && userName !== cardName ? userName : ''),
+    80
+  );
+
+  let gender = '';
+  const rawGender = pickField(/(?:^|\n)\s*[-*•]?\s*(?:性别|当前显性性别|肉体性别)\s*[:：]\s*([^\n｜|]{1,16})/i);
+  if (/扶她|双性|futa/i.test(rawGender)) gender = '扶她';
+  else if (/女|female|1girl|girl|woman/i.test(rawGender)) gender = '女';
+  else if (/男|male|1boy|boy|man/i.test(rawGender)) gender = '男';
+  else if (/扶她|futanari/i.test(combinedCardProtText || routeAppearance || personaText)) gender = '扶她';
+  else if (/\b(?:1girl|female)\b|女主角|少女|女学生|美少女/i.test(combinedCardProtText || routeAppearance || personaText)) gender = '女';
+  else if (/\b(?:1boy|male)\b|男主角|少年|青年|男学生/i.test(combinedCardProtText || routeAppearance || personaText)) gender = '男';
+
+  const identity = clip(
+    pickField(/(?:^|\n)\s*[-*•]?\s*(?:身份|职业|定位|头衔|背景身份)\s*[:：]\s*([^\n｜|]{1,120})/i)
+    || (routePersona && routePersona.length <= 120 && !routePersona.includes('\n') ? routePersona : ''),
+    300
+  );
+
+  let appearance = clip(
+    pickField(/(?:^|\n)\s*[-*•]?\s*(?:外貌特征|外貌|外观|容貌|长相|面容|样貌|颜值)\s*[:：]\s*([^\n]{2,500})/i)
+    || routeAppearance,
+    1000
+  );
+  if (!appearance && combinedCardProtText && combinedCardProtText.length <= 360) {
+    appearance = clip(combinedCardProtText.replace(/\s*\n+\s*/g, '；'), 1000);
+  } else if (!appearance && personaText && personaText.length <= 360) {
+    appearance = clip(personaText.replace(/\s*\n+\s*/g, '；'), 1000);
+  }
+
+  const bodyBuild = clip(
+    pickField(/(?:^|\n)\s*[-*•]?\s*(?:体型身材|体型|身材|体态|三围|身高(?:体重)?)\s*[:：]\s*([^\n]{2,500})/i)
+    || (sourceText.match(/(?:身高\s*\d{2,3}\s*(?:cm|厘米)[^。\n]*)/i)?.[1] || ''),
+    1000
+  );
+
+  const physiology = clip(
+    pickField(/(?:^|\n)\s*[-*•]?\s*(?:生理特征|生理构造|生理器官|生殖器官|生理|器官|体质|敏感带)\s*[:：]\s*([^\n]{2,500})/i),
+    1000
+  );
+
+  const outerwear = clip(
+    pickField(/(?:^|\n)\s*[-*•]?\s*(?:外搭衣物|外搭|日常着装|服装|衣着|穿搭|穿着)\s*[:：]\s*([^\n｜|]{1,200})/i),
+    500
+  );
+  const underwear = clip(
+    pickField(/(?:^|\n)\s*[-*•]?\s*(?:内衣裤装|内衣|贴身衣物)\s*[:：]\s*([^\n｜|]{1,200})/i),
+    500
+  );
+
+  return {
+    cardKey: clip(cardKey, 300),
+    name: finalName,
+    identity,
+    gender,
+    appearance,
+    bodyBuild,
+    physiology,
+    outerwear,
+    underwear
+  };
 }

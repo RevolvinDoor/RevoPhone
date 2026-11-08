@@ -4,7 +4,7 @@
 // the private chat with that contact. Nothing is written into the story.
 import {currentDm} from './core/chats.js';
 import {buildCallRequest, parseCallReply, CALL_LIMITS} from './core/call.js';
-import {chatContacts, activeChatPreset, messageLine, cleanTagged} from './core/chat.js';
+import {chatContacts, activeChatPreset, messageLine, cleanTagged, isCallForbiddenRole} from './core/chat.js';
 import {worldInfoFor, loreOptions} from './host-lore.js';
 import {storyLines} from './core/moments.js';
 import {modelRules} from './core/state.js';
@@ -25,7 +25,9 @@ export function createCallHost({context, settings, backend, notice, ringing = ()
       .replaceAll('{{char}}', name).replaceAll('{{user}}', userName()).slice(0, 2000);
   }
   function contactOf(name) {
-    const s = settings(), c = chatContacts(s).find(x => x.name === name);
+    const s = settings(), space = backend.here?.() || null;
+    if (isCallForbiddenRole(name, s, space) || name === userName()) throw Error('主角和旁白角色不能打电话');
+    const c = (backend.contacts?.() || chatContacts(s, space)).find(x => x.name === name) || chatContacts(s).find(x => x.name === name);
     if (!c) throw Error(`联系人里没有「${name}」`);
     return {name, persona: c.persona || '', card: c.persona ? '' : card(name), voice: c.voice && s.general.voiceEnabled !== false, language: c.language || s.general.defaultLanguage};
   }
@@ -220,7 +222,8 @@ export function createCallHost({context, settings, backend, notice, ringing = ()
     let day = {day: today(), n: 0};
     try { const saved = JSON.parse(localStorage.getItem(DAY_KEY) || 'null'); if (saved?.day === day.day) day = saved; } catch { /* no storage: count this session only */ }
     if (day.n >= o.dailyMax) return;
-    const callers = backend.contacts().filter(c => c.source === 'role' && c.voice), now = context()?.name2;
+    const space = backend.here?.() || null;
+    const callers = backend.contacts().filter(c => c.source === 'role' && c.voice && !isCallForbiddenRole(c.name, settings(), space) && c.name !== userName()), now = context()?.name2;
     const name = callers.find(c => c.name === now)?.name || callers[Math.floor(Math.random() * callers.length)]?.name;
     if (!name) return;
     try {

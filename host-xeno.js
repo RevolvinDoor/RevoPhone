@@ -6,12 +6,14 @@
 import {storyLines} from './core/moments.js';
 import {activeChatPreset, cleanTagged} from './core/chat.js';
 import {cardRoutes, findRoute, roleTypeOf} from './core/routes.js';
-import {ensureTarget, normalizeCatalogItem, GENDERS, xenoPromptEntryText, XENO_PROMPT_DEFAULTS} from './core/xeno.js';
+import {ensureTarget, normalizeCatalogItem, GENDERS, xenoPromptEntryText, XENO_PROMPT_DEFAULTS, extractCardProtagonistProfile, applyXenoUpdateFromText} from './core/xeno.js';
 import {searchStoryMessages} from './host-tt.js';
+import {worldInfoFor, loreOptions} from './host-lore.js';
 
 export function createXenoHost({context, settings, backend, notice = () => {}}) {
   const busy = {insight: null, sync: null, restock: null};
   const userName = () => context()?.name1 || settings()?.xeno?.protagonist?.name || '主角';
+  const userPersona = () => String(context()?.powerUserSettings?.persona_description || '').slice(0, 2000);
 
   function run(kind, task) {
     if (busy[kind]) return busy[kind];
@@ -28,21 +30,130 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
   async function recentStoryText(ctx, extraNames = '') {
     const s = settings();
     const preset = activeChatPreset(s.chat);
+    const uName = userName();
     const chat = Array.isArray(ctx?.chat) ? ctx.chat : [];
-    const lines = storyLines(chat, preset, userName()).slice(-16);
+    const lines = storyLines(chat, preset, uName).slice(-16);
     const charCard = ctx?.characters?.[ctx?.characterId];
-    const cardDesc = charCard ? `【当前角色卡：${charCard.name || ''}】\n${String(charCard.description || '').slice(0, 1200)}` : '';
+    const cName = charCard?.name || '';
+    const replaceMacros = str => String(str || '')
+      .replaceAll('{{user}}', uName)
+      .replaceAll('{{char}}', cName)
+      .replace(/<user>/gi, uName)
+      .replace(/<char>/gi, cName);
+
+    const cardParts = [];
+    if (charCard) {
+      if (charCard.description) cardParts.push(replaceMacros(charCard.description).slice(0, 5000));
+      if (charCard.personality) cardParts.push('性格：' + replaceMacros(charCard.personality).slice(0, 800));
+      if (charCard.scenario) cardParts.push('场景与背景设定：' + replaceMacros(charCard.scenario).slice(0, 1500));
+      if (!lines.length && charCard.first_mes) cardParts.push('开场白：' + replaceMacros(charCard.first_mes).slice(0, 2500));
+    }
+    const cardDesc = cardParts.length ? `【当前角色卡：${cName}】\n${cardParts.join('\n')}` : '';
+
+    // Extract embedded character_book entries (especially protagonist & core character settings)
+    const rawEntries = charCard?.data?.character_book?.entries || charCard?.character_book?.entries || [];
+    const entryList = Array.isArray(rawEntries) ? rawEntries : Object.values(rawEntries || {});
+    const embeddedLoreParts = [];
+    let embeddedChars = 0;
+    for (const entry of entryList) {
+      if (!entry || entry.enabled === false || entry.disable === true) continue;
+      const comment = String(entry.comment || entry.name || '').trim();
+      const keys = Array.isArray(entry.keys || entry.key) ? (entry.keys || entry.key).join(' ') : String(entry.keys || entry.key || '');
+      const content = replaceMacros(entry.content || '').trim();
+      if (!content) continue;
+      const isRelevant = entry.constant === true
+        || /主角|男主|女主|使用者|玩家|user|外貌|身材|设定|人设|背景|状态/i.test(comment + ' ' + keys)
+        || (uName && (comment.includes(uName) || keys.includes(uName) || content.includes(uName)))
+        || (cName && (comment.includes(cName) || keys.includes(cName)));
+      if (isRelevant && embeddedChars < 6000) {
+        const snippet = content.slice(0, 1500);
+        embeddedLoreParts.push(`${comment ? `[${comment}] ` : ''}${snippet}`);
+        embeddedChars += snippet.length;
+      }
+    }
+    let activeLore = '';
+    if (preset?.lore !== false) {
+      activeLore = await worldInfoFor(context, {
+        ...loreOptions(preset || {}),
+        persona: userPersona(),
+        characters: cardDesc.slice(0, 2000),
+        texts: [uName, cName, extraNames, ...lines.slice(-6).map(r => `${r.name}: ${r.text}`)].filter(Boolean)
+      }).catch(() => '');
+    }
+    const loreBlock = [embeddedLoreParts.join('\n'), replaceMacros(activeLore).slice(0, 4000)].filter(Boolean).join('\n');
+    const fullLoreSection = loreBlock ? `【角色卡世界书与设定条目】\n${loreBlock}` : '';
+
+    const protRoute = (backend.routesHere?.() || []).find(r => roleTypeOf(r) === 'protagonist');
+    const personaParts = [];
+    if (protRoute?.name) personaParts.push(`角色App绑定主角名：${protRoute.name}`);
+    if (protRoute?.persona?.trim()) personaParts.push(`角色App主角资料：${replaceMacros(protRoute.persona).trim()}`);
+    if (protRoute?.appearance?.trim()) personaParts.push(`角色App主角外貌：${replaceMacros(protRoute.appearance).trim()}`);
+    if (userPersona().trim()) personaParts.push(`酒馆当前用户人设：${replaceMacros(userPersona()).trim()}`);
+    const personaSection = personaParts.length ? `【主角/用户人设参考（若角色卡或世界书对主角有专门设定，以角色卡设定为最高优先）】\n${personaParts.join('\n')}` : '';
+
     const storyBlock = lines.map(r => `${r.name}: ${r.text}`).join('\n');
     let recalledBlock = '';
     const endIndex = Math.max(0, chat.length - 16);
     if (endIndex > 0) {
-      const query = [extraNames, charCard?.name || '', '外貌 身高 三围 罩杯 身材 穿着 衣服 身份 发色 瞳色'].filter(Boolean).join(' ');
+      const query = [uName, extraNames, cName, '主角 外貌 身高 三围 罩杯 身材 穿着 衣服 身份 发色 瞳色'].filter(Boolean).join(' ');
       const hits = await searchStoryMessages(ctx, {query, limit: 6, endIndex, scanLimit: 3000}).catch(() => []);
       if (hits.length) {
         recalledBlock = `【早期剧情中的角色设定与状态记录（全文检索召回）】\n` + hits.map(h => `[第${h.index + 1}楼 · ${h.name}] ${h.text}`).join('\n');
       }
     }
-    return [cardDesc, recalledBlock, storyBlock].filter(Boolean).join('\n\n');
+    return [cardDesc, fullLoreSection, personaSection, recalledBlock, storyBlock ? `【最新剧情】\n${storyBlock}` : ''].filter(Boolean).join('\n\n');
+  }
+
+  /** Synchronizes the current card's protagonist appearance/profile from the open Character Card, opening floor, and `<xeno_update>` history. */
+  function syncCardProtagonist(ctx = context(), {forceOpening = false} = {}) {
+    if (!ctx || !backend) return null;
+    const cardKey = backend.cardKey();
+    const routes = backend.routesHere();
+    const cur = backend.cardState()?.xeno;
+    if (!cur || cur.protagonistCleared) return null;
+
+    // 1. If the chat already has `<xeno_update>` blocks and protagonist/targets are still unpopulated, replay them
+    const chat = Array.isArray(ctx.chat) ? ctx.chat : [];
+    let stateAfterTags = null;
+    if (!cur.protagonist.appearance && chat.length > 0) {
+      const combinedTags = chat.slice(-20).map(m => String(m?.mes || '')).filter(t => /<xeno_update\b/i.test(t)).join('\n');
+      if (combinedTags) {
+        stateAfterTags = applyXenoUpdateFromText(cur, combinedTags, {
+          routes,
+          protagonistName: ctx.name1 || '',
+          cardMembers: backend.space?.members || []
+        });
+      }
+    }
+
+    // 2. Extract protagonist profile from the active Character Card / character_book / opening message / protRoute / persona
+    const profile = extractCardProtagonistProfile(ctx, routes, cardKey);
+    const targetProt = (stateAfterTags || cur).protagonist;
+    const needsFill = forceOpening
+      || (!targetProt.name && profile.name)
+      || (!targetProt.identity && profile.identity)
+      || (!targetProt.gender && profile.gender)
+      || (!targetProt.appearance && profile.appearance)
+      || (!targetProt.bodyBuild && profile.bodyBuild)
+      || (!targetProt.physiology && profile.physiology);
+
+    if (!stateAfterTags && !needsFill) return null;
+
+    return backend.saveXeno(xeno => {
+      const next = stateAfterTags ? {...xeno, protagonist: stateAfterTags.protagonist, targets: stateAfterTags.targets, targetPool: stateAfterTags.targetPool} : xeno;
+      const p = next.protagonist;
+      if (profile.name && (!p.name || p.name === '主角')) p.name = profile.name;
+      if (profile.identity && (forceOpening || !p.identity)) p.identity = profile.identity;
+      if (!next.possession?.active && !next.fusion?.active) {
+        if (profile.gender && (forceOpening || !p.gender)) p.gender = profile.gender;
+        if (profile.appearance && (forceOpening || !p.appearance)) p.appearance = profile.appearance;
+        if (profile.bodyBuild && (forceOpening || !p.bodyBuild)) p.bodyBuild = profile.bodyBuild;
+        if (profile.physiology && (forceOpening || !p.physiology)) p.physiology = profile.physiology;
+      }
+      if (profile.outerwear && !p.outfit.outerwearItemId && (forceOpening || !p.outfit.outerwear)) p.outfit.outerwear = profile.outerwear;
+      if (profile.underwear && !p.outfit.underwearItemId && (forceOpening || !p.outfit.underwear)) p.outfit.underwear = profile.underwear;
+      return next;
+    });
   }
 
   /** 1. 附身之术 · 洞察推荐：扫描当前剧情环境，生成《附身价值与颜值评估报告》并自动登记目标角色 */
@@ -309,6 +420,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
   return {
     insightRecommend,
     syncFromStory,
+    syncCardProtagonist,
     mallRestock,
     busy: kind => kind ? !!busy[kind] : !!(busy.insight || busy.sync || busy.restock)
   };
