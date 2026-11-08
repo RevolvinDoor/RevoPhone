@@ -7,8 +7,17 @@
 
 import {createView, esc, heading} from './common.js';
 import {icon} from './icons.js';
-import {getEntity, formatVoiceRoleLabel} from '../core/xeno.js';
+import {getEntity, formatVoiceRoleLabel, activeXenoPreset, xenoPromptEntryText, XENO_PROMPT_DEFAULTS} from '../core/xeno.js';
 import {blobToDataUrl, generateItemPreview, renderVoiceBindSelectOptions, openVoicePoolPickerDialog} from './xeno-media.js';
+import {saveFile} from '../download.js';
+
+export const MALL_ITEMS_FILE = 'revophone-mall-items';
+
+const POSE_PRESETS = [
+  ['🧍 T-pose+三视图', XENO_PROMPT_DEFAULTS.mallPosePrompt],
+  ['📐 标准站姿三视图', 'character sheet, reference sheet, multiple views, three-view drawing, front view, side view, back view, full body, standing, simple background, white background'],
+  ['✨ 单人全身展示', 'solo, full body, standing, looking at viewer, fashion showcase, simple background, high quality']
+];
 
 const SHELVES = [
   ['skin_suit', '皮躯专柜'],
@@ -49,8 +58,152 @@ export function mallApp(ctx) {
   const origDispose = v.dispose.bind(v);
   v.dispose = () => { unsubscribe?.(); origDispose(); };
 
+  function savePosePrompt(nextPoseText) {
+    const xeno = xenoState();
+    const preset = structuredClone(activeXenoPreset(xeno));
+    const entry = preset.entries.find(e => e.id === 'mallPosePrompt');
+    if (entry) {
+      entry.text = String(nextPoseText ?? '').trim();
+      entry.enabled = !!entry.text;
+    } else {
+      preset.entries.push({
+        id: 'mallPosePrompt',
+        title: '商城进货 · 商品生图姿势提示词（T-pose+三视图）',
+        scope: 'mall',
+        triggerMode: 'auto',
+        enabled: !!String(nextPoseText ?? '').trim(),
+        text: String(nextPoseText ?? '').trim()
+      });
+    }
+    api.saveXenoPreset(preset);
+  }
+
+  function serializeMallItems(items) {
+    const cleanList = (Array.isArray(items) ? items : []).map(item => {
+      const {imageData, ...rest} = item;
+      return rest;
+    });
+    return JSON.stringify({
+      format: MALL_ITEMS_FILE,
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      count: cleanList.length,
+      items: cleanList
+    }, null, 2);
+  }
+
+  function openBatchManageSheet() {
+    const xeno = xenoState();
+    const allItems = xeno.items || [];
+    const customItems = allItems.filter(i => i.source !== 'shop');
+    const initialExport = serializeMallItems(customItems.length ? customItems : allItems);
+    const d = ctx.dialog('📦 商店进货批量导入 / 导出（不含图片）', `
+      <div class="xeno-sheet-form">
+        <p class="xeno-hint">批量导出与导入仅包含商品设定文本、价格、槽位、生图 Tag 与完整 XML 设定块，<b>不包含图片数据</b>，轻量且便于批量编辑或跨设备分享。导入同 ID 商品时会自动保留本地已有的商品配图。</p>
+        <div class="xeno-row-controls" style="flex-wrap:wrap;gap:6px">
+          <button type="button" class="xeno-mini-btn primary" data-batch-export="custom">📤 导出进货单品文件（${customItems.length} 件）</button>
+          <button type="button" class="xeno-mini-btn" data-batch-export="all">📤 导出全部商品文件（${allItems.length} 件）</button>
+          <button type="button" class="xeno-mini-btn" data-batch-fill="custom">显示进货 JSON</button>
+          <button type="button" class="xeno-mini-btn" data-batch-fill="all">显示全部 JSON</button>
+        </div>
+        <label class="xeno-field-inline">
+          <span>商品 JSON 数据（可直接复制、粘贴或批量修改后点下方导入）</span>
+          <textarea class="xeno-textarea mono" rows="9" data-batch-json spellcheck="false">${esc(initialExport)}</textarea>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;margin:4px 0;font-size:12px;cursor:pointer">
+          <input type="checkbox" data-batch-replace>
+          <span>覆盖替换现有进货单品（不勾选则为增量合并/更新同 ID 商品）</span>
+        </label>
+        <input type="file" accept=".json,application/json,text/plain" data-batch-file hidden>
+        <div class="actions" style="flex-wrap:wrap;gap:6px">
+          <button type="button" class="secondary" data-batch-pick-file>📁 从 JSON 文件导入</button>
+          <button type="button" class="primary" data-batch-import-text>📥 导入上方 JSON 内容</button>
+          <button type="button" class="secondary" data-batch-close>关闭</button>
+        </div>
+      </div>
+    `);
+
+    const runImportText = rawText => {
+      let parsed;
+      try {
+        parsed = JSON.parse(String(rawText || '').replace(/^\uFEFF/, '').trim());
+      } catch {
+        throw Error('JSON 格式不正确，请检查括号与引号是否完整');
+      }
+      const list = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.items)
+        ? parsed.items
+        : (parsed && typeof parsed === 'object' && parsed.name ? [parsed] : null);
+      if (!list || !list.length) throw Error('未在 JSON 中找到有效的商品列表（items）');
+      const replaceRestock = !!d.body.querySelector('[data-batch-replace]')?.checked;
+      api.xenoAct('importItems', {items: list, replaceRestock});
+      d.close(true);
+      ctx.notify(`已批量导入 ${list.length} 件商品（不含图片，已保留本地配图）`);
+    };
+
+    const fileInput = d.body.querySelector('[data-batch-file]');
+    fileInput?.addEventListener('change', async () => {
+      const file = fileInput.files?.[0];
+      fileInput.value = '';
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const area = d.body.querySelector('[data-batch-json]');
+        if (area) area.value = text;
+        runImportText(text);
+      } catch (err) {
+        ctx.notify(err?.message || '导入失败', {error: true});
+      }
+    });
+
+    d.body.addEventListener('click', async e => {
+      if (e.target.closest('[data-batch-close]')) { d.close(null); return; }
+      if (e.target.closest('[data-batch-pick-file]')) { fileInput?.click(); return; }
+      const fillBtn = e.target.closest('[data-batch-fill]');
+      if (fillBtn) {
+        const mode = fillBtn.dataset.batchFill;
+        const targetList = mode === 'all' ? allItems : customItems;
+        const area = d.body.querySelector('[data-batch-json]');
+        if (area) area.value = serializeMallItems(targetList);
+        ctx.notify(`已切换显示${mode === 'all' ? '全部商品' : '进货单品'}（共 ${targetList.length} 件）`);
+        return;
+      }
+      const expBtn = e.target.closest('[data-batch-export]');
+      if (expBtn) {
+        const mode = expBtn.dataset.batchExport;
+        const targetList = mode === 'all' ? allItems : customItems;
+        if (!targetList.length) {
+          ctx.notify('当前没有可导出的进货单品，可点击「导出全部商品文件」', {error: true});
+          return;
+        }
+        const text = serializeMallItems(targetList);
+        const area = d.body.querySelector('[data-batch-json]');
+        if (area) area.value = text;
+        try {
+          const fileName = mode === 'all' ? '商城全部商品(无图).json' : '商城进货单品(无图).json';
+          const savedName = await saveFile(ctx.doc, new Blob([text], {type: 'application/json'}), fileName);
+          ctx.notify('已导出 ' + savedName);
+        } catch (err) {
+          ctx.notify(err?.message || '导出失败', {error: true});
+        }
+        return;
+      }
+      if (e.target.closest('[data-batch-import-text]')) {
+        try {
+          const text = d.body.querySelector('[data-batch-json]')?.value || '';
+          runImportText(text);
+        } catch (err) {
+          ctx.notify(err?.message || '导入失败', {error: true});
+        }
+      }
+    });
+  }
+
   function renderRestockPanel() {
     const busy = api.xenoBusy?.('restock');
+    const xeno = xenoState();
+    const curPosePrompt = xenoPromptEntryText(xeno, 'mallPosePrompt');
     return `
       <section class="xeno-status-card mall-restock-box">
         <header class="xeno-status-head">
@@ -58,7 +211,10 @@ export function mallApp(ctx) {
             <span class="xeno-badge target">RESTOCK</span>
             <strong>商城进货工坊（图文同步上新）</strong>
           </div>
-          <button type="button" class="xeno-mini-btn" data-action="toggle-restock">收起</button>
+          <div class="xeno-status-actions">
+            <button type="button" class="xeno-mini-btn" data-action="open-mall-batch" title="无图批量导出/导入商品 JSON">📦 批量导入/导出</button>
+            <button type="button" class="xeno-mini-btn" data-action="toggle-restock">收起</button>
+          </div>
         </header>
         <div class="xeno-form-block">
           <div class="xeno-grid-2">
@@ -108,6 +264,15 @@ export function mallApp(ctx) {
               </div>
             </div>
           </div>
+          <div class="xeno-field-inline" style="margin-top:6px">
+            <div class="xeno-row-between" style="margin-bottom:4px;flex-wrap:wrap;gap:4px">
+              <span>商品生图姿势与构图提示词（如 T-pose + 三视图，自动用于进货与商品生图）</span>
+              <div class="xeno-chip-group" style="margin:0">
+                ${POSE_PRESETS.map(([label, val]) => `<button type="button" class="xeno-mini-btn ${curPosePrompt.trim() === val ? 'primary' : ''}" data-action="set-pose-preset" data-pose="${esc(val)}">${esc(label)}</button>`).join('')}
+              </div>
+            </div>
+            <input type="text" class="xeno-input" id="mall-pose-prompt-input" data-change="save-pose-prompt" value="${esc(curPosePrompt)}" placeholder="例如：character sheet, multiple views, front view, side view, back view, t-pose, full body">
+          </div>
           <div class="xeno-row-controls">
             <button type="button" class="xeno-btn primary full" data-action="run-restock" ${busy ? 'disabled' : ''}>
               ${busy ? '✨ AI 正在设计新货并同步主图…' : '✨ AI 生成新货并同步图片上架'}
@@ -148,6 +313,7 @@ export function mallApp(ctx) {
             <span class="tb-search-ico">🔍</span>
             <input type="search" class="tb-search-input" id="mall-search-input" data-field="mall-search" value="${esc(searchQuery)}" placeholder="搜索皮躯 / 肉躯 / 高定服饰…">
           </div>
+          <button type="button" class="xeno-mini-btn" data-action="open-mall-batch" title="批量导出/导入商品（不含图片）">📦 导入/导出</button>
           <button type="button" class="tb-restock-trigger" data-action="toggle-restock">
             ${restockOpen ? '收起进货' : '+ 进货上架'}
           </button>
@@ -262,6 +428,13 @@ export function mallApp(ctx) {
 
     if (act === 'go-wardrobe') { ctx.open('wardrobe'); return; }
     if (act === 'go-xeno') { ctx.open('xeno'); return; }
+    if (act === 'open-mall-batch') { openBatchManageSheet(); return; }
+    if (act === 'set-pose-preset') {
+      restockText = v.root.querySelector('#mall-restock-text')?.value || restockText;
+      savePosePrompt(el.dataset.pose || '');
+      ctx.notify('已更新商品生图姿势提示词');
+      return;
+    }
     if (act === 'mall-shelf') { activeShelf = el.dataset.shelf; v.refresh(); return; }
     if (act === 'mall-apparel-filter') { apparelFilter = el.dataset.filter; v.refresh(); return; }
     if (act === 'toggle-free-shop') {
@@ -316,6 +489,10 @@ export function mallApp(ctx) {
     }
     if (act === 'run-restock') {
       restockText = v.root.querySelector('#mall-restock-text')?.value || '';
+      const poseInput = v.root.querySelector('#mall-pose-prompt-input');
+      if (poseInput && poseInput.value.trim() !== xenoPromptEntryText(xeno, 'mallPosePrompt').trim()) {
+        savePosePrompt(poseInput.value.trim());
+      }
       await v.busy(el, async () => {
         const created = await api.mallRestock({
           category: restockCategory,
@@ -476,6 +653,12 @@ export function mallApp(ctx) {
   v.on('change', '[data-change]', async el => {
     const act = el.dataset.change;
     if (act === 'select-mall-wearer') { api.xenoAct('selectWardrobeTarget', {key: el.value}); return; }
+    if (act === 'save-pose-prompt') {
+      restockText = v.root.querySelector('#mall-restock-text')?.value || restockText;
+      savePosePrompt(el.value);
+      ctx.notify('已保存商品生图姿势提示词（同步至「预设 · 异构」）');
+      return;
+    }
     if (act === 'restock-cat') {
       restockText = v.root.querySelector('#mall-restock-text')?.value || restockText;
       restockCategory = el.value;

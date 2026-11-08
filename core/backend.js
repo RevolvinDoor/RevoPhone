@@ -953,6 +953,41 @@ export class TTSBackend {
                     if (p.itemId) this.persistXenoImage(`item:${p.itemId}`, '').catch(() => {});
                     return xeno;
                 }
+                case 'importItems': {
+                    const incoming = Array.isArray(p.items) ? p.items : [];
+                    const replaceRestock = p.replaceRestock === true;
+                    const existingById = new Map((xeno.items || []).map(i => [i.id, i]));
+                    const existingByName = new Map((xeno.items || []).map(i => [`${i.category}:${i.name}`, i]));
+                    let list = replaceRestock
+                        ? (xeno.items || []).filter(i => i.source === 'shop')
+                        : (xeno.items || []).slice();
+                    const byId = new Map(list.map((item, idx) => [item.id, idx]));
+                    xeno.itemVoiceBindings ||= {};
+                    for (const rawItem of incoming) {
+                        if (!rawItem || typeof rawItem !== 'object') continue;
+                        const matched = (rawItem.id && existingById.get(rawItem.id)) || existingByName.get(`${rawItem.category || 'apparel'}:${rawItem.name || ''}`) || null;
+                        const item = normalizeCatalogItem({
+                            ...(matched || {}),
+                            ...rawItem,
+                            id: rawItem.id || matched?.id || ('restock_' + crypto.randomUUID()),
+                            source: rawItem.source || matched?.source || 'restock',
+                            // Never import base64 images in bulk text import; keep any existing local image
+                            imageData: matched?.imageData || ''
+                        });
+                        if (item.voiceRole) xeno.itemVoiceBindings[item.id] = item.voiceRole;
+                        if (byId.has(item.id)) {
+                            list[byId.get(item.id)] = item;
+                        } else {
+                            byId.set(item.id, list.length);
+                            list.unshift(item);
+                            // Recompute index map after unshift
+                            byId.clear();
+                            list.forEach((it, idx) => byId.set(it.id, idx));
+                        }
+                    }
+                    xeno.items = list.slice(0, 200);
+                    return xeno;
+                }
                 case 'clearPendingNote': xeno.pendingActionNote = ''; return xeno;
                 default: throw Error('未知的异构终端指令：' + action);
             }
@@ -1018,7 +1053,7 @@ export class TTSBackend {
             ['━━ 正文注入预览（当前状态实际发送内容） ━━', blocks.map(b => `【${b.key} · 深度 ${b.depth}】\n${b.text}`).join('\n\n') || '（当前没有启用的正文注入内容）'],
             ['━━ 洞察推荐扫描（点击扫描评估报告时发送） ━━', getEntry('insightPrompt')?.text || ''],
             ['━━ 从剧情同步状态栏（点击从剧情同步时发送） ━━', getEntry('syncPrompt')?.text || ''],
-            ['━━ 商城进货工作台（比例尺 + 皮躯/肉躯/服饰打版） ━━', ['scaleRule', 'skinWorkbench', 'ringWorkbench', 'apparelWorkbench'].map(k => getEntry(k)?.text || '').filter(Boolean).join('\n\n')]
+            ['━━ 商城进货工作台（比例尺 + 姿势提示词 + 皮躯/肉躯/服饰打版） ━━', ['scaleRule', 'mallPosePrompt', 'skinWorkbench', 'ringWorkbench', 'apparelWorkbench'].map(k => getEntry(k)?.text || '').filter(Boolean).join('\n\n')]
         ];
         return scenes.map(([title, body]) => `${title}\n\n${body}`).join('\n\n');
     }

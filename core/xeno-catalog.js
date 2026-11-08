@@ -127,6 +127,7 @@ export const XENO_PROMPT_DEFAULTS = Object.freeze({
     '2. 乳量范围：A罩杯（贫乳）至 H罩杯（丰满巨乳），严禁出现超过H罩杯或比头还大的畸形描写，必须符合人体工学与重力下垂感。',
     '3. 扶她阳具（如有）：疲软状态 7cm - 10cm，充血勃起状态严格限制在 15cm - 22cm 之间，粗度（直径）3.5cm - 5cm。严禁出现超过25cm、手臂粗或触手化等猎奇尺寸。'
   ].join('\n'),
+  mallPosePrompt: 'character sheet, reference sheet, multiple views, three-view drawing, front view, side view, back view, t-pose, arms outstretched, full body, standing, symmetrical, simple background, white background',
   skinWorkbench: [
     '<skin_suit_design_workbench>',
     '【活体皮躯（Skin Suit）视觉还原与创造台】',
@@ -188,6 +189,7 @@ export const DEFAULT_XENO_ENTRIES = Object.freeze([
   {id: 'insightPrompt', title: '洞察推荐 · 扫描评估提示词', scope: 'task', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.insightPrompt},
   {id: 'syncPrompt', title: '从剧情同步状态栏 · 提取提示词', scope: 'task', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.syncPrompt},
   {id: 'scaleRule', title: '商城进货 · 比例尺规范（身高/罩杯/尺寸）', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.scaleRule},
+  {id: 'mallPosePrompt', title: '商城进货 · 商品生图姿势提示词（T-pose+三视图）', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.mallPosePrompt},
   {id: 'skinWorkbench', title: '商城进货 · 活体皮躯工作台提示词', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.skinWorkbench},
   {id: 'ringWorkbench', title: '商城进货 · 活体肉躯工作台提示词', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.ringWorkbench},
   {id: 'apparelWorkbench', title: '商城进货 · 高定服饰打版工作台提示词', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.apparelWorkbench}

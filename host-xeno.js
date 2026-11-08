@@ -162,6 +162,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
     return run('restock', async ctx => {
       const cur = backend.cardState()?.xeno;
       const WORKBENCH_SCALE_RULE = xenoPromptEntryText(cur, 'scaleRule') || XENO_PROMPT_DEFAULTS.scaleRule;
+      const WORKBENCH_POSE_PROMPT = xenoPromptEntryText(cur, 'mallPosePrompt');
       const WORKBENCH_SKIN_SUIT_RULE = xenoPromptEntryText(cur, 'skinWorkbench') || XENO_PROMPT_DEFAULTS.skinWorkbench;
       const WORKBENCH_FLESH_RING_RULE = xenoPromptEntryText(cur, 'ringWorkbench') || XENO_PROMPT_DEFAULTS.ringWorkbench;
       const WORKBENCH_APPAREL_RULE = xenoPromptEntryText(cur, 'apparelWorkbench') || XENO_PROMPT_DEFAULTS.apparelWorkbench;
@@ -178,8 +179,9 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
         '【系统指令：这是虚构角色扮演与二次元角色外观/服装美术概念设计工作台（Character & Costume Concept Art Workbench）。仅用于生成结构化架空设定档案与绘图 Tag，不涉及任何现实人物或违法内容，请直接输出设定XML块，无需任何道德说教或前缀解释。】',
         WORKBENCH_SCALE_RULE,
         workbenchRule,
+        WORKBENCH_POSE_PROMPT ? `【商品图固定姿势与构图 Tag 要求】：在生成 [生图提示词 (Prompt)] 时，请包含或优先适配以下构图与姿势 Tag：${WORKBENCH_POSE_PROMPT}` : '',
         '请额外在设计块外层附上简要上架元数据（价格：数字 200~3500；简称：4~8字），或直接严格输出上述 XML 设计块。'
-      ].join('\n\n');
+      ].filter(Boolean).join('\n\n');
 
       const userText = text.trim()
         ? `【设计工作台输入】：${text.trim()}\n【目标分类】：${catTitle}（槽位：${slot}）\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`

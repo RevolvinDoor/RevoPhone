@@ -2,7 +2,7 @@
 import {esc} from './common.js';
 import {icon} from './icons.js';
 import {poolLine, VOICE_LANGUAGES} from '../core/auto-voice.js';
-import {encodePoolVoiceRef, parsePoolVoiceRef, formatVoiceRoleLabel, buildEntityPortraitPrompt, getEntity} from '../core/xeno.js';
+import {encodePoolVoiceRef, parsePoolVoiceRef, formatVoiceRoleLabel, buildEntityPortraitPrompt, getEntity, xenoPromptEntryText} from '../core/xeno.js';
 
 const ENGINE_LABELS = {
   fish: 'Fish Audio',
@@ -183,13 +183,17 @@ export async function generateItemPreview(ctx, item) {
   }
   const state = api.getState();
   const style = state.draw?.styles?.find(s => s.id === state.draw.activeStyle) || state.draw?.styles?.[0] || {artist: '', positive: '', negative: ''};
+  const poseTags = xenoPromptEntryText(state.xeno, 'mallPosePrompt').trim();
   const baseTags = item.drawPrompt || [
     item.category === 'skin_suit' || item.category === 'flesh_ring' ? '1girl, solo, full body, masterpiece' : '1girl, solo, fashion showcase',
     item.appearance,
     item.bodyBuild,
     item.summary
   ].filter(Boolean).join(', ');
-  const prompt = [style.artist, style.positive, baseTags].map(s => String(s || '').trim()).filter(Boolean).join(', ');
+  const combinedBase = poseTags && !String(baseTags).toLowerCase().includes(poseTags.slice(0, 18).toLowerCase())
+    ? `${poseTags}, ${baseTags}`
+    : baseTags;
+  const prompt = [style.artist, style.positive, combinedBase].map(s => String(s || '').trim()).filter(Boolean).join(', ');
   const negative = String(style.negative || 'lowres, bad anatomy, bad hands, text, error').trim();
 
   let result;
