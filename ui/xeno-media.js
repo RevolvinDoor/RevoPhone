@@ -95,6 +95,7 @@ export function openVoicePoolPickerDialog(ctx, {currentValue = '', onSelect} = {
     <div class="xeno-sheet-form">
       <p class="help-copy">你的「音色收藏夹」目前还是空的。可以在「角色」App 的「音色收藏夹」中手动添加、从音色列表点 ♡ 收藏，或直接导入音色库 JSON 文件。</p>
       <div class="actions">
+        <button type="button" class="secondary" data-pool-clear>清除绑定</button>
         <button type="button" class="secondary" data-pool-close>关闭</button>
         <button type="button" class="primary" data-pool-go-roles>前往「角色」App 管理收藏夹</button>
       </div>
