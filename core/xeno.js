@@ -4,9 +4,10 @@
 
 import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS, XENO_PROMPT_DEFAULTS, XENO_TRIGGER_KEYWORDS, DEFAULT_XENO_ENTRIES, defaultXenoPreset} from './xeno-catalog.js';
 import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
+import {encodeBoundVoiceRef, parseBoundVoiceRef} from './xeno-voice.js';
 import {lineEffect} from './voice-fx.js';
-import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags} from './xeno-wear.js';
-export {wearLayers, resolveWear, itemOccupant};
+import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, itemVoiceRef} from './xeno-wear.js';
+export {wearLayers, resolveWear, itemOccupant, itemVoiceRef};
 export {XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset};
 
 export const MALL_POSE_ENTRIES = Object.freeze([
@@ -211,7 +212,7 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
     predatorTail: ['none', 'hidden', 'deployed'].includes(raw?.predatorTail) ? raw.predatorTail : 'none',
     orificeMods: normalizeOrificeMods(raw?.orificeMods),
     // 当前肉体绑定的音色（可为角色名，或 pool:<engine>:<voice>:<name> 音色收藏夹引用）
-    voiceRole: clip(raw?.voiceRole, 300),
+    voiceRole: clip(raw?.voiceRole, 4000),
     // 当前角色形态图预览（存储在独立图片库，不落入 settings.json）
     portraitData: clip(raw?.portraitData, 500000),
     // Snapshot of original body parameters before possession/fusion so returning restores them cleanly
@@ -220,7 +221,7 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
       appearance: clip(raw.baseSnapshot.appearance, 1000),
       bodyBuild: clip(raw.baseSnapshot.bodyBuild, 1000),
       physiology: clip(raw.baseSnapshot.physiology, 1000),
-      voiceRole: clip(raw.baseSnapshot.voiceRole, 300)
+      voiceRole: clip(raw.baseSnapshot.voiceRole, 4000)
     } : null
   };
 }
@@ -241,7 +242,8 @@ export function normalizeCatalogItem(raw = {}) {
     storyPurchaseId: clip(raw?.storyPurchaseId, 300),
     source: ['shop', 'fusion', 'restock'].includes(raw?.source) ? raw.source : 'shop',
     sourceTargetName: clip(raw?.sourceTargetName, 80),
-    voiceRole: raw?.voiceRole !== undefined ? clip(raw.voiceRole, 300) : clip(raw?.sourceTargetName, 300),
+    voiceRole: raw?.voiceRole !== undefined ? clip(raw.voiceRole, 4000) : clip(raw?.sourceTargetName, 300),
+    voiceRoleExplicit: raw?.voiceRoleExplicit === true,
     effectKind: clip(raw?.effectKind, 40),
     gender: GENDERS.includes(raw?.gender) ? raw.gender : (category === 'skin_suit' || category === 'flesh_ring' ? '扶她' : ''),
     appearance: clip(raw?.appearance, 1000),
@@ -314,7 +316,7 @@ export function normalizeXeno(raw) {
   const itemVoiceBindings = {};
   if (raw.itemVoiceBindings && typeof raw.itemVoiceBindings === 'object') {
     for (const [k, v] of Object.entries(raw.itemVoiceBindings)) {
-      const id = clip(k, 120), val = clip(v, 300);
+      const id = clip(k, 120), val = clip(v, 4000);
       if (id && val) itemVoiceBindings[id] = val;
     }
   }
@@ -329,7 +331,8 @@ export function normalizeXeno(raw) {
     }
   }
   for (const item of existingItems) {
-    if (item.voiceRole) itemVoiceBindings[item.id] = item.voiceRole;
+    if (item.voiceRoleExplicit && !item.voiceRole) delete itemVoiceBindings[item.id];
+    else if (item.voiceRole) itemVoiceBindings[item.id] = item.voiceRole;
     else if (itemVoiceBindings[item.id]) item.voiceRole = itemVoiceBindings[item.id];
   }
   const protagonist = normalizeEntity(raw.protagonist, true);
@@ -376,7 +379,9 @@ export function normalizeXeno(raw) {
     if (!ent?.livingMount) continue;
     for (const layer of ent.livingMount.layers) {
       const item = byId.get(layer.itemId);
-      const voice = clip(item?.voiceRole || itemVoiceBindings[layer.itemId] || layer.voiceRole || item?.sourceTargetName, 300);
+      const voice = clip(item?.voiceRoleExplicit ? item.voiceRole
+        : item?.voiceRole || itemVoiceBindings[layer.itemId] || layer.voiceRole || item?.sourceTargetName, 4000);
+      if (item?.voiceRoleExplicit) layer.voiceRole = voice;
       if (voice) {
         layer.voiceRole = voice;
         itemVoiceBindings[layer.itemId] = voice;
@@ -856,6 +861,7 @@ export function encodePoolVoiceRef(fav) {
 /** Parses a `pool:<engine>:<voice>:<name>` reference back into a voice descriptor, enriched from `voicePool` when available. */
 export function parsePoolVoiceRef(ref, voicePool = []) {
   const s = String(ref || '').trim();
+  if (s.startsWith('voice:')) return parseBoundVoiceRef(s);
   if (!s.startsWith('pool:')) return null;
   const parts = s.split(':');
   const engine = parts[1] || '';
@@ -881,10 +887,40 @@ export function parsePoolVoiceRef(ref, voicePool = []) {
 /** Formats any `voiceRole` value (character name or `pool:...` favorite ref) into a human-readable label. */
 export function formatVoiceRoleLabel(ref, voicePool = []) {
   const parsed = parsePoolVoiceRef(ref, voicePool);
-  if (parsed) return `收藏音色·${parsed.name}`;
+  if (parsed) return `${String(ref).startsWith('voice:') ? '已保存音色' : '收藏音色'}·${parsed.name}`;
   return String(ref || '').trim();
 }
 
+export function captureItemVoice(ref, settings) {
+  if (!ref) return '';
+  const descriptor = parsePoolVoiceRef(ref, settings.voicePool)
+    || findRoute(settings.routes || [], ref);
+  if (descriptor && !descriptor.voice?.trim()) throw Error('该角色还没有音色，请先配音或从音色列表选择');
+  if (!descriptor?.voice) return ref;
+  return encodeBoundVoiceRef({
+    ...descriptor,
+    model: descriptor.model || settings.connections?.[descriptor.engine]?.model || '',
+    language: descriptor.language || settings.general?.defaultLanguage || 'zh'
+  });
+}
+
+export function freezeItemVoices(settings) {
+  for (const item of settings.xeno?.items || []) {
+    if (!item.voiceRole || item.voiceRole.startsWith('voice:')) continue;
+    let routes = settings.routes || [];
+    if (!item.voiceRole.startsWith('pool:')) {
+      routes = routes.filter(route => findRoute([route], item.voiceRole));
+      if (!routes.length || routes.some(route => !route.voice?.trim())
+        || new Set(routes.map(route => JSON.stringify([route.engine, route.voice,
+          route.model || settings.connections?.[route.engine]?.model || '', route.language || settings.general?.defaultLanguage || 'zh']))).size !== 1) continue;
+    }
+    const ref = captureItemVoice(item.voiceRole, {...settings, routes});
+    if (ref === item.voiceRole) continue;
+    item.voiceRole = ref;
+    item.voiceRoleExplicit = true;
+    settings.xeno.itemVoiceBindings[item.id] = ref;
+  }
+}
 /**
  * Resolves which role's voice should be used when `speakerName` speaks or thinks (`inner === true`):
  * 1. 附身之术 (Possession): 主角开口说话使用被附身目标 B 的音色；主角脑内心声 (inner) 使用主角自己的原音色。脱离附身后恢复。
@@ -994,7 +1030,7 @@ export function resolveLineRoute(settings, line) {
             model
           }
         },
-        voiceSourceRole: `收藏音色·${poolVoice.name}`
+        voiceSourceRole: formatVoiceRoleLabel(targetVoiceRole, settings?.voicePool)
       };
     }
     if (targetVoiceRole !== canonName) {
@@ -1036,7 +1072,7 @@ export function effectiveSpeakingRoutes(settings) {
               model
             }
           },
-          voiceSourceRole: `收藏音色·${poolVoice.name}`
+          voiceSourceRole: formatVoiceRoleLabel(targetVoiceRole, settings?.voicePool)
         };
       }
       if (targetVoiceRole !== r.name) {
@@ -1496,7 +1532,7 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
   if (chosenBranch === '皮躯化') {
     const suitId = `fusion_skin_${target.id}`;
     const prevSkin = next.items.find(i => i.id === suitId);
-    const boundVoice = clip(prevSkin?.voiceRole || next.itemVoiceBindings?.[suitId] || target.voiceRole || target.name, 300);
+    const boundVoice = clip(prevSkin?.voiceRole || next.itemVoiceBindings?.[suitId] || target.voiceRole || target.name, 4000);
     const item = normalizeCatalogItem({
       id: suitId,
       name: `${target.name}·活体转化皮躯`,
@@ -1525,7 +1561,7 @@ export function xenoReleaseFusion(state, branch = '正常分离') {
   } else if (chosenBranch === '肉躯化') {
     const ringId = `fusion_ring_${target.id}`;
     const prevRing = next.items.find(i => i.id === ringId);
-    const boundVoice = clip(prevRing?.voiceRole || next.itemVoiceBindings?.[ringId] || target.voiceRole || target.name, 300);
+    const boundVoice = clip(prevRing?.voiceRole || next.itemVoiceBindings?.[ringId] || target.voiceRole || target.name, 4000);
     const item = normalizeCatalogItem({
       id: ringId,
       name: `${target.name}·凝缩活体肉躯环`,
@@ -1747,7 +1783,7 @@ export function xenoReleaseParasite(state, {kind = 'scion', targetName = '', bra
   } else if (chosenBranch === '转化为皮躯存入衣柜') {
     const suitId = `parasite_skin_${target.id}`;
     const prevSkin = next.items.find(i => i.id === suitId);
-    const boundVoice = clip(prevSkin?.voiceRole || next.itemVoiceBindings?.[suitId] || target.voiceRole || target.name, 300);
+    const boundVoice = clip(prevSkin?.voiceRole || next.itemVoiceBindings?.[suitId] || target.voiceRole || target.name, 4000);
     const item = normalizeCatalogItem({
       id: suitId,
       name: `${target.name}·寄生同化皮躯`,
@@ -1776,7 +1812,7 @@ export function xenoReleaseParasite(state, {kind = 'scion', targetName = '', bra
   } else if (chosenBranch === '凝缩为肉躯存入衣柜') {
     const ringId = `parasite_ring_${target.id}`;
     const prevRing = next.items.find(i => i.id === ringId);
-    const boundVoice = clip(prevRing?.voiceRole || next.itemVoiceBindings?.[ringId] || target.voiceRole || target.name, 300);
+    const boundVoice = clip(prevRing?.voiceRole || next.itemVoiceBindings?.[ringId] || target.voiceRole || target.name, 4000);
     const item = normalizeCatalogItem({
       id: ringId,
       name: `${target.name}·寄生凝缩肉躯环`,
@@ -1927,7 +1963,7 @@ export function xenoApplyBodyMod(state, {targetKey = '__protagonist__', patch = 
   if (patch.physiology !== undefined) entity.physiology = clip(patch.physiology, 1000);
   if (patch.originalBody !== undefined) entity.originalBody = clip(patch.originalBody, 160);
   if (patch.currentBody !== undefined) entity.currentBody = clip(patch.currentBody, 160);
-  if (patch.voiceRole !== undefined) entity.voiceRole = clip(patch.voiceRole, 300);
+  if (patch.voiceRole !== undefined) entity.voiceRole = clip(patch.voiceRole, 4000);
   if (patch.portraitData !== undefined) entity.portraitData = clip(patch.portraitData, 500000);
   if (patch.predatorTail && ['none', 'hidden', 'deployed'].includes(patch.predatorTail)) {
     entity.predatorTail = patch.predatorTail;
@@ -1995,7 +2031,7 @@ export function xenoEquipItem(state, {targetKey = '__protagonist__', itemId, mod
     entity.livingMount.layers.push({
       itemId: item.id, kind: item.category, faceMode: mode === 'neck' ? 'neck' : 'full',
       extendMode: ['idle', 'forward', 'backward'].includes(mode) ? mode : item.category === 'flesh_ring' ? 'forward' : 'idle',
-      organOut: true, voiceRole: clip(item.voiceRole || next.itemVoiceBindings?.[item.id] || item.sourceTargetName, 300)
+      organOut: true, voiceRole: clip(itemVoiceRef(next, item), 4000)
     });
     syncWearMount(entity.livingMount);
     next.pendingActionNote = `【本轮衣柜操作：${replace ? '更换最外层' : '叠加穿戴'}】「${entity.name || '主角'}」穿上【${item.name}】，位于第 ${entity.livingMount.layers.length} 层。当前穿戴：${resolveWear(next, entity).layerText}。请依照实际层次更新最终外观、头部与音色。`;

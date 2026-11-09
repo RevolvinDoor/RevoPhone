@@ -13,6 +13,7 @@ import { normalizeCalls, buildCallRequest } from './call.js';
 import { normalizeText, activeText, customRequest, listModels, streamText, asMessages, tavernTextRequest, answerRoom, TEXT_PRESET_ID } from './llm.js';
 import {vertexSettings} from './vertex.js';
 import {wardrobeActionPlan, applyWardrobeReply} from './xeno-actions.js';
+import {captureItemVoice, freezeItemVoices} from './xeno.js';
 import {hasComicPage, compileComicPage} from './comic.js';
 import { normalizeEmbed, embedReady, embedTexts } from './embed.js';
 import { bookId, emptyBook, cleanBook, removeNode, pruneBook } from './memory.js';
@@ -120,6 +121,7 @@ export class TTSBackend {
         providers = new Providers(), cache, library, keyStore, sink, novelai, chats, indexedDB = globalThis.indexedDB, syncStorage = () => globalThis.localStorage,
         imageFetch = (...args) => globalThis.fetch(...args), soundPack = '', speech = null, tavernHeaders = () => globalThis.SillyTavern?.getContext?.()?.getRequestHeaders?.() || {} } = {}) {
         this.settings = normalizeSettings(settings);
+        freezeItemVoices(this.settings);
         validateSettings(this.settings);
         this.persist = persist;
         this.notify = notify;
@@ -419,6 +421,7 @@ export class TTSBackend {
         try {
             if (!next || typeof next !== 'object' || !Array.isArray(next.routes) || !Array.isArray(next.presets)) throw Error('设置缺少角色或预设列表');
             copy = normalizeSettings(next);
+            freezeItemVoices(copy);
             copy.scope = this.settings.scope;
             copy.routes = copy.routes.filter(route => isValidRoleName(route?.name)).map(route => ({ ...route, id: route.id || crypto.randomUUID(), name: String(route.name || '').trim() }));
             if (new Set(copy.routes.map(route => route.id)).size !== copy.routes.length) throw Error('角色 ID 不可重复');
@@ -451,7 +454,7 @@ export class TTSBackend {
     updateGeneral(patch) {
         if (!patch || typeof patch !== 'object') throw Error('设置格式无效');
         const next = this.getState();
-        for (const key of ['voiceEnabled', 'hideStoryWaves', 'storyTools', 'cacheEnabled', 'floatingEnabled', 'waveformEnabled', 'wallpaperMotion', 'stripVoice', 'voiceExample', 'autoVoice', 'voiceIsland', 'pregenerate']) if (key in patch) {
+        for (const key of ['voiceEnabled', 'hideStoryWaves', 'storyTools', 'cacheEnabled', 'floatingEnabled', 'waveformEnabled', 'wallpaperMotion', 'stripVoice', 'voiceExample', 'autoVoice', 'autoRoleInit', 'voiceIsland', 'pregenerate']) if (key in patch) {
             if (typeof patch[key] !== 'boolean') throw Error('开关设置无效'); next.general[key] = patch[key];
         }
         // 配音方式: the story model writes the voice tags itself ('inline'), or they are added after the reply ('separate').
@@ -463,7 +466,13 @@ export class TTSBackend {
             if (typeof patch.defaultLanguage !== 'string' || !patch.defaultLanguage.trim() || patch.defaultLanguage.length > 40) throw Error('默认语言无效');
             next.general.defaultLanguage = patch.defaultLanguage.trim();
         }
-        return this.save(next);
+        this.save(next);
+        if (patch.autoRoleInit === true && this.roleInitContext?.key === this.cardKey()) {
+            if (this.initializeCardRoles(this.roleInitContext.userName, this.roleInitContext.narratorName)) {
+                this.persistActiveChatXeno().catch(() => {});
+            }
+        }
+        return this.getState();
     }
     saveRoute(value) {
         const next = this.getState();
@@ -1021,6 +1030,10 @@ export class TTSBackend {
                 case 'saveItem': {
                     const idx = xeno.items.findIndex(i => i.id === p?.id);
                     const merged = idx >= 0 ? { ...xeno.items[idx], ...p } : p;
+                    if ('voiceRole' in p) {
+                        merged.voiceRole = captureItemVoice(p.voiceRole, {...this.settings, routes: this.routesHere()});
+                        merged.voiceRoleExplicit = true;
+                    }
                     const item = normalizeCatalogItem(merged);
                     if (idx >= 0) xeno.items[idx] = item;
                     else xeno.items.unshift(item);
@@ -2344,6 +2357,33 @@ export class TTSBackend {
     /** Who the picture rules name: the open card's people and the given speakers (null: everyone). */
     drawCast(speakers = []) { return drawCast(this.cardState(), this.space, speakers); }
     /** The roles that speak in a card's story belong to that card's contacts. Saved only when something changed. */
+    initializeCardRoles(userName = '', narratorName = '') {
+        const key = this.cardKey();
+        this.roleInitContext = {key, userName, narratorName};
+        if (!key || this.settings.general.autoRoleInit === false
+            || !isValidRoleName(userName) || !isValidRoleName(narratorName) || userName === narratorName
+            || Object.hasOwn(this.settings.roleInitializations || {}, key)) return false;
+        const next = this.getState();
+        for (const [name, roleType] of [[narratorName, 'narrator'], [userName, 'protagonist']]) {
+            let route = next.routes.find(row => row.name === name && (row.card || '') === key);
+            if (!route) {
+                route = normalizeRoute({id: crypto.randomUUID(), name, roleType, engine: 'fish', voice: '', model: '', language: '', card: key});
+                next.routes.push(route);
+            }
+            route.roleType = roleType;
+            if (roleType === 'protagonist') {
+                for (const other of cardRoutes(next.routes, key)) {
+                    if (other.id !== route.id && roleTypeOf(other) === 'protagonist') other.roleType = 'normal';
+                }
+            }
+        }
+        next.roleInitializations = {...next.roleInitializations, [key]: true};
+        next.xeno.protagonistCleared = false;
+        next.xeno = syncXenoWithRoutes(next.xeno, cardRoutes(next.routes, key), key);
+        this.save(next);
+        this.emit('xeno', {xeno: clone(this.cardState().xeno)});
+        return true;
+    }
     tagRoles(names, key = this.space.key, userName = '') {
         if (!key || !names?.length) return false;
         const want = [...new Set(names.map(n => String(n || '').trim()).filter(n => n && !isPlaceholderRole(n) && n !== NARRATOR))];

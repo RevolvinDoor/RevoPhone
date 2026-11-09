@@ -4,6 +4,7 @@ import {VOICE_GENDERS, VOICE_AGES, VOICE_LANGUAGES, poolLine, readPoolFile, pool
 import {ROLE_TYPES, ROLE_TYPE_OPTIONS, roleTypeOf} from '../core/routes.js';
 import {saveFile} from '../download.js';
 import {icon, halo} from './icons.js';
+import {openVoiceListPicker} from './voice-picker.js';
 
 function barcode(seed) {
   let h = 0, bars = '';
@@ -324,54 +325,13 @@ export function rolesApp(ctx) {
   });
 
   function pickVoice() {
-    const target = current, engine = target.engine, saved = api.getState().connections[engine], connection = {...saved, model: target.model || saved.model};
-    let page = 0, token = '', search = '', epoch = 0;
-    const found = new Map();
-    const favButton = id => { const on = isFavorite(engine, id); return `<button type="button" class="fav-toggle" data-fav="${esc(id)}" aria-pressed="${on}" aria-label="${on ? '取消收藏' : '收藏'}">${icon('heart', on)}</button>`; };
-    const dialog = ctx.dialog('选择音色', `<div class="field"><input class="search" type="search" placeholder="搜索音色" aria-label="搜索音色"></div><div class="actions">${btn('search', '搜索', 'secondary')}</div><div class="group" data-engine="${engine}" data-voices></div>`);
-    const load = async more => {
-      const ticket = ++epoch;
-      if (!more) { page = 0; token = ''; }
-      const list = dialog.body.querySelector('[data-voices]');
-      if (!more) list.innerHTML = '<p class="hint">正在读取…</p>';
-      try {
-        const result = await api.voices(engine, connection, {search, page, token});
-        if (!dialog.live || ticket !== epoch) return;
-        const rows = engine === 'mini' && search ? result.voices.filter(x => x.name.toLowerCase().includes(search.toLowerCase()) || x.id.includes(search)) : result.voices;
-        for (const r of rows) voiceNames.set(r.id, r.name);
-        for (const r of rows) found.set(r.id, r);
-        const html = rows.map(r => `<div class="list-row voice-choice"><button type="button" class="voice-choice-pick" data-voice="${esc(r.id)}"><span class="disc">${icon('wave')}</span><span><strong>${esc(r.name)}</strong><small class="mono">${esc(r.id)}</small></span></button>${favButton(r.id)}</div>`).join('');
-        if (!more) list.innerHTML = html || '<p class="hint">没有找到音色，可以直接填写音色 ID。</p>';
-        else { list.querySelector('[data-more]')?.remove(); list.insertAdjacentHTML('beforeend', html); }
-        if (result.more) list.insertAdjacentHTML('beforeend', '<button class="text-button" data-more>加载更多</button>');
-        token = result.token;
-        page++;
-      } catch (error) {
-        if (dialog.live && ticket === epoch) { list.innerHTML = ''; const p = ctx.doc.createElement('p'); p.className = 'error-copy'; p.textContent = error.message; list.append(p); }
-      }
-    };
-    dialog.body.addEventListener('click', e => {
-      const b = e.target.closest('button');
-      if (!b) return;
-      if (b.dataset.fav) {
-        // ♡: kept (or let go) right away, named as the list names it; gender and age guessed from that name.
-        const id = b.dataset.fav, list = [...favorites()], at = list.findIndex(f => f.engine === engine && f.voice === id);
-        if (at >= 0) list.splice(at, 1);
-        else { const r = found.get(id) || {name: id}; list.push({engine, voice: id, model: '', name: r.name, style: (r.info || '').slice(0, 120), ...guessVoice(r.name + ' ' + (r.info || ''))}); }
-        api.saveVoicePool(list);
-        b.outerHTML = favButton(id);
-        ctx.notify(at >= 0 ? '已取消收藏' : '已收藏，可以在音色收藏夹里改名字和备注');
-        return;
-      }
-      if (b.dataset.voice) {
-        target.voice = b.dataset.voice;
-        target.autoVoice = false;
-        dialog.close();
-        if (current === target) { render(); changed(); }
-      } else if (b.hasAttribute('data-more')) { b.disabled = true; load(true); }
-      else if (b.dataset.action === 'search') { search = dialog.body.querySelector('input').value.trim(); load(false); }
-    });
-    load(false);
+    const target = current;
+    openVoiceListPicker(ctx, {route: target, onSelect: voice => {
+      target.voice = voice.voice;
+      target.autoVoice = false;
+      voiceNames.set(voice.voice, voice.name);
+      if (current === target) { render(); changed(); }
+    }});
   }
 
   render();

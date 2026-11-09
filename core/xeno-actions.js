@@ -7,11 +7,11 @@ const plain = value => String(value || '')
   .replace(/<xeno_action\b[^>]*>[\s\S]*?(?:<\/xeno_action\s*>|$)/gi, '')
   .replace(/<[^>]*>/g, '');
 const wearable = item => ['skin_suit', 'flesh_ring', 'apparel'].includes(item.category);
-const negative = /(?:没有|并未|并没有|尚未|还没|不要|别再|不想|不打算|未曾|从未|打算|准备|想要|考虑|如果|假如|曾经|昨天|回忆|计划|是否|能否|能不能|可以吗|[？?])/;
+const negative = /(?:没有|并未|并没有|尚未|还没|还未|未能|并不|不能|不会|不曾|不再(?:穿|脱|戴|套|换|取)|不要|别再|不想|不打算|未曾|从未|打算|准备|想要|考虑|如果|假如|曾经|昨天|回忆|计划|是否|能否|能不能|可以吗|[？?])/;
 const verbs = {
-  equip: /穿上|穿进|穿入|套上|套进|戴上|佩戴|穿戴|装上/,
+  equip: /穿上|穿进|穿入|套上|套进|套入|戴上|佩戴|穿戴|装上/,
   replace: /换上|换成|更换|替换/,
-  remove: /脱下|脱掉|脱去|脱出|取下|卸下|卸掉|摘下/,
+  remove: /脱下|脱掉|脱去|脱出|褪下|取下|卸下|卸掉|摘下/,
   set: /收起|展开|切换|覆盖|覆面|收至|收回|显露|露出|静息|延展/
 };
 
@@ -24,7 +24,7 @@ export function matchWardrobeItems(xeno, query, {category = ''} = {}) {
     const names = [item.name, item.shortName].map(clean).filter(Boolean);
     const description = clean([item.name, item.shortName, item.appearance, item.bodyBuild, item.summary].join(' '));
     const nameScore = Math.max(0, ...names.map(name => name === needle ? 100000 + name.length
-      : name.length > 2 && needle.includes(name) ? 10000 + name.length * 10 : 0));
+      : name.length >= 2 && needle.includes(name) ? 10000 + name.length * 10 : 0));
     const score = nameScore || grams.reduce((sum, word) => sum + (description.includes(word) ? 2 : 0), 0);
     return {item, score, occupant: itemOccupant(xeno, item.id)};
   }).filter(result => result.score > 0).sort((left, right) => right.score - left.score || Number(right.item.owned) - Number(left.item.owned));
@@ -53,6 +53,7 @@ export function wardrobeActionPlan(xeno, {input = '', chat = [], balance = 0} = 
     '商店物品先报名称、价格并询问“是否购买并穿戴”，附 offer；用户明确要求购买，或紧接上次报价明确确认且价格未变，才允许 purchase。余额不足不能买，不能把未确认的商店物品写成穿上了。',
     '正文中实际完成的穿脱与设置变更（不限定用户直接命令）均须同步。询问、计划、否定、回忆、假设不执行。没有变化不输出操作块。',
     '正文完成后输出一个隐藏 JSON 数组块 <xeno_action>[...]</xeno_action>。每项字段：action 为 equip/replace/remove/set/offer/purchase/cancel；target 为“主角”或已登记姓名；itemId 必须来自下方清单；evidence 是正文中实际完成动作的原句，必须逐字一致，offer 则引用购买询问原句。query 保留用户对物品的原始描述。',
+    '必须输出可执行操作，只有外观描述、库存说明或 xeno_update 不会完成穿戴。例如正文“你穿上了银发皮躯。”，随后输出 <xeno_action>[{"action":"equip","target":"主角","itemId":"清单里的实际ID","evidence":"你穿上了银发皮躯。"}]</xeno_action>；不要照抄示例ID。',
     'remove 可省 itemId，改用 slot:"outermost" 或 "all"。set 指定 itemId，patch 仅用 skinFaceMode/fleshFaceMode:"full"或"neck"、skinOrganOut/organOut:boolean、fleshExtendMode:"idle"或"forward"或"backward"。',
     '购买后穿戴用一条 purchase 即可，不要再重复 equip；mode 可用 full/neck/idle/forward/backward。只要谈及物品，务必先依据库存判断能否执行，再写正文。',
     `当前主角：${xeno.protagonist?.name || '主角'}；目标名单：${(xeno.targets || []).map(target => target.name).join('、') || '无'}；可用余额：${balance}；商城免费：${xeno.freeShop ? '是（仍须确认购买）' : '否'}。`,
@@ -69,13 +70,69 @@ function actionEntity(state, raw) {
   return matches[0].name;
 }
 
+function narrationActions(state, source, userText) {
+  const actions = [], messages = [];
+  const narration = plain(source.replace(/<tts\b[^>]*>[\s\S]*?(?:<\/tts\s*>|$)|```[\s\S]*?(?:```|$)|<!--[\s\S]*?(?:-->|$)/gi, ''))
+    .replace(/[“「『"](?:[^”」』"\n]*[”」』"]|[^\n]*$)/g, '');
+  const actors = [
+    {key: '__protagonist__', names: [state.protagonist.name, '主角', '你', '您', '我'].filter(Boolean)},
+    ...state.targets.map(target => ({key: target.name, names: [target.name]}))
+  ];
+  for (const sentence of narration.match(/[^。！？!?\n]+[。！？!?]?/g) || []) {
+    if (negative.test(sentence) || /(?:说道|说[：:]|问道|命令道|例如|示例|举例|教程|曾|回想|将要|即将|试图|试着|想穿|想脱)/.test(sentence)) continue;
+    let lastTarget = '';
+    for (const clause of sentence.split(/[，,；;]/)) {
+      const operation = Object.entries(verbs).filter(([kind]) => kind !== 'set')
+        .map(([kind, pattern]) => ({kind, match: pattern.exec(clause)}))
+        .filter(entry => entry.match).sort((left, right) => left.match.index - right.match.index)[0];
+      if (!operation) continue;
+      const prefix = clause.slice(0, operation.match.index);
+      const subject = prefix.split(/[把将]/)[0];
+      const named = actors.flatMap(actor => actor.names.map(name => ({key: actor.key, name, index: subject.lastIndexOf(name)})))
+        .filter(actor => actor.index >= 0).sort((left, right) => right.index - left.index || right.name.length - left.name.length);
+      const target = named[0]?.key || lastTarget;
+      if (!target || /(?:让|叫|请|要求|命令|帮|替|给|为)[^，,；;]*$/.test(prefix)) continue;
+      lastTarget = target;
+      let query = clause.slice(operation.match.index + operation.match[0].length).replace(/^(?:了|着|的|那件|这件|一件|那套|这套|一套|\s)+/, '');
+      if (/^[。！!\s]*$/.test(query)) {
+        query = prefix.replace(/^(?:你|您|我|主角)/, '').replace(/^(?:将|把)/, '');
+      }
+      const category = /皮躯/.test(clause) ? 'skin_suit' : /肉躯/.test(clause) ? 'flesh_ring' : '';
+      if (operation.kind === 'remove' && /^(?:了|身上|的|最外层|外面一层|全部|所有|皮躯|肉躯|。|！|!|\s)+$/.test(query)) {
+        actions.push({action: 'remove', target, slot: /全部|所有/.test(query) ? 'all' : 'outermost', evidence: sentence.trim()});
+        continue;
+      }
+      let ranked = matchWardrobeItems(state, query, {category});
+      if (!ranked.length && /^(?:它|这件|那件|这个|那个|这套|那套|身上|最外层|外面|全部|所有|皮躯|肉躯|。|！|!|\s)*$/.test(query)) {
+        ranked = matchWardrobeItems(state, userText, {category});
+      }
+      const best = ranked[0];
+      if (!best || best.score < 4) continue;
+      if (ranked[1]?.score === best.score) {
+        messages.push('有多件同样接近的物品，请明确选择后再穿戴');
+        continue;
+      }
+      const mode = /肉躯/.test(clause) || best.item.category === 'flesh_ring'
+        ? /前方|向前/.test(clause) ? 'forward' : 'backward'
+        : /收起.*头|颈部|不.*覆面/.test(clause) ? 'neck' : 'full';
+      actions.push({action: operation.kind, target, itemId: best.item.id, mode, evidence: sentence.trim()});
+    }
+  }
+  return {actions: actions.slice(0, 20), messages};
+}
+
 export function applyWardrobeReply(state, reply, {userText = '', previousReply = '', balance = 0, operationId = '', baseline = null} = {}) {
   if (!state || state.enabled === false || state.autoWardrobe === false) return {state, messages: []};
   const source = String(reply || '').replace(/<(think|thinking|analysis)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '');
   const blocks = [...source.matchAll(/<xeno_action\b[^>]*>([\s\S]*?)<\/xeno_action\s*>/gi)];
-  if (!blocks.length) return {state, messages: []};
+  const hasOperations = blocks.some(block => {
+    try { const actions = JSON.parse(block[1]); return Array.isArray(actions) && actions.length > 0; } catch { return false; }
+  });
+  const inferred = hasOperations ? {actions: [], messages: []} : narrationActions(state, source, userText);
+  if (!blocks.length && !inferred.actions.length) return {state, messages: inferred.messages};
+  if (inferred.actions.length) blocks.unshift({1: JSON.stringify(inferred.actions)});
   let next = normalizeXeno(state), remaining = balance;
-  const messages = [], affectedKeys = new Set(), visible = plain(source);
+  const messages = [...inferred.messages], affectedKeys = new Set(), visible = plain(source);
   let index = 0;
   for (const block of blocks.slice(0, 5)) {
     let actions;

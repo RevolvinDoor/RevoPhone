@@ -21,7 +21,7 @@ export function normalizeWearMount(raw = {}) {
       faceMode: entry.faceMode === 'neck' ? 'neck' : 'full',
       extendMode: ['idle', 'forward', 'backward'].includes(entry.extendMode) ? entry.extendMode : 'idle',
       organOut: entry.organOut !== false,
-      voiceRole: text(entry.voiceRole, 300)
+      voiceRole: text(entry.voiceRole, 4000)
     });
   }
   return syncWearMount({layers});
@@ -40,6 +40,11 @@ export function syncWearMount(mount) {
 
 export function wearLayers(entity) {
   return normalizeWearMount(entity?.livingMount).layers;
+}
+
+export function itemVoiceRef(xeno, item, layer = null) {
+  if (item?.voiceRoleExplicit) return item.voiceRole || '';
+  return item?.voiceRole || xeno.itemVoiceBindings?.[item?.id] || layer?.voiceRole || item?.sourceTargetName || '';
 }
 
 export function itemOccupant(xeno, itemId) {
@@ -66,7 +71,7 @@ export function resolveWear(xeno, entity) {
     layer.kind === 'flesh_ring' ? layer.extendMode !== 'idle'
       : layer.item.gender === '扶她' || Boolean(layer.item.forwardExtension)
   )) || null;
-  const headVoice = head ? text(head.item.voiceRole || xeno.itemVoiceBindings?.[head.itemId] || head.voiceRole || head.item.sourceTargetName, 300) : '';
+  const headVoice = head ? text(itemVoiceRef(xeno, head.item, head), 4000) : '';
   const label = layer => layer ? `${layer.item.name}（第 ${layer.index + 1} 层）` : '本体';
   return {
     layers, body, head, organ, headVoice,

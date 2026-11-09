@@ -5,8 +5,8 @@
 
 import {createView, esc, heading} from './common.js';
 import {icon} from './icons.js';
-import {getEntity, effectiveEntityView, formatVoiceRoleLabel, resolveWear, itemOccupant, wearLayers} from '../core/xeno.js';
-import {blobToDataUrl, generateItemPreview, renderVoiceBindSelectOptions, openVoicePoolPickerDialog, generateEntityPortrait, openEntityPortraitDialog} from './xeno-media.js';
+import {getEntity, effectiveEntityView, formatVoiceRoleLabel, resolveWear, itemOccupant, wearLayers, itemVoiceRef} from '../core/xeno.js';
+import {blobToDataUrl, generateItemPreview, renderVoiceBindSelectOptions, openVoicePoolPickerDialog, openItemVoiceListPicker, generateEntityPortrait, openEntityPortraitDialog} from './xeno-media.js';
 
 const SLOT_NAMES = {
   skin_suit: '活体皮躯',
@@ -70,7 +70,7 @@ export function wardrobeApp(ctx) {
         <div class="wardrobe-slot-list">
           ${layers.length ? layers.map(layer => {
             const item = layer.item, isSkin = layer.kind === 'skin_suit', id = esc(item.id);
-            const voice = item.voiceRole || xeno.itemVoiceBindings?.[item.id] || layer.voiceRole || item.sourceTargetName || '';
+            const voice = itemVoiceRef(xeno, item, layer);
             return `<div class="wardrobe-slot-row equipped" data-layer-id="${id}">
               <div class="slot-head"><span class="slot-tag">第 ${layer.index + 1} 层 · ${isSkin ? '皮躯' : '肉躯'}${layer.index === layers.length - 1 ? ' · 最外层' : ''}</span>
                 <strong>${esc(item.name)}</strong><button type="button" class="xeno-mini-btn danger" data-action="unequip-slot" data-id="${id}">${layer.index === layers.length - 1 ? '脱下' : '脱至此层（含外层）'}</button></div>
@@ -80,6 +80,8 @@ export function wardrobeApp(ctx) {
                 ${renderVoiceBindSelectOptions({currentValue: voice, emptyLabel: '（未绑定，使用本体音色）', routes, voicePool})}
               </select>
               <button type="button" class="xeno-mini-btn" data-action="pick-item-fav-voice" data-id="${id}">♡ 从收藏夹选</button>
+              <button type="button" class="xeno-mini-btn" data-action="pick-item-list-voice" data-id="${id}">从列表选</button>
+              <p class="xeno-hint">音色随这件装备永久保存，换聊天或移除收藏后仍保留。</p>
               ${!isSkin ? `<div class="xeno-row-controls">${[['idle','静息'],['forward','前方延展'],['backward','后方延展']].map(([mode,label]) => `<button type="button" class="xeno-mini-btn ${layer.extendMode === mode ? 'primary' : ''}" data-action="ring-mode" data-id="${id}" data-mode="${mode}">${label}</button>`).join('')}</div>` : ''}
               <div class="xeno-row-controls">
                 ${[['full','全脸覆面'],['neck','收起本层头部']].map(([mode,label]) => `<button type="button" class="xeno-mini-btn ${layer.faceMode === mode ? 'primary' : ''}" data-action="${isSkin ? 'skin-face' : 'ring-face'}" data-id="${id}" data-mode="${mode}">${label}</button>`).join('')}
@@ -188,7 +190,7 @@ export function wardrobeApp(ctx) {
     const state = api.getState();
     const routes = (state.routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
     const voicePool = state.voicePool || [];
-    const curVoice = item.voiceRole || state.xeno?.itemVoiceBindings?.[item.id] || item.sourceTargetName || '';
+    const curVoice = itemVoiceRef(state.xeno, item);
     const d = ctx.dialog(item.name, `
       <div class="xeno-sheet-form">
         ${item.imageData ? `<img class="wardrobe-sheet-img" src="${esc(item.imageData)}" alt="">` : ''}
@@ -199,10 +201,12 @@ export function wardrobeApp(ctx) {
             <div class="xeno-row-between" style="margin-bottom:4px">
               <span>🎙️ 绑定声带音色（${item.category === 'skin_suit' ? '全脸覆面时生效' : '后方延展·全脸覆面时生效'}）</span>
               <button type="button" class="xeno-mini-btn primary" data-pick-fav-voice>♡ 从音色收藏夹选</button>
+              <button type="button" class="xeno-mini-btn" data-pick-list-voice>从列表选</button>
             </div>
             <select class="xeno-select" data-item="voiceRole">
               ${renderVoiceBindSelectOptions({currentValue: curVoice, emptyLabel: '（不切换音色，保持穿戴者本人音色）', routes, voicePool})}
             </select>
+            <p class="xeno-hint">保存这件装备的音色与模型，换聊天后仍保留；从角色选择时复制其当前音色。</p>
           </div>
         ` : ''}
         <label class="xeno-field-inline"><span>外貌特征</span><textarea class="xeno-textarea" rows="2" data-item="appearance">${esc(item.appearance)}</textarea></label>
@@ -225,9 +229,10 @@ export function wardrobeApp(ctx) {
     });
     d.body.addEventListener('click', e => {
       if (e.target.closest('[data-sheet-cancel]')) d.close(null);
-      if (e.target.closest('[data-pick-fav-voice]')) {
+      if (e.target.closest('[data-pick-fav-voice],[data-pick-list-voice]')) {
         const sel = d.body.querySelector('[data-item="voiceRole"]');
-        openVoicePoolPickerDialog(ctx, {
+        const picker = e.target.closest('[data-pick-list-voice]') ? openItemVoiceListPicker : openVoicePoolPickerDialog;
+        picker(ctx, {
           currentValue: sel?.value || '',
           onSelect: (ref, label) => {
             api.xenoAct('saveItem', {id: item.id, voiceRole: ref});
@@ -334,11 +339,12 @@ export function wardrobeApp(ctx) {
       api.xenoAct('updateMountOption', {targetKey, patch: {coatPose: el.dataset.pose}});
       return;
     }
-    if (act === 'pick-item-fav-voice') {
+    if (act === 'pick-item-fav-voice' || act === 'pick-item-list-voice') {
       const item = xeno.items.find(i => i.id === el.dataset.id);
       if (!item) return;
-      openVoicePoolPickerDialog(ctx, {
-        currentValue: item.voiceRole || xeno.itemVoiceBindings?.[item.id] || item.sourceTargetName || '',
+      const picker = act === 'pick-item-list-voice' ? openItemVoiceListPicker : openVoicePoolPickerDialog;
+      picker(ctx, {
+        currentValue: itemVoiceRef(xeno, item),
         onSelect: (ref, label) => {
           api.xenoAct('saveItem', {id: item.id, voiceRole: ref});
           ctx.notify(ref ? `已为「${item.shortName || item.name}」绑定${label}` : '已清除该装备的音色绑定');

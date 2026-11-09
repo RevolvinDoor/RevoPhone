@@ -267,6 +267,7 @@ export function settingsApp(ctx) {
         </div></details>`
       + groupTitle('手机')
       + `<div class="group">${toggle('floatingEnabled', '悬浮入口', s.general.floatingEnabled, '在酒馆里显示可以拖动的小球，点开再点一次进入手机。')}
+          ${toggle('autoRoleInit', '自动初始化角色', s.general.autoRoleInit !== false, '每张角色卡首次初始化时，把角色卡的角色设为旁白角色，把酒馆当前 user 人设设为主角。群聊选择当前发言卡，未指定时选第一个成员。保留已有音色和手动添加的其他角色；初始化后可自由修改，不会反复重置。关闭后由你手动管理角色。')}
           <div class="setting-row"><span class="row-text"><strong>按角色卡分开${help('打开后，每张角色卡（群聊是每个群）一部手机：聊天记录、朋友圈、论坛、查手机各管各的，换卡就换手机；联系人只有这张卡的角色、在这张卡剧情里说过话的角色，和在这张卡里手动加的联系人。「我」跟着酒馆给这张卡锁定的人设走。\n\n打开之前就有的聊天和动态没有归属，每张卡都看得到；不想要的可以删掉。关掉分区后，所有东西又会一起显示。')}</strong><small>${space.key ? '现在是' + esc(space.name || '这张角色卡') + (s.chat.partition === 'card' ? ' 的手机' : '') : '没有打开角色卡'}</small></span><input class="switch" type="checkbox" data-field="partition" aria-label="按角色卡分开" ${s.chat.partition === 'card' ? 'checked' : ''}></div></div>`
       + groupTitle('资料')
       + `<div class="group">${syncRows()}
@@ -296,7 +297,7 @@ export function settingsApp(ctx) {
       return;
     }
     if (key === 'voiceEnabled') { api.updateGeneral({voiceEnabled: el.checked}); await render(); return; }
-    if (['voiceEnabled', 'hideStoryWaves', 'storyTools', 'voiceIsland', 'floatingEnabled', 'waveformEnabled', 'cacheEnabled', 'wallpaperMotion', 'stripVoice', 'voiceExample', 'pregenerate'].includes(key)) { api.updateGeneral({[key]: el.checked}); if (key === 'stripVoice') await render(); }
+    if (['voiceEnabled', 'hideStoryWaves', 'storyTools', 'voiceIsland', 'floatingEnabled', 'waveformEnabled', 'cacheEnabled', 'wallpaperMotion', 'stripVoice', 'voiceExample', 'pregenerate', 'autoRoleInit'].includes(key)) { api.updateGeneral({[key]: el.checked}); if (key === 'stripVoice') await render(); }
     else if (key === 'drawEnabled') { api.saveDraw({enabled: el.checked}); await render(); }
     else if (key === 'defaultLanguage') api.updateGeneral({defaultLanguage: el.value});
     else if (key === 'volume') await api.setVolume(Number(el.value) / 100);

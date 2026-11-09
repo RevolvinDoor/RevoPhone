@@ -7,8 +7,8 @@
 
 import {createView, esc, heading} from './common.js';
 import {icon} from './icons.js';
-import {getEntity, formatVoiceRoleLabel, activeXenoPreset, xenoPromptEntryText, activeMallPoseEntryId, MALL_POSE_ENTRIES, XENO_PROMPT_DEFAULTS} from '../core/xeno.js';
-import {blobToDataUrl, generateItemPreview, renderVoiceBindSelectOptions, openVoicePoolPickerDialog} from './xeno-media.js';
+import {getEntity, formatVoiceRoleLabel, activeXenoPreset, xenoPromptEntryText, activeMallPoseEntryId, MALL_POSE_ENTRIES, XENO_PROMPT_DEFAULTS, itemVoiceRef} from '../core/xeno.js';
+import {blobToDataUrl, generateItemPreview, renderVoiceBindSelectOptions, openVoicePoolPickerDialog, openItemVoiceListPicker} from './xeno-media.js';
 import {saveFile} from '../download.js';
 
 export const MALL_ITEMS_FILE = 'revophone-mall-items';
@@ -414,8 +414,8 @@ export function mallApp(ctx) {
                   </div>
                   <p class="tb-desc">${esc(item.summary)}</p>
                   ${item.bodyBuild ? `<p class="tb-spec"><b>规格：</b>${esc(item.bodyBuild)}</p>` : ''}
-                  ${(item.category === 'skin_suit' || item.category === 'flesh_ring') && (item.voiceRole || xeno.itemVoiceBindings?.[item.id] || item.sourceTargetName)
-                    ? `<p class="tb-spec"><b>🎙️ 声带音色：</b>${esc(formatVoiceRoleLabel(item.voiceRole || xeno.itemVoiceBindings?.[item.id] || item.sourceTargetName, api.getState().voicePool || []))}（${item.category === 'skin_suit' ? '全脸覆面生效' : '后方延展·全脸覆面生效'}）</p>`
+                  ${(item.category === 'skin_suit' || item.category === 'flesh_ring') && itemVoiceRef(xeno, item)
+                    ? `<p class="tb-spec"><b>🎙️ 声带音色：</b>${esc(formatVoiceRoleLabel(itemVoiceRef(xeno, item), api.getState().voicePool || []))}（${item.category === 'skin_suit' ? '全脸覆面生效' : '后方延展·全脸覆面生效'}）</p>`
                     : ''}
                   <div class="tb-price-row">
                     <div class="tb-price-box">
@@ -615,7 +615,7 @@ export function mallApp(ctx) {
       const state = api.getState();
       const routes = (state.routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
       const voicePool = state.voicePool || [];
-      const curVoice = item.voiceRole || state.xeno?.itemVoiceBindings?.[item.id] || item.sourceTargetName || '';
+      const curVoice = itemVoiceRef(state.xeno, item);
       const d = ctx.dialog(item.name, `
         <div class="xeno-sheet-form">
           ${item.imageData ? `<img class="wardrobe-sheet-img" src="${esc(item.imageData)}" alt="">` : ''}
@@ -626,10 +626,12 @@ export function mallApp(ctx) {
               <div class="xeno-row-between" style="margin-bottom:4px">
                 <span>🎙️ 绑定声带音色（${item.category === 'skin_suit' ? '全脸覆面时生效' : '后方延展·全脸覆面时生效'}）</span>
                 <button type="button" class="xeno-mini-btn primary" data-pick-fav-voice>♡ 从音色收藏夹选</button>
+                <button type="button" class="xeno-mini-btn" data-pick-list-voice>从列表选</button>
               </div>
               <select class="xeno-select" data-mall-voice>
                 ${renderVoiceBindSelectOptions({currentValue: curVoice, emptyLabel: '（不切换音色，保持穿戴者本人音色）', routes, voicePool})}
               </select>
+              <p class="xeno-hint">音色与模型随这件装备永久保存，购买前也可以先设置。</p>
             </div>
           ` : ''}
           ${item.appearance ? `<p><b>外貌特征：</b>${esc(item.appearance)}</p>` : ''}
@@ -658,9 +660,10 @@ export function mallApp(ctx) {
         });
         d.body.addEventListener('click', e => {
           if (e.target.closest('[data-sheet-cancel]')) d.close(null);
-          if (e.target.closest('[data-pick-fav-voice]')) {
+          if (e.target.closest('[data-pick-fav-voice],[data-pick-list-voice]')) {
             const sel = d.body.querySelector('[data-mall-voice]');
-            openVoicePoolPickerDialog(ctx, {
+            const picker = e.target.closest('[data-pick-list-voice]') ? openItemVoiceListPicker : openVoicePoolPickerDialog;
+            picker(ctx, {
               currentValue: sel?.value || '',
               onSelect: (ref, label) => {
                 api.xenoAct('saveItem', {id: item.id, voiceRole: ref});

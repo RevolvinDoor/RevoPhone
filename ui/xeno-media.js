@@ -3,6 +3,8 @@ import {esc} from './common.js';
 import {icon} from './icons.js';
 import {poolLine, VOICE_LANGUAGES} from '../core/auto-voice.js';
 import {encodePoolVoiceRef, parsePoolVoiceRef, formatVoiceRoleLabel, buildEntityPortraitPrompt, getEntity, xenoMallPosePromptText} from '../core/xeno.js';
+import {encodeBoundVoiceRef} from '../core/xeno-voice.js';
+import {openVoiceListPicker, voicePickerDialog} from './voice-picker.js';
 
 const ENGINE_LABELS = {
   fish: 'Fish Audio',
@@ -28,11 +30,11 @@ export function renderVoiceBindSelectOptions({
   });
   const parsedCur = parsePoolVoiceRef(cur, voicePool);
   const extraPoolOpt = (parsedCur && !poolOpts.some(o => o.ref === cur))
-    ? `<option value="${esc(cur)}" selected>💖 收藏夹：${esc(parsedCur.name)}（${esc(ENGINE_LABELS[parsedCur.engine] || parsedCur.engine)}）</option>`
+    ? `<option value="${esc(cur)}" selected>🎙️ ${esc(formatVoiceRoleLabel(cur, voicePool))}（${esc(ENGINE_LABELS[parsedCur.engine] || parsedCur.engine)}）</option>`
     : '';
   const roleOpts = (Array.isArray(routes) ? routes : [])
     .filter(r => r?.name && r.roleKind !== 'narrator')
-    .map(r => `<option value="${esc(r.name)}" ${cur === r.name ? 'selected' : ''}>🎙️ 角色【${esc(r.name)}】${r.voice ? '（已配音）' : '（待配音）'}</option>`);
+    .map(r => `<option value="${esc(r.name)}" ${cur === r.name ? 'selected' : ''} ${r.voice?.trim() ? '' : 'disabled'}>🎙️ 角色【${esc(r.name)}】${r.voice?.trim() ? '（已配音）' : '（待配音）'}</option>`);
 
   return [
     `<option value="" ${!cur ? 'selected' : ''}>${esc(emptyLabel)}</option>`,
@@ -40,9 +42,20 @@ export function renderVoiceBindSelectOptions({
       ? `<optgroup label="💖 音色收藏夹（直接选用收藏音色）">${extraPoolOpt}${poolOpts.map(o => o.html).join('')}</optgroup>`
       : '',
     roleOpts.length
-      ? `<optgroup label="👤 角色 App（跟随角色配音）">${roleOpts.join('')}</optgroup>`
+      ? `<optgroup label="👤 角色 App（保存该角色当前音色）">${roleOpts.join('')}</optgroup>`
       : ''
   ].join('');
+}
+
+export function openItemVoiceListPicker(ctx, {currentValue = '', onSelect} = {}) {
+  const voice = parsePoolVoiceRef(currentValue, ctx.api.getState().voicePool);
+  return openVoiceListPicker(ctx, {
+    route: voice || {engine: 'fish'}, chooseEngine: true,
+    onSelect: descriptor => {
+      const ref = encodeBoundVoiceRef(descriptor);
+      onSelect?.(ref, formatVoiceRoleLabel(ref));
+    }
+  });
 }
 
 /** Opens a picker sheet showing all voices in `音色收藏夹` (`state.voicePool`) and invokes `onSelect(ref, label)`. */
@@ -88,24 +101,7 @@ export function openVoicePoolPickerDialog(ctx, {currentValue = '', onSelect} = {
     </div>
   `;
 
-  // Mount as a stacked overlay when another sheet is already open so we never close the parent sheet (`sheet?.close(null)`)
-  const screen = ctx.doc?.querySelector?.('.screen') || ctx.doc?.body;
-  const hasExistingOverlay = !!screen?.querySelector?.('.overlay');
-  let d;
-  if (hasExistingOverlay && screen) {
-    const overlay = ctx.doc.createElement('div');
-    overlay.className = 'overlay';
-    overlay.style.zIndex = '60';
-    overlay.innerHTML = `<section class="sheet" role="dialog" aria-modal="true" aria-label="从音色收藏夹选择音色"><header class="sheet-header"><h2>💖 从音色收藏夹选择音色</h2><button class="nav-button" data-sheet-close aria-label="关闭">${icon('close')}</button></header><div class="sheet-body">${html}</div></section>`;
-    screen.append(overlay);
-    const close = () => { if (overlay.isConnected) overlay.remove(); };
-    overlay.addEventListener('click', e => {
-      if (e.target === overlay || e.target.closest('[data-sheet-close]')) close();
-    });
-    d = {body: overlay.querySelector('.sheet-body'), close};
-  } else {
-    d = ctx.dialog('💖 从音色收藏夹选择音色', html);
-  }
+  const d = voicePickerDialog(ctx, '💖 从音色收藏夹选择音色', html);
 
   d.body.addEventListener('click', e => {
     if (e.target.closest('[data-pool-close]')) { d.close(null); return; }
