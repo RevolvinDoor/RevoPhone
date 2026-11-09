@@ -213,7 +213,12 @@ export async function getChatStoreJson(key, {namespace = TT_NAMESPACE} = {}) {
   const handle = await getTTChatHandle();
   if (!handle?.store?.getJson) return null;
   try {
-    return await handle.store.getJson({namespace, key: toSafeStoreKey(key)});
+    const safeKey = toSafeStoreKey(key);
+    if (typeof handle.store.listKeys === 'function') {
+      const keys = await handle.store.listKeys({namespace});
+      if (!keys.includes(safeKey)) return null;
+    }
+    return await handle.store.getJson({namespace, key: safeKey});
   } catch {
     return null;
   }
