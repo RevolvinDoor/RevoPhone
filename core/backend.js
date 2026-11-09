@@ -47,6 +47,7 @@ import {
     defaultXenoPreset, normalizeXenoPreset, activeXenoPreset, xenoPromptPlan,
     xenoStartPossession, xenoSetPossessionMode, xenoToggleOrganSync, xenoReleasePossession, xenoBodySwap,
     xenoStartFusion, xenoSetFusionMode, xenoToggleFusionController, xenoReleaseFusion, xenoRestoreFromLivingItem,
+    xenoStartParasite, xenoUpdateParasite, xenoReleaseParasite,
     xenoStartVore, xenoUpdateVore, xenoRemoveVore,
     xenoResetProtagonist, xenoApplyBodyMod, xenoApplyCognitionMod,
     xenoEquipItem, xenoUpdateMountOption, xenoUnequipSlot, xenoUseConsumable
@@ -925,6 +926,9 @@ export class TTSBackend {
                 case 'toggleFusionController': return xenoToggleFusionController(xeno);
                 case 'releaseFusion': return xenoReleaseFusion(xeno, p.branch);
                 case 'restoreLivingItem': return xenoRestoreFromLivingItem(xeno, p.itemId);
+                case 'startParasite': return xenoStartParasite(xeno, p);
+                case 'updateParasite': return xenoUpdateParasite(xeno, p);
+                case 'releaseParasite': return xenoReleaseParasite(xeno, p);
                 case 'startVore': return xenoStartVore(xeno, p);
                 case 'updateVore': return xenoUpdateVore(xeno, p);
                 case 'removeVore': return xenoRemoveVore(xeno, p);

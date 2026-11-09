@@ -18,6 +18,56 @@ export const POSSESSION_MODES = Object.freeze(['浅层共鸣', '意识共存', '
 export const POSSESSION_WAYS = Object.freeze(['洞察推荐', '近距锁定', '灵体游离']);
 export const FUSION_MODES = Object.freeze(['浅层融合', '共存融合', '完全融合', '认同融合']);
 export const FUSION_BRANCHES = Object.freeze(['正常分离', '皮躯化', '肉躯化']);
+export const PARASITE_KINDS = Object.freeze([
+  ['body', '本体化形寄生（主角本体浓缩化形为宿主器官）'],
+  ['scion', '分体子体寄生（主角在外界行动 + 植入分体子体）']
+]);
+export const PARASITE_SITES = Object.freeze([
+  ['crotch', '下体 / 阴蒂（共生肉棒化）'],
+  ['womb', '子宫 / 卵巢（巢穴核心寄生）'],
+  ['spine', '脊椎 / 脑干（神经中枢寄生）'],
+  ['surface', '体表 / 小腹（活体淫纹 / 共生外衣）'],
+  ['back_hulk', '背面巨躯寄生（分体子体专属 · 屁穴潜伏细胞 ⇄ 背面无头巨躯）']
+]);
+export const PARASITE_SITE_FORMS = Object.freeze({
+  crotch: [
+    '隐伏态（潜藏于阴蒂/耻骨内，外观仍为女性）',
+    '觉醒态（向外生长为完整共生扶她肉棒与玉囊）'
+  ],
+  womb: [
+    '静息盘踞（贴合子宫腔壁温热潜伏）',
+    '触须研磨（贴合宫颈口与G点内壁持续挑逗）',
+    '蜜液灌注（分泌高浓度共生催情蜜液改造体质）'
+  ],
+  spine: [
+    '感官潜伏（潜伏于神经束共享五感）',
+    '感官增幅（快感成倍放大 / 痛觉转化为快感）',
+    '神经接管（强制支配肢体动作与生理反射）'
+  ],
+  surface: [
+    '潜伏淫纹态（小腹浮现精美共生纹路）',
+    '敏感带缠绕（蔓延包裹乳首与私处）',
+    '共生外衣态（延展化作活体紧身衣裙覆盖全身）'
+  ],
+  back_hulk: [
+    '潜伏态（屁穴子体细胞 · 潜藏于目标后庭直肠深处）',
+    '激活态（背面无头巨躯 · 从屁穴急速分裂膨胀并将目标正面四肢没入镶嵌）'
+  ]
+});
+export const PARASITE_MODES = Object.freeze(['潜伏共生', '共生同化', '合作共生']);
+export const PARASITE_HULK_FUTA_MODES = Object.freeze([
+  '无扶她肉棒',
+  '长在目标胯下',
+  '长在巨躯胯下',
+  '双重扶她肉棒'
+]);
+export const PARASITE_RELEASE_BRANCHES = Object.freeze([
+  '正常剥离（抹除记忆并合理化）',
+  '正常剥离（保留共生记忆）',
+  '永久器官固化',
+  '转化为皮躯存入衣柜',
+  '凝缩为肉躯存入衣柜'
+]);
 export const VORE_CHANNELS = Object.freeze(['口腔', '小穴', '肛门', '阴茎口', '异化捕食尾']);
 export const VORE_LOCATIONS = Object.freeze(['胃部', '子宫巢']);
 export const VORE_STATUSES = Object.freeze(['激烈挣扎（肚皮浮现拳脚轮廓）', '无力蠕动', '沉沦高潮', '昏迷沉睡']);
@@ -251,7 +301,9 @@ export function defaultXeno() {
       releaseBranch: '正常分离'
     },
     parasite: {
-      reservedNote: '寄生之术模块预留位（待设定完成后启用）'
+      active: false,
+      bodyHost: null,
+      scions: []
     },
     items: INITIAL_MALL_ITEMS.map(item => normalizeCatalogItem(structuredClone(item))),
     itemVoiceBindings: {},
@@ -395,12 +447,55 @@ export function normalizeXeno(raw) {
       bodyOptimization: clip(raw.fusion?.bodyOptimization, 500) || base.fusion.bodyOptimization,
       releaseBranch: FUSION_BRANCHES.includes(raw.fusion?.releaseBranch) ? raw.fusion.releaseBranch : '正常分离'
     },
-    parasite: {
-      reservedNote: clip(raw.parasite?.reservedNote, 400) || base.parasite.reservedNote
-    },
+    parasite: normalizeParasiteState(raw.parasite),
     items: existingItems.slice(0, 200),
     itemVoiceBindings,
     pendingActionNote: clip(raw.pendingActionNote, 1000)
+  };
+}
+
+export function parasiteSiteLabel(siteKey) {
+  return PARASITE_SITES.find(([k]) => k === siteKey)?.[1] || '共生部位';
+}
+
+export function normalizeParasiteEntry(raw = {}, forceKind = '') {
+  const kind = (forceKind || raw?.kind) === 'body' ? 'body' : 'scion';
+  const validSites = PARASITE_SITES.map(([k]) => k).filter(k => kind === 'scion' || k !== 'back_hulk');
+  const site = validSites.includes(raw?.site) ? raw.site : (kind === 'scion' && raw?.site === 'back_hulk' ? 'back_hulk' : 'crotch');
+  const forms = PARASITE_SITE_FORMS[site] || PARASITE_SITE_FORMS.crotch;
+  const form = forms.includes(raw?.form) ? raw.form : forms[0];
+  const mode = PARASITE_MODES.includes(raw?.mode) ? raw.mode : '潜伏共生';
+  const hulkFutaMode = PARASITE_HULK_FUTA_MODES.includes(raw?.hulkFutaMode) ? raw.hulkFutaMode : '长在目标胯下';
+  const hulkAppearance = clip(raw?.hulkAppearance, 300);
+  return {
+    id: clip(raw?.id, 80) || crypto.randomUUID(),
+    kind,
+    targetName: clip(raw?.targetName, 80),
+    site,
+    form,
+    mode,
+    hulkFutaMode,
+    hulkAppearance
+  };
+}
+
+export function normalizeParasiteState(raw = {}) {
+  if (!raw || typeof raw !== 'object') return {active: false, bodyHost: null, scions: []};
+  const bodyHost = raw.bodyHost && typeof raw.bodyHost === 'object' && clip(raw.bodyHost.targetName, 80)
+    ? normalizeParasiteEntry(raw.bodyHost, 'body')
+    : null;
+  const scions = [];
+  const seenTargets = new Set();
+  for (const s of Array.isArray(raw.scions) ? raw.scions.slice(0, 30) : []) {
+    const norm = normalizeParasiteEntry(s, 'scion');
+    if (!norm.targetName || !isValidRoleName(norm.targetName) || seenTargets.has(norm.targetName)) continue;
+    seenTargets.add(norm.targetName);
+    scions.push(norm);
+  }
+  return {
+    active: Boolean(bodyHost || scions.length),
+    bodyHost,
+    scions
   };
 }
 
@@ -517,13 +612,14 @@ export function extractXenoSession(xeno) {
     targetPool: (norm.targetPool || []).map(stripEntityImg),
     possession: structuredClone(norm.possession),
     fusion: structuredClone(norm.fusion),
+    parasite: structuredClone(norm.parasite),
     pendingActionNote: norm.pendingActionNote
   };
 }
 
 export function cleanBaselineProtagonist(prot, state = null) {
   const p = normalizeEntity(prot, true);
-  const snap = (state?.possession?.active || state?.fusion?.active || p.baseSnapshot) ? p.baseSnapshot : null;
+  const snap = (state?.possession?.active || state?.fusion?.active || state?.parasite?.bodyHost || p.baseSnapshot) ? p.baseSnapshot : null;
   return normalizeEntity({
     id: '__protagonist__',
     name: p.name,
@@ -569,6 +665,7 @@ export function mergeXenoSession(globalXeno, session = null, cardKey = '') {
     targetPool: [...mergedPoolMap.values()],
     possession: s.possession ?? fresh.possession,
     fusion: s.fusion ?? fresh.fusion,
+    parasite: s.parasite ?? fresh.parasite,
     pendingActionNote: s.pendingActionNote ?? ''
   });
 }
@@ -1004,6 +1101,68 @@ export function effectiveEntityView(xeno, entity) {
     physiology = `${physiology}；【孔洞活性异化：${activeOrifices.join('、')}】`;
   }
 
+  // Parasitism status overlay for protagonist and host targets
+  const para = xeno.parasite || {active: false, bodyHost: null, scions: []};
+  let currentBody = e.currentBody;
+  let changeReason = e.changeReason;
+  let hostingState = e.hostingState;
+  if (e.id === '__protagonist__') {
+    if (para.bodyHost?.targetName) {
+      const bh = para.bodyHost;
+      const sLabel = parasiteSiteLabel(bh.site);
+      currentBody = `化形寄生于【${bh.targetName}】的${sLabel}（${bh.form}）`;
+      changeReason = `本体化形寄生（宿主：${bh.targetName} · ${bh.mode}）`;
+      hostingState = `本体已浓缩化形为【${bh.targetName}】的共生器官，100%自主意识与全感官共享`;
+    } else if (para.scions?.length) {
+      const hostSummary = para.scions.map(s => `${s.targetName}[${s.site === 'back_hulk' ? (s.form.startsWith('激活态') ? '背面巨躯激活' : '屁穴细胞潜伏') : parasiteSiteLabel(s.site).split('（')[0]}]`).join('、');
+      hostingState = `${hostingState ? hostingState + ' ｜ ' : ''}分体子体寄生中（宿主：${hostSummary}；主角保有最高远程控制权）`;
+    }
+  } else if (e.name) {
+    const bh = para.bodyHost?.targetName === e.name ? para.bodyHost : null;
+    const sc = (para.scions || []).find(s => s.targetName === e.name) || null;
+    if (bh) {
+      const sLabel = parasiteSiteLabel(bh.site);
+      if (bh.site === 'crotch' && bh.form.startsWith('觉醒态')) {
+        gender = '扶她';
+        physiology = `${physiology}；【本体化形寄生·共生扶她肉棒（觉醒态 · ${bh.mode}）：主角本体已化形为长在${e.name}胯下的饱满扶她阴茎与玉囊，与宿主血肉神经相连，主角可自行控制充血勃起、跳动与射精】`;
+      } else {
+        physiology = `${physiology}；【本体化形寄生（${sLabel} · ${bh.form} · ${bh.mode}）：主角本体化形融合于此部位，保有独立自主活动力并与宿主全感官共享】`;
+      }
+      changeReason = `被主角本体化形寄生（${sLabel} · ${bh.mode}）`;
+    }
+    if (sc) {
+      const sLabel = parasiteSiteLabel(sc.site);
+      if (sc.site === 'back_hulk') {
+        if (sc.form.startsWith('激活态')) {
+          if (sc.hulkFutaMode === '长在目标胯下' || sc.hulkFutaMode === '双重扶她肉棒') {
+            gender = '扶她';
+          }
+          const hulkLook = sc.hulkAppearance || `衍生自${e.name}自身特征的庞大无头肉体躯干`;
+          const futaDetail = sc.hulkFutaMode === '长在目标胯下'
+            ? `扶她肉棒与玉囊直接生长在正前方被镶嵌的${e.name}自己胯下，随巨躯步伐垂挂晃动`
+            : sc.hulkFutaMode === '长在巨躯胯下'
+            ? `粗壮扶她肉棒生长在身后无头巨躯胯下基部，可向上顶入正前方${e.name}的小穴/屁穴持续抽插或随巨躯挺腰对外侵犯`
+            : sc.hulkFutaMode === '双重扶她肉棒'
+            ? `${e.name}自身胯下与身后无头巨躯胯下同时生长出饱满扶她肉棒`
+            : '无额外扶她肉棒，完全展露原本女性下体';
+          appearance = `【背面无头巨躯镶嵌（巨躯外观：${hulkLook}）】屁穴内的子体细胞已从后庭分裂膨胀为庞大无头巨躯，将${e.name}从背后正面镶嵌于巨躯胸腹正中央（双臂向后没入巨躯肩胸肉穴、双腿大开向后没入巨躯大腿根肉腔无缝相连；头部、双乳、腰腹与下体完全正面朝外裸露）｜ ${appearance}`;
+          physiology = `${physiology}；【背面无头巨躯激活态（${sc.mode} · 扶她肉棒：${sc.hulkFutaMode}）：${futaDetail}；相连后${e.name}拥有活体巨躯控制权，控制巨躯的四肢躯干就像控制自己原本身体一样自然流畅，但主角拥有更高控制权可随时凭意念压制或接管】`;
+          currentBody = `${e.originalBody || e.name + '的肉体'}（正面四肢没入镶嵌于背面无头巨躯胸腹中央）`;
+          changeReason = `分体子体寄生·背面无头巨躯激活态（${sc.mode}）`;
+        } else {
+          physiology = `${physiology}；【背面巨躯寄生·屁穴潜伏态（${sc.mode}）：分体子体浓缩为活性子体细胞潜伏寄生于${e.name}的屁穴（后庭直肠）深处，保持温热脉动与神经连接，激活时可随时从后庭急速分裂生长为背面无头巨躯】`;
+          changeReason = `分体子体寄生·屁穴子体细胞潜伏中（${sc.mode}）`;
+        }
+      } else {
+        if (sc.site === 'crotch' && sc.form.startsWith('觉醒态')) {
+          gender = '扶她';
+        }
+        physiology = `${physiology}；【分体子体寄生（${sLabel} · ${sc.form} · ${sc.mode}）：主角植入的分体子体寄生于此，主角可随时远程操控子体施加刺激与支配】`;
+        changeReason = `分体子体寄生（${sLabel} · ${sc.mode}）`;
+      }
+    }
+  }
+
   const skinText = skin
     ? `${skin.name}（${e.livingMount.skinFaceMode === 'full' ? '全脸覆面' : '褪至颈部露原貌'} · ${e.livingMount.skinOrganOut ? '器官释出' : '器官收纳'}）`
     : '未穿戴';
@@ -1047,9 +1206,9 @@ export function effectiveEntityView(xeno, entity) {
     physiology,
     // 8 detail fields
     originalBody: e.originalBody,
-    currentBody: e.currentBody,
-    changeReason: e.changeReason,
-    hostingState: e.hostingState,
+    currentBody,
+    changeReason,
+    hostingState,
     livingMountText: `皮躯：${skinText} ｜ 肉躯：${ringText}`,
     outfitText: `外搭：${e.outfit.outerwear || '无'}${/风衣/.test(e.outfit.outerwear) ? (e.outfit.coatPose === 'open' ? '（展开姿态）' : '（遮蔽形态）') : ''} ｜ 内衣：${e.outfit.underwear || '无'} ｜ 遮挡：${e.outfit.privacyCover || '无'} ｜ 饰品：${e.outfit.accessories || '无'}`,
     voreText,
@@ -1445,6 +1604,236 @@ export function xenoRestoreFromLivingItem(state, itemId) {
 
 // ==================== 3. 丸吞之术 Operations ====================
 
+export function xenoStartParasite(state, {
+  kind = 'scion',
+  targetName,
+  site = 'crotch',
+  form = '',
+  mode = '潜伏共生',
+  hulkFutaMode = '长在目标胯下',
+  hulkAppearance = ''
+} = {}) {
+  const next = normalizeXeno(state);
+  const target = ensureTarget(next, targetName);
+  const actualKind = site === 'back_hulk' ? 'scion' : (kind === 'body' ? 'body' : 'scion');
+  const entry = normalizeParasiteEntry({
+    kind: actualKind,
+    targetName: target.name,
+    site,
+    form,
+    mode,
+    hulkFutaMode,
+    hulkAppearance
+  }, actualKind);
+
+  const modeNote = {
+    '潜伏共生': '宿主尚未察觉独立寄生意识，将身体异变合理化为自身奇异反应',
+    '共生同化': '宿主在认知与生理上将寄生体视为天生不可分割的一部分并产生强烈依赖',
+    '合作共生': '宿主清楚知晓主角/子体存在，双方意识互通并在日常、战斗与欢愉中默契配合'
+  }[entry.mode] || '';
+
+  if (actualKind === 'body') {
+    if (next.possession.active) next.possession.active = false;
+    if (next.fusion.active) next.fusion.active = false;
+    if (!next.protagonist.baseSnapshot) {
+      next.protagonist.baseSnapshot = {
+        gender: next.protagonist.gender,
+        appearance: next.protagonist.appearance,
+        bodyBuild: next.protagonist.bodyBuild,
+        physiology: next.protagonist.physiology,
+        voiceRole: next.protagonist.voiceRole
+      };
+    }
+    next.parasite.bodyHost = entry;
+    next.parasite.active = true;
+    next.selectedTarget = target.name;
+    const sLabel = parasiteSiteLabel(entry.site);
+    next.pendingActionNote = `【本轮异构终端操作：发动本体化形寄生】主角将自身原始本体浓缩化形，直接融入「${target.name}」的【${sLabel}】，当前形态为「${entry.form}」，共生状态为「${entry.mode}」（${modeNote}）。主角作为该共生部位保有100%自主活动能力并与宿主全感官共享。`;
+    return next;
+  }
+
+  // 分体子体寄生 (scion)
+  next.parasite.scions = [
+    entry,
+    ...(next.parasite.scions || []).filter(s => s.targetName !== target.name)
+  ];
+  next.parasite.active = true;
+  next.selectedTarget = target.name;
+  const sLabel = parasiteSiteLabel(entry.site);
+  if (entry.site === 'back_hulk') {
+    const isActivated = entry.form.startsWith('激活态');
+    const hulkLook = entry.hulkAppearance || `衍生自${target.name}自身特征的无头肉体躯干`;
+    next.pendingActionNote = isActivated
+      ? `【本轮异构终端操作：分体子体寄生 · 背面无头巨躯展开】寄生在「${target.name}」屁穴内的分体子体细胞从后庭疯狂分裂涌出，在她身后急速膨胀生长为一具庞大的【无头活体巨躯】（外观：${hulkLook}；扶她肉棒设置：${entry.hulkFutaMode}；共生状态：${entry.mode}），将「${target.name}」从背后正面镶嵌于巨躯胸腹正中央（四肢向后没入巨躯肉腔无缝相连，头部、双乳、腰腹与下体正面完全裸露）。相连后「${target.name}」控制活体巨躯就像控制自己原本身体一样自然流畅，但主角拥有高于她的最高控制权，可随时凭意念压制或接管！`
+      : `【本轮异构终端操作：分体子体寄生 · 植入屁穴潜伏子体细胞】主角在「${target.name}」的屁穴（后庭直肠）深处植入了【背面巨躯分体子体细胞】（当前为潜伏态，共生状态：${entry.mode}），在直肠内壁保持温热脉动与神经直连，随时可响应召唤从屁穴分裂膨胀为背面无头巨躯。`;
+  } else {
+    next.pendingActionNote = `【本轮异构终端操作：发动分体子体寄生】主角本体保持在外界自由活动，同时将分裂出的【寄生子体】植入「${target.name}」的【${sLabel}】，当前形态为「${entry.form}」，共生状态为「${entry.mode}」（${modeNote}）。主角可在外界与她互动的同时远程操控体内子体。`;
+  }
+  return next;
+}
+
+export function xenoUpdateParasite(state, {kind = 'scion', targetName = '', patch = {}} = {}) {
+  const next = normalizeXeno(state);
+  const isBody = kind === 'body' && next.parasite.bodyHost && (!targetName || next.parasite.bodyHost.targetName === targetName);
+  const entry = isBody
+    ? next.parasite.bodyHost
+    : (next.parasite.scions || []).find(s => s.targetName === (targetName || next.selectedTarget));
+  if (!entry) return next;
+
+  const prevForm = entry.form;
+  const merged = normalizeParasiteEntry({
+    ...entry,
+    ...patch,
+    form: patch.site && patch.site !== entry.site && !patch.form
+      ? (PARASITE_SITE_FORMS[patch.site]?.[0] || '')
+      : (patch.form ?? entry.form)
+  }, isBody ? 'body' : 'scion');
+
+  if (isBody) {
+    next.parasite.bodyHost = merged;
+  } else {
+    next.parasite.scions = next.parasite.scions.map(s => s.targetName === merged.targetName ? merged : s);
+  }
+  const sLabel = parasiteSiteLabel(merged.site);
+  if (!isBody && merged.site === 'back_hulk') {
+    const hulkLook = merged.hulkAppearance || `衍生自${merged.targetName}自身特征的无头肉体躯干`;
+    if (prevForm !== merged.form) {
+      next.pendingActionNote = merged.form.startsWith('激活态')
+        ? `【本轮异构终端操作：激活背面无头巨躯】潜伏在「${merged.targetName}」屁穴深处的子体细胞瞬间苏醒，从后庭疯狂分裂涌出并在她身后急速生长为庞大的【无头活体巨躯】（外观：${hulkLook}；扶她肉棒：${merged.hulkFutaMode}；共生状态：${merged.mode}），将她四肢向后没入镶嵌在巨躯胸腹正前方！她控制巨躯如同控制自己身体般自然，而主角握有随时覆盖的最高控制权。`
+        : `【本轮异构终端操作：关闭并收回背面巨躯】「${merged.targetName}」身后的庞大无头巨躯迅速解构缩小，顺着她的屁穴重新钻回后庭直肠深处，还原为潜伏态的子体细胞（共生状态：${merged.mode}）。`;
+    } else {
+      next.pendingActionNote = `【本轮异构终端操作：调整背面巨躯寄生状态】已更新「${merged.targetName}」的背面巨躯寄生设定（当前形态：${merged.form}；扶她肉棒位置：${merged.hulkFutaMode}；巨躯外观：${hulkLook}；共生状态：${merged.mode}）。`;
+    }
+  } else {
+    next.pendingActionNote = `【本轮异构终端操作：切换寄生状态】「${merged.targetName}」的${isBody ? '本体化形寄生' : '分体子体寄生'}已更新为：部位【${sLabel}】、形态【${merged.form}】、共生状态【${merged.mode}】。`;
+  }
+  return next;
+}
+
+export function xenoReleaseParasite(state, {kind = 'scion', targetName = '', branch = '正常剥离（抹除记忆并合理化）'} = {}) {
+  const next = normalizeXeno(state);
+  const isBody = kind === 'body' && next.parasite.bodyHost && (!targetName || next.parasite.bodyHost.targetName === targetName);
+  const entry = isBody
+    ? next.parasite.bodyHost
+    : (next.parasite.scions || []).find(s => s.targetName === (targetName || next.selectedTarget));
+  if (!entry) return next;
+
+  const target = ensureTarget(next, entry.targetName);
+  const chosenBranch = PARASITE_RELEASE_BRANCHES.includes(branch) ? branch : PARASITE_RELEASE_BRANCHES[0];
+
+  if (isBody) {
+    if (next.protagonist.baseSnapshot) {
+      next.protagonist.gender = next.protagonist.baseSnapshot.gender;
+      next.protagonist.appearance = next.protagonist.baseSnapshot.appearance;
+      next.protagonist.bodyBuild = next.protagonist.bodyBuild || next.protagonist.baseSnapshot.bodyBuild;
+      next.protagonist.physiology = next.protagonist.baseSnapshot.physiology;
+      next.protagonist.voiceRole = next.protagonist.baseSnapshot.voiceRole || '';
+      next.protagonist.baseSnapshot = null;
+    }
+    next.protagonist.currentBody = next.protagonist.originalBody;
+    next.protagonist.changeReason = `解除本体化形寄生（${chosenBranch}）`;
+    next.protagonist.hostingState = '未离体';
+    next.parasite.bodyHost = null;
+  } else {
+    next.parasite.scions = (next.parasite.scions || []).filter(s => s.targetName !== entry.targetName);
+  }
+  next.parasite.active = Boolean(next.parasite.bodyHost || next.parasite.scions.length);
+
+  if (chosenBranch === '永久器官固化') {
+    const hadFuta = (entry.site === 'crotch' && entry.form.startsWith('觉醒态'))
+      || (entry.site === 'back_hulk' && (entry.hulkFutaMode === '长在目标胯下' || entry.hulkFutaMode === '双重扶她肉棒'));
+    if (hadFuta) target.gender = '扶她';
+    const solidDesc = entry.site === 'crotch'
+      ? '胯下共生扶她肉棒与玉囊已永久固化为天生肉体器官'
+      : entry.site === 'womb'
+      ? '子宫巢穴与高敏催情腺体已永久固化为天生体质'
+      : entry.site === 'spine'
+      ? '感官增幅神经回路已永久固化为天生敏感体质'
+      : entry.site === 'surface'
+      ? '小腹活体淫纹与敏感带已永久烙印固化于肌肤表面'
+      : `屁穴巨躯共生神经与${hadFuta ? '胯下扶她肉棒' : '高敏后庭构造'}已永久固化为自身肉体特征`;
+    if (!target.physiology.includes(solidDesc)) {
+      target.physiology = `${target.physiology ? target.physiology + '；' : ''}【寄生永久固化：${solidDesc}】`;
+    }
+    target.currentBody = target.originalBody;
+    target.changeReason = `寄生解除·永久器官固化（${solidDesc}）`;
+    target.hostingState = '本人意识主导（已将共生器官视为天生身体）';
+    next.pendingActionNote = `【本轮异构终端操作：解除寄生 · 永久器官固化】已解除对「${target.name}」的寄生，但共生期间的特征（${solidDesc}）已永久固化为「${target.name}」自己的天生肉体特征！`;
+  } else if (chosenBranch === '转化为皮躯存入衣柜') {
+    const suitId = `parasite_skin_${target.id}`;
+    const prevSkin = next.items.find(i => i.id === suitId);
+    const boundVoice = clip(prevSkin?.voiceRole || next.itemVoiceBindings?.[suitId] || target.voiceRole || target.name, 300);
+    const item = normalizeCatalogItem({
+      id: suitId,
+      name: `${target.name}·寄生同化皮躯`,
+      shortName: `${target.name}皮躯`,
+      category: 'skin_suit',
+      slot: 'skin_suit',
+      price: 0,
+      owned: true,
+      source: 'fusion',
+      sourceTargetName: target.name,
+      voiceRole: boundVoice,
+      imageData: prevSkin?.imageData || '',
+      gender: target.gender || '扶她',
+      appearance: target.appearance,
+      bodyBuild: target.bodyBuild,
+      physiology: target.physiology,
+      summary: `由「${target.name}」深度寄生同化转化的完整人形活体皮躯（已存入衣柜）`,
+      rawDesign: `<skin_suit_design name="${target.name}·寄生同化皮躯">\n[外观视觉还原]：${target.appearance}\n[体态参数]：${target.bodyBuild}\n[扶她生理构造]：${target.physiology}\n[穿戴接口与机能]：由内部寄生彻底同化生成的活体皮躯，背部脊椎隐形开口穿入，支持全脸覆面与露原貌。\n</skin_suit_design>`
+    });
+    if (boundVoice) next.itemVoiceBindings[suitId] = boundVoice;
+    next.items = [item, ...next.items.filter(i => i.id !== suitId)];
+    target.currentBody = `已转化为皮躯（${item.name}）`;
+    target.changeReason = '寄生同化·转化为皮躯（已存入衣柜）';
+    target.hostingState = '意识陷入永久无意识沉睡';
+    next.pendingActionNote = `【本轮异构终端操作：寄生躯壳转化 · 皮躯化】由内彻底同化「${target.name}」的躯体，将其转化为一件完整的活体【皮躯】存入衣柜。`;
+  } else if (chosenBranch === '凝缩为肉躯存入衣柜') {
+    const ringId = `parasite_ring_${target.id}`;
+    const prevRing = next.items.find(i => i.id === ringId);
+    const boundVoice = clip(prevRing?.voiceRole || next.itemVoiceBindings?.[ringId] || target.voiceRole || target.name, 300);
+    const item = normalizeCatalogItem({
+      id: ringId,
+      name: `${target.name}·寄生凝缩肉躯环`,
+      shortName: `${target.name}肉躯`,
+      category: 'flesh_ring',
+      slot: 'flesh_ring',
+      price: 0,
+      owned: true,
+      source: 'fusion',
+      sourceTargetName: target.name,
+      voiceRole: boundVoice,
+      imageData: prevRing?.imageData || '',
+      gender: '扶她',
+      ringAppearance: `由${target.name}被寄生躯体凝缩而成的温热活体肉环`,
+      forwardExtension: `向前方增殖重构出完整扶她肉棒（承载${target.name}的生理特征）`,
+      backwardExtension: `向后方全身蔓延包裹，重现「${target.name}」的外貌与体态（${target.appearance}；${target.bodyBuild}）`,
+      appearance: target.appearance,
+      bodyBuild: target.bodyBuild,
+      physiology: target.physiology,
+      summary: `由「${target.name}」深度寄生凝缩而成的活体肉躯环（已存入衣柜）`,
+      rawDesign: `<flesh_ring_design name="${target.name}·寄生凝缩肉躯环">\n[静息环体外观]：由「${target.name}」凝缩而成的温热肉环。\n[前方延展·器官重构]：向前方延伸重构肉棒。\n[后方延展·躯体重构]：${target.appearance}；${target.bodyBuild}\n</flesh_ring_design>`
+    });
+    if (boundVoice) next.itemVoiceBindings[ringId] = boundVoice;
+    next.items = [item, ...next.items.filter(i => i.id !== ringId)];
+    target.currentBody = `已凝缩为肉躯环（${item.name}）`;
+    target.changeReason = '寄生同化·凝缩为肉躯（已存入衣柜）';
+    target.hostingState = '意识陷入永久无意识沉睡';
+    next.pendingActionNote = `【本轮异构终端操作：寄生躯壳转化 · 肉躯化】将「${target.name}」的躯体凝缩为一枚环状活体道具【肉躯】存入衣柜。`;
+  } else {
+    const keepMem = chosenBranch.includes('保留');
+    target.currentBody = target.originalBody;
+    target.changeReason = `正常主导（寄生已剥离 · ${keepMem ? '保留共生记忆' : '认知合理化抹除'}）`;
+    target.hostingState = '本人意识主导';
+    if (!keepMem) {
+      target.cognitionState.fakeMemory = '只觉得刚才身体一阵奇异的温热酥麻，仿佛做了一场逼真的春梦，一切已恢复正常';
+      rebuildCognitionSummary(target.cognitionState);
+    }
+    next.pendingActionNote = `【本轮异构终端操作：解除寄生 · ${chosenBranch}】已从「${target.name}」身上剥离${isBody ? '本体化形寄生（主角在外界重新凝聚恢复人形原始本体）' : '分体寄生子体'}，「${target.name}」身体恢复原状（${keepMem ? '保留完整共生期间的记忆与余韵' : '自动触发认知合理化，将刚才的异样视为自然错觉'}）。`;
+  }
+  return next;
+}
+
 export function xenoStartVore(state, {predatorKey = '__protagonist__', preyName, channel = '口腔', location = '胃部'}) {
   const next = normalizeXeno(state);
   const predator = getEntity(next, predatorKey) || next.protagonist;
@@ -1529,6 +1918,7 @@ export function xenoResetProtagonist(state, {resetTargets = false} = {}) {
   next.possession.insightReports = [];
   next.fusion.active = false;
   next.fusion.targetName = '';
+  next.parasite = {active: false, bodyHost: null, scions: []};
   next.pendingActionNote = '';
   if (resetTargets) {
     next.targets = next.targets.map(t => normalizeEntity({id: t.id, name: t.name}, false));
@@ -1772,6 +2162,11 @@ export function buildEntityPortraitPrompt(xeno, entity) {
   if (e.predatorTail === 'deployed') {
     tags.push('monster tail, thick biological tail, tail mouth');
   }
+  const sc = (state.parasite?.scions || []).find(s => s.targetName === e.name);
+  if (sc && sc.site === 'back_hulk' && sc.form.startsWith('激活态')) {
+    tags.push('headless muscular giant body behind, girl embedded in chest, arms and legs embedded in flesh, exposed breasts, exposed torso, biological symbiosis, size difference');
+    if (sc.hulkFutaMode !== '无扶她肉棒') tags.push('futanari, penis, testicles');
+  }
 
   const cleanDesc = s => String(s || '').replace(/【[^】]*】/g, ' ').replace(/\s+/g, ' ').trim();
   if (cleanDesc(view.appearance)) tags.push(cleanDesc(view.appearance));
@@ -1854,6 +2249,7 @@ export function xenoPromptPlan(xeno, presetOverride = null) {
     if (id === 'coreTerms') return true;
     if (id === 'possession') return state.possession.active || state.possession.anchors.length > 0;
     if (id === 'fusion') return state.fusion.active;
+    if (id === 'parasite') return Boolean(state.parasite?.active || state.parasite?.bodyHost || state.parasite?.scions?.length);
     if (id === 'skinSuit') return wornSkinIds.size > 0;
     if (id === 'fleshRing') return wornRingIds.size > 0;
     if (id === 'vore') return allEntities.some(e => e.voreStorage.length > 0);

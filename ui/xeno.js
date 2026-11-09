@@ -3,6 +3,8 @@ import {createView, esc, heading, help} from './common.js';
 import {icon} from './icons.js';
 import {
   GENDERS, POSSESSION_MODES, POSSESSION_WAYS, FUSION_MODES, FUSION_BRANCHES,
+  PARASITE_KINDS, PARASITE_SITES, PARASITE_SITE_FORMS, PARASITE_MODES,
+  PARASITE_HULK_FUTA_MODES, PARASITE_RELEASE_BRANCHES, parasiteSiteLabel,
   VORE_CHANNELS, VORE_LOCATIONS, VORE_STATUSES, VORE_DIGESTIONS,
   TAIL_STATES, ORIFICE_SLOTS, ORIFICE_MOD_TYPES, VENOM_TYPES, WORLD_CARRIERS,
   PRESET_COGNITION_RULES, effectiveEntityView, getEntity, computeFusionGender, formatVoiceRoleLabel
@@ -18,6 +20,12 @@ export function xenoApp(ctx) {
   let chosenPossMode = '浅层共鸣';
   let chosenFusionMode = '共存融合';
   let chosenFusionBranch = '正常分离';
+  let chosenParaKind = 'scion';
+  let chosenParaSite = 'crotch';
+  let chosenParaForm = PARASITE_SITE_FORMS.crotch[1];
+  let chosenParaMode = '潜伏共生';
+  let chosenHulkFuta = '长在目标胯下';
+  let chosenHulkLook = '';
   let vorePredatorKey = '__protagonist__';
   let voreChannel = '口腔';
   let voreLocation = '胃部';
@@ -262,16 +270,194 @@ export function xenoApp(ctx) {
     `;
   }
 
-  function renderParasiteModule() {
+  function renderParasiteModule(xeno, curTarget) {
+    const para = xeno.parasite || {active: false, bodyHost: null, scions: []};
+    const bh = para.bodyHost;
+    const scions = para.scions || [];
+    const modeDescriptions = {
+      '潜伏共生': '宿主未察觉独立寄生意识的存在，将新长出的器官、后庭异感或巨躯共生合理化为自身奇异变异',
+      '共生同化': '宿主在共生激素与快感浸染下，认知上将寄生体（或相连巨躯）视为天生不可分割的身体延伸，产生强烈生理与心理依赖',
+      '合作共生': '宿主清楚知晓主角/子体的存在，双方意识互通并达成共生默契，可在脑内私密交流，在日常、战斗与欢愉中主动配合'
+    };
+    const activeForms = PARASITE_SITE_FORMS[chosenParaSite] || PARASITE_SITE_FORMS.crotch;
+    if (!activeForms.includes(chosenParaForm)) chosenParaForm = activeForms[0];
+
+    const statusSummary = [
+      bh?.targetName ? `本体化形：${bh.targetName}` : '',
+      scions.length ? `分体子体：${scions.length}人` : ''
+    ].filter(Boolean).join(' · ') || '未发动';
+
     return `
       <div class="xeno-module-card">
         <div class="xeno-sec-title">
           <strong>寄生之术</strong>
-          <span class="xeno-state-pill">预留槽位</span>
+          <span class="xeno-state-pill ${para.active ? 'on' : ''}">${esc(statusSummary)}</span>
         </div>
-        <div class="xeno-reserved-box">
-          <p>🧬 <b>【寄生之术 · 模块预留位】</b></p>
-          <p class="sub">当前槽位已按架构预留，待后续设定细化后可直接在此接入共生/幼体/巢穴寄生玩法。</p>
+
+        ${bh ? `
+          <div class="xeno-active-banner" style="margin-bottom:10px">
+            <p><b>🧬 本体化形寄生中：</b>宿主【${esc(bh.targetName)}】 ｜ <b>部位：</b>${esc(parasiteSiteLabel(bh.site))}</p>
+            <p class="sub">主角原始本体已浓缩化形为宿主的共生器官，保有100%自主意识并与宿主全感官共享。</p>
+            <div class="xeno-label">切换化形部位</div>
+            <div class="xeno-chip-group">
+              ${PARASITE_SITES.filter(([k]) => k !== 'back_hulk').map(([k, label]) => `
+                <button type="button" class="xeno-chip ${bh.site === k ? 'active' : ''}" data-action="para-update" data-kind="body" data-target="${esc(bh.targetName)}" data-field="site" data-val="${esc(k)}">${esc(label.split('（')[0])}</button>
+              `).join('')}
+            </div>
+            <div class="xeno-label">切换当前部位形态</div>
+            <div class="xeno-chip-group">
+              ${(PARASITE_SITE_FORMS[bh.site] || []).map(f => `
+                <button type="button" class="xeno-chip ${bh.form === f ? 'active' : ''}" data-action="para-update" data-kind="body" data-target="${esc(bh.targetName)}" data-field="form" data-val="${esc(f)}">${esc(f.split('（')[0])}</button>
+              `).join('')}
+            </div>
+            <div class="xeno-label">切换宿主共生状态</div>
+            <div class="xeno-chip-group">
+              ${PARASITE_MODES.map(m => `
+                <button type="button" class="xeno-chip ${bh.mode === m ? 'active' : ''}" data-action="para-update" data-kind="body" data-target="${esc(bh.targetName)}" data-field="mode" data-val="${esc(m)}">${esc(m)}</button>
+              `).join('')}
+            </div>
+            <div class="xeno-swap-box">
+              <span>⚡ <b>脱离与演化分支（可选）：</b></span>
+              <div class="xeno-row-controls" style="flex-wrap:wrap;gap:6px">
+                ${PARASITE_RELEASE_BRANCHES.map(b => `
+                  <button type="button" class="xeno-mini-btn ${b === '永久器官固化' ? 'primary' : b.includes('衣柜') ? 'warn' : ''}" data-action="para-release" data-kind="body" data-target="${esc(bh.targetName)}" data-branch="${esc(b)}">${esc(b)}</button>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        ` : ''}
+
+        ${scions.length ? `
+          <div class="xeno-sub-box" style="margin-bottom:10px">
+            <div class="xeno-label">🦠 在宿【分体子体寄生】列表（主角本体在外界自由行动 + 远程最高控制权）</div>
+            ${scions.map(sc => {
+              const isHulk = sc.site === 'back_hulk';
+              const hulkActive = isHulk && sc.form.startsWith('激活态');
+              return `
+                <div class="xeno-report-card" style="margin-top:8px">
+                  <div class="xeno-report-head">
+                    <strong>🎯 宿主：${esc(sc.targetName)}</strong>
+                    <small>${esc(parasiteSiteLabel(sc.site).split('（')[0])}</small>
+                    <span class="xeno-score">${esc(sc.mode)}</span>
+                  </div>
+                  <div class="xeno-label" style="margin-top:6px">子体寄生部位</div>
+                  <div class="xeno-chip-group">
+                    ${PARASITE_SITES.map(([k, label]) => `
+                      <button type="button" class="xeno-chip ${sc.site === k ? 'active' : ''}" data-action="para-update" data-kind="scion" data-target="${esc(sc.targetName)}" data-field="site" data-val="${esc(k)}">${esc(label.split('（')[0])}</button>
+                    `).join('')}
+                  </div>
+                  ${isHulk ? `
+                    <div class="xeno-label" style="margin-top:6px">背面巨躯状态（屁穴潜伏子体细胞 ⇄ 背面无头巨躯展开）</div>
+                    <div class="xeno-row-controls" style="margin-bottom:6px">
+                      ${PARASITE_SITE_FORMS.back_hulk.map(f => {
+                        const on = sc.form === f;
+                        const isAct = f.startsWith('激活态');
+                        return `<button type="button" class="xeno-btn ${on ? (isAct ? 'accent' : 'primary') : 'secondary'}" data-action="para-update" data-kind="scion" data-target="${esc(sc.targetName)}" data-field="form" data-val="${esc(f)}">
+                          ${isAct ? '🔥 激活背面无头巨躯（从屁穴分裂膨胀镶嵌）' : '🟢 关闭并缩回屁穴（潜伏子体细胞）'}
+                        </button>`;
+                      }).join('')}
+                    </div>
+                    <div class="xeno-label">扶她肉棒位置区分（目标胯下 vs 巨躯胯下）</div>
+                    <div class="xeno-chip-group">
+                      ${PARASITE_HULK_FUTA_MODES.map(fm => `
+                        <button type="button" class="xeno-chip ${sc.hulkFutaMode === fm ? 'active' : ''}" data-action="para-update" data-kind="scion" data-target="${esc(sc.targetName)}" data-field="hulkFutaMode" data-val="${esc(fm)}">${esc(fm)}</button>
+                      `).join('')}
+                    </div>
+                    <label class="xeno-field-inline" style="margin-top:6px">
+                      <span>巨躯外观设定（留空则默认衍生自【${esc(sc.targetName)}】自身特征，或由主角自定义）</span>
+                      <div style="display:flex;gap:6px">
+                        <input type="text" class="xeno-input" data-hulk-look-for="${esc(sc.targetName)}" value="${esc(sc.hulkAppearance || '')}" placeholder="留空默认随目标自身特征，或填如：肌肉虬结的古铜色无头巨躯">
+                        <button type="button" class="xeno-mini-btn primary" data-action="para-save-hulk-look" data-target="${esc(sc.targetName)}">保存外观</button>
+                      </div>
+                    </label>
+                    <p class="xeno-hint" style="margin-top:4px">
+                      ${hulkActive
+                        ? `当前巨躯已从屁穴分裂展开，将【${esc(sc.targetName)}】四肢没入正面镶嵌于胸腹中央。相连后她控制活体巨躯就像控制自己原本身体一样浑然一体，但主角的控制权更高，随时可凭意念压制或接管。`
+                        : `当前巨躯已收缩回【${esc(sc.targetName)}】的屁穴（后庭直肠）深处化作潜伏子体细胞，外表与常人无异，点击上方激活即可瞬间破体膨胀展开。`}
+                    </p>
+                  ` : `
+                    <div class="xeno-label" style="margin-top:6px">当前部位形态</div>
+                    <div class="xeno-chip-group">
+                      ${(PARASITE_SITE_FORMS[sc.site] || []).map(f => `
+                        <button type="button" class="xeno-chip ${sc.form === f ? 'active' : ''}" data-action="para-update" data-kind="scion" data-target="${esc(sc.targetName)}" data-field="form" data-val="${esc(f)}">${esc(f)}</button>
+                      `).join('')}
+                    </div>
+                  `}
+                  <div class="xeno-label" style="margin-top:6px">宿主共生状态</div>
+                  <div class="xeno-chip-group">
+                    ${PARASITE_MODES.map(m => `
+                      <button type="button" class="xeno-chip ${sc.mode === m ? 'active' : ''}" data-action="para-update" data-kind="scion" data-target="${esc(sc.targetName)}" data-field="mode" data-val="${esc(m)}">${esc(m)}</button>
+                    `).join('')}
+                  </div>
+                  <div class="xeno-swap-box" style="margin-top:8px">
+                    <span>⚡ <b>脱离与演化分支（可选）：</b></span>
+                    <div class="xeno-row-controls" style="flex-wrap:wrap;gap:6px">
+                      ${PARASITE_RELEASE_BRANCHES.map(b => `
+                        <button type="button" class="xeno-mini-btn ${b === '永久器官固化' ? 'primary' : b.includes('衣柜') ? 'warn' : ''}" data-action="para-release" data-kind="scion" data-target="${esc(sc.targetName)}" data-branch="${esc(b)}">${esc(b)}</button>
+                      `).join('')}
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        ` : ''}
+
+        <div class="xeno-form-block">
+          <div class="xeno-label">1. 选择寄生模式（支持本体化形 & 分体子体双模式）</div>
+          <div class="xeno-chip-group">
+            ${PARASITE_KINDS.map(([k, label]) => `
+              <button type="button" class="xeno-chip ${chosenParaKind === k ? 'active' : ''}" data-action="para-pick-kind" data-kind="${esc(k)}">${esc(label)}</button>
+            `).join('')}
+          </div>
+
+          <div class="xeno-label">2. 选择寄生部位</div>
+          <div class="xeno-chip-group">
+            ${PARASITE_SITES.map(([k, label]) => `
+              <button type="button" class="xeno-chip ${chosenParaSite === k ? 'active' : ''}" data-action="para-pick-site" data-site="${esc(k)}">${esc(label)}</button>
+            `).join('')}
+          </div>
+
+          <div class="xeno-label">3. 选择初始形态</div>
+          <div class="xeno-chip-group">
+            ${activeForms.map(f => `
+              <button type="button" class="xeno-chip ${chosenParaForm === f ? 'active' : ''}" data-action="para-pick-form" data-form="${esc(f)}">${esc(f)}</button>
+            `).join('')}
+          </div>
+
+          ${chosenParaSite === 'back_hulk' ? `
+            <div class="xeno-sub-box" style="margin:6px 0">
+              <div class="xeno-label">背面无头巨躯 · 扶她肉棒位置区分</div>
+              <div class="xeno-chip-group">
+                ${PARASITE_HULK_FUTA_MODES.map(fm => `
+                  <button type="button" class="xeno-chip ${chosenHulkFuta === fm ? 'active' : ''}" data-action="para-pick-hulk-futa" data-futa="${esc(fm)}">${esc(fm)}</button>
+                `).join('')}
+              </div>
+              <label class="xeno-field-inline" style="margin-top:6px">
+                <span>巨躯外观设定（留空则默认衍生自目标自身特征，或由主角自定义）</span>
+                <input type="text" class="xeno-input" id="xeno-para-hulk-look" value="${esc(chosenHulkLook)}" placeholder="例如：肌肉虬结庞大的古铜色无头躯干（留空则默认跟随目标自身特征）">
+              </label>
+              <p class="xeno-hint" style="margin-top:4px">
+                关闭状态下为寄生在目标屁穴内的子体细胞；激活时从屁穴快速分裂膨胀为背面无头巨躯，将目标正面四肢没入镶嵌。相连后目标控制巨躯就像控制自己身体一样自然，但主角拥有更高控制权。
+              </p>
+            </div>
+          ` : ''}
+
+          <div class="xeno-label">4. 选择宿主共生状态</div>
+          <div class="xeno-chip-group">
+            ${PARASITE_MODES.map(m => `
+              <button type="button" class="xeno-chip ${chosenParaMode === m ? 'active' : ''}" data-action="para-pick-mode" data-mode="${esc(m)}">${esc(m)}</button>
+            `).join('')}
+          </div>
+          <p class="xeno-hint">${esc(modeDescriptions[chosenParaMode] || '')}</p>
+
+          <div class="xeno-row-controls">
+            <button type="button" class="xeno-btn primary full" data-action="para-start" ${!curTarget ? 'disabled' : ''}>
+              ${curTarget
+                ? `🧬 对【${esc(curTarget.name)}】发动${chosenParaKind === 'body' ? '本体化形寄生' : '分体子体寄生'}（${esc(parasiteSiteLabel(chosenParaSite).split('（')[0])} · ${esc(chosenParaMode)}）`
+                : '请先在顶部目标状态栏选择或新增目标'}
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -571,7 +757,7 @@ export function xenoApp(ctx) {
       </nav>
       ${activeTab === 'possession' ? renderPossessionModule(xeno, curTarget) : ''}
       ${activeTab === 'fusion' ? renderFusionModule(xeno, curTarget) : ''}
-      ${activeTab === 'parasite' ? renderParasiteModule() : ''}
+      ${activeTab === 'parasite' ? renderParasiteModule(xeno, curTarget) : ''}
       ${activeTab === 'vore' ? renderVoreModule(xeno, curTarget) : ''}
       ${activeTab === 'body_mod' ? renderBodyModModule(xeno) : ''}
       ${activeTab === 'cognition_mod' ? renderCognitionModModule(xeno) : ''}
@@ -866,6 +1052,90 @@ export function xenoApp(ctx) {
       const branch = el.dataset.branch;
       api.xenoAct('releaseFusion', {branch});
       ctx.notify(`已解除融合（${branch}）${branch !== '正常分离' ? '，已存入衣柜' : ''}`);
+      return;
+    }
+
+    if (act === 'para-pick-kind') {
+      chosenParaKind = el.dataset.kind === 'body' ? 'body' : 'scion';
+      if (chosenParaKind === 'body' && chosenParaSite === 'back_hulk') {
+        chosenParaSite = 'crotch';
+        chosenParaForm = PARASITE_SITE_FORMS.crotch[1];
+      }
+      v.refresh();
+      return;
+    }
+    if (act === 'para-pick-site') {
+      chosenParaSite = el.dataset.site || 'crotch';
+      if (chosenParaSite === 'back_hulk') chosenParaKind = 'scion';
+      const forms = PARASITE_SITE_FORMS[chosenParaSite] || PARASITE_SITE_FORMS.crotch;
+      chosenParaForm = forms[chosenParaSite === 'crotch' || chosenParaSite === 'back_hulk' ? 1 : 0] || forms[0];
+      v.refresh();
+      return;
+    }
+    if (act === 'para-pick-form') {
+      chosenParaForm = el.dataset.form || '';
+      v.refresh();
+      return;
+    }
+    if (act === 'para-pick-mode') {
+      chosenParaMode = el.dataset.mode || '潜伏共生';
+      v.refresh();
+      return;
+    }
+    if (act === 'para-pick-hulk-futa') {
+      chosenHulkLook = v.root.querySelector('#xeno-para-hulk-look')?.value || chosenHulkLook;
+      chosenHulkFuta = el.dataset.futa || '长在目标胯下';
+      v.refresh();
+      return;
+    }
+    if (act === 'para-start') {
+      if (!curTarget) return;
+      const hulkLookInput = v.root.querySelector('#xeno-para-hulk-look');
+      if (hulkLookInput) chosenHulkLook = hulkLookInput.value.trim();
+      api.xenoAct('startParasite', {
+        kind: chosenParaSite === 'back_hulk' ? 'scion' : chosenParaKind,
+        targetName: curTarget.name,
+        site: chosenParaSite,
+        form: chosenParaForm,
+        mode: chosenParaMode,
+        hulkFutaMode: chosenHulkFuta,
+        hulkAppearance: chosenHulkLook
+      });
+      ctx.notify(`已对「${curTarget.name}」发动${chosenParaSite === 'back_hulk' ? '背面巨躯寄生' : (chosenParaKind === 'body' ? '本体化形寄生' : '分体子体寄生')}`);
+      return;
+    }
+    if (act === 'para-update') {
+      const kind = el.dataset.kind || 'scion';
+      const targetName = el.dataset.target || curTarget?.name || '';
+      const field = el.dataset.field;
+      const val = el.dataset.val;
+      if (!field) return;
+      api.xenoAct('updateParasite', {
+        kind,
+        targetName,
+        patch: {[field]: val}
+      });
+      ctx.notify(`已更新「${targetName}」的寄生状态`);
+      return;
+    }
+    if (act === 'para-save-hulk-look') {
+      const targetName = el.dataset.target || '';
+      const inputEl = v.root.querySelector(`[data-hulk-look-for="${CSS.escape(targetName)}"]`);
+      const hulkAppearance = inputEl ? inputEl.value.trim() : '';
+      api.xenoAct('updateParasite', {
+        kind: 'scion',
+        targetName,
+        patch: {hulkAppearance}
+      });
+      ctx.notify(hulkAppearance ? `已保存「${targetName}」的背面巨躯自定义外观` : `已恢复「${targetName}」的巨躯默认外观（衍生自目标自身特征）`);
+      return;
+    }
+    if (act === 'para-release') {
+      const kind = el.dataset.kind || 'scion';
+      const targetName = el.dataset.target || curTarget?.name || '';
+      const branch = el.dataset.branch || '正常剥离（抹除记忆并合理化）';
+      api.xenoAct('releaseParasite', {kind, targetName, branch});
+      ctx.notify(`已对「${targetName}」执行寄生脱离：${branch}`);
       return;
     }
 
