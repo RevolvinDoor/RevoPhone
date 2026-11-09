@@ -305,6 +305,7 @@ export function openEntityPortraitDialog(ctx, targetKey = '__protagonist__') {
           : `<div class="xeno-reserved-box" style="padding:18px 12px"><p>尚未生成「${esc(entityName)}」的当前形态立绘</p><p class="sub">可点击下方「🎨 AI 生成当前形态图」按当前肉体、皮躯/肉躯与四槽位着装自动出图，或上传本地图片。</p></div>`}
       </div>
       <p class="xeno-hint" style="margin:4px 0"><b>当前形态摘要：</b>${esc(built.summaryLabel)}</p>
+      <p class="xeno-hint">形态图忽略寄生巨躯，只绘制角色本身与当前穿戴。</p>
       <label class="xeno-field-inline">
         <span>自动汇总生图提示词（可微调后点生成）</span>
         <textarea class="xeno-textarea" rows="3" data-portrait-prompt>${esc(built.prompt)}</textarea>

@@ -1048,7 +1048,7 @@ export function effectiveSpeakingRoutes(settings) {
 }
 
 /** Effective display of an entity's 6 core fields + 8 detail fields, accounting for worn 皮躯 / 肉躯! */
-export function effectiveEntityView(xeno, entity) {
+export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
   const e = normalizeEntity(entity, entity?.id === '__protagonist__');
   const items = xeno.items || [];
   const skin = e.livingMount.skinSuitId ? items.find(i => i.id === e.livingMount.skinSuitId) : null;
@@ -1119,7 +1119,7 @@ export function effectiveEntityView(xeno, entity) {
     }
   } else if (e.name) {
     const bh = para.bodyHost?.targetName === e.name ? para.bodyHost : null;
-    const sc = (para.scions || []).find(s => s.targetName === e.name) || null;
+    const sc = (para.scions || []).find(s => s.targetName === e.name && (!forDrawing || s.site !== 'back_hulk')) || null;
     if (bh) {
       const sLabel = parasiteSiteLabel(bh.site);
       if (bh.site === 'crotch' && bh.form.startsWith('觉醒态')) {
@@ -2131,7 +2131,7 @@ export function xenoDrawTagsFor(xeno, name) {
 export function buildEntityPortraitPrompt(xeno, entity) {
   const state = normalizeXeno(xeno);
   const e = normalizeEntity(entity, entity?.id === '__protagonist__');
-  const view = effectiveEntityView(state, e);
+  const view = effectiveEntityView(state, e, {forDrawing: true});
   const tags = [];
 
   const isFuta = view.gender === '扶她'
@@ -2162,12 +2162,6 @@ export function buildEntityPortraitPrompt(xeno, entity) {
   if (e.predatorTail === 'deployed') {
     tags.push('monster tail, thick biological tail, tail mouth');
   }
-  const sc = (state.parasite?.scions || []).find(s => s.targetName === e.name);
-  if (sc && sc.site === 'back_hulk' && sc.form.startsWith('激活态')) {
-    tags.push('headless muscular giant body behind, girl embedded in chest, arms and legs embedded in flesh, exposed breasts, exposed torso, biological symbiosis, size difference');
-    if (sc.hulkFutaMode !== '无扶她肉棒') tags.push('futanari, penis, testicles');
-  }
-
   const cleanDesc = s => String(s || '').replace(/【[^】]*】/g, ' ').replace(/\s+/g, ' ').trim();
   if (cleanDesc(view.appearance)) tags.push(cleanDesc(view.appearance));
   if (cleanDesc(view.bodyBuild)) tags.push(cleanDesc(view.bodyBuild));

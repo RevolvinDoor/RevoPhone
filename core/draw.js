@@ -20,6 +20,10 @@ import {DRAW_ENGINES, DRAW_ENGINE_NAMES, defaultGpt, normalizeGpt, defaultComfy,
 import {escapeHTML, isPlaceholderRole} from './protocol.js';
 import {xenoDrawTagsFor} from './xeno.js';
 
+const xenoDrawingRule = settings => settings.xeno?.enabled
+  ? '【绘图排除规则】禁止描绘寄生的背面巨躯、无头巨躯及其展开、收回、身体镶嵌过程；不得将相关结构写入场景标签、人物标签或自然语言绘图描述。剧情提及时，绘图只表现角色本身的独立完整身体、正常四肢、外貌与当前着装，忽略巨躯附加形态；以巨躯为主体的画面改选其他剧情画面。本规则仅约束图片，正文剧情和异构状态照常保留。'
+  : '';
+
 const BLOCK = ['<img>', '画幅：竖 / 横 / 方', '场景：英文 tag', '角色：名字｜这一刻的 tag｜不要出现的 tag｜站位（画面里每个人单独一行，每一行都以「角色：」开头）', '新外貌：名字｜固定外貌 tag（只在名单外的新角色第一次出现时写）', '</img>'];
 export const PIC_TAG_FORMAT = BLOCK.join('\n');
 export const PLAN_TAG_FORMAT = [BLOCK[0], '位置：P几（这张图放在哪一段后面）', ...BLOCK.slice(1)].join('\n');
@@ -471,7 +475,7 @@ function ruleText(settings, p, format, contract, only = null) {
   const fill = t => t.replaceAll('{{出图格式}}', format).replaceAll('{{角色列表}}', list).replaceAll('{{出图数量}}', String(count));
   const engine = settings.draw?.engine || 'nai', entries = p.entries.filter(e => e.enabled && e.text.trim() && forEngine(e, engine));
   const budget = budgetText(settings, only);
-  return {entries, fill, tail: fill(contract(count, settings.promptRules)) + (budget ? '\n\n' + budget : '')};
+  return {entries, fill, tail: [fill(contract(count, settings.promptRules)), budget, xenoDrawingRule(settings)].filter(Boolean).join('\n\n')};
 }
 /**
  * What the 助手 needs to write pictures the way this plugin draws them: the engine and 画风 in use, the user's own
@@ -484,7 +488,7 @@ export function assistantDrawGuide(settings) {
   const engine = draw.engine || 'nai', style = activeStyle(draw) || {}, format = promptTemplate(settings.promptRules, 'draw-story', 'format');
   const {entries, fill} = ruleText(settings, {...p, count: 1}, format, () => '');
   return promptText(settings.promptRules, 'assistant', 'drawGuide', {'引擎': DRAW_ENGINE_NAMES[engine] || engine, '画风': style.name || '默认画风',
-    '绘图规则': entries.filter(e => e.id !== 'pick').map(e => fill(e.text)).join('\n\n'), '出图格式': format, '名单': castList(settings), 'tag长度': budgetText(settings)});
+    '绘图规则': [...entries.filter(e => e.id !== 'pick').map(e => fill(e.text)), xenoDrawingRule(settings)].filter(Boolean).join('\n\n'), '出图格式': format, '名单': castList(settings), 'tag长度': budgetText(settings)});
 }
 
 /**
@@ -613,7 +617,7 @@ export function planRequest(settings, {message, before = [], preset, only = null
 /** 「从剧情生成」 in the drawing app: a request of its own (no story preset, no chain of thought), worded for the engine. */
 export function suggestRequest(settings, {before = [], only = null} = {}) {
   const gpt = settings.draw?.engine === 'gpt';
-  const system = promptText(settings.promptRules, 'draw-prompt', 'suggest', {'GPT': gpt, '人物规则': peopleRules(settings, [], only), '描述句规则': sentenceRule(settings), '长度': gpt ? '' : lengthLine(settings)});
+  const system = [promptText(settings.promptRules, 'draw-prompt', 'suggest', {'GPT': gpt, '人物规则': peopleRules(settings, [], only), '描述句规则': sentenceRule(settings), '长度': gpt ? '' : lengthLine(settings)}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
   const story = before.length ? before.map(m => `${m.name}：${m.text}`).join('\n') : '（还没有剧情）';
   return [{role: 'system', content: system}, {role: 'user', content: promptText(settings.promptRules, 'draw-prompt', 'suggestAsk', {'剧情': story})}];
 }
@@ -654,7 +658,7 @@ function peopleRules(settings, cast = [], only = null) {
  */
 export function writeRequest(settings, {idea = '', cast = [], only = null} = {}) {
   const gpt = settings.draw?.engine === 'gpt';
-  const system = promptText(settings.promptRules, 'draw-prompt', 'write', {'GPT': gpt, '人物规则': peopleRules(settings, cast, only), '描述句规则': sentenceRule(settings), '长度': gpt ? '' : lengthLine(settings)});
+  const system = [promptText(settings.promptRules, 'draw-prompt', 'write', {'GPT': gpt, '人物规则': peopleRules(settings, cast, only), '描述句规则': sentenceRule(settings), '长度': gpt ? '' : lengthLine(settings)}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
   return [{role: 'system', content: system}, {role: 'user', content: promptText(settings.promptRules, 'draw-prompt', 'writeAsk', {'想画的': String(idea).trim()})}];
 }
 /**
@@ -663,8 +667,9 @@ export function writeRequest(settings, {idea = '', cast = [], only = null} = {})
  */
 export function tagTextRequest(settings, text, mode = 'translate', wish = '') {
   const gpt = settings.draw?.engine === 'gpt', prompt = String(text ?? '').trim();
-  if (mode !== 'revise') return [{role: 'system', content: promptText(settings.promptRules, 'draw-prompt', 'translate', {'GPT': gpt})}, {role: 'user', content: prompt}];
-  return [{role: 'system', content: promptText(settings.promptRules, 'draw-prompt', 'revise', {'GPT': gpt})},
+  const system = [promptText(settings.promptRules, 'draw-prompt', mode === 'revise' ? 'revise' : 'translate', {'GPT': gpt}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
+  if (mode !== 'revise') return [{role: 'system', content: system}, {role: 'user', content: prompt}];
+  return [{role: 'system', content: system},
     {role: 'user', content: promptText(settings.promptRules, 'draw-prompt', 'reviseAsk', {'提示词': prompt, '想怎么改': String(wish ?? '').trim() || '把里面写的中文换成英文 tag，别的不动'})}];
 }
 /** The answer of tagTextRequest: without thinking, a code fence around it or 「翻译：」 in front. */
