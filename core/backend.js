@@ -11,6 +11,8 @@ import { languageCode } from './languages.js';
 import { normalizeMoments, buildMomentsRequest } from './moments.js';
 import { normalizeCalls, buildCallRequest } from './call.js';
 import { normalizeText, activeText, customRequest, listModels, streamText, asMessages, tavernTextRequest, answerRoom, TEXT_PRESET_ID } from './llm.js';
+import {vertexSettings} from './vertex.js';
+import {hasComicPage, compileComicPage} from './comic.js';
 import { normalizeEmbed, embedReady, embedTexts } from './embed.js';
 import { bookId, emptyBook, cleanBook, removeNode, pruneBook } from './memory.js';
 import { normalizeMemoryBooks, normalizeAssistantThreads } from './data-transfer.js';
@@ -1274,7 +1276,7 @@ export class TTSBackend {
         const p = patch && typeof patch === 'object' ? patch : {};
         const text = normalizeText({ ...this.settings.text, ...Object.fromEntries(['source', 'active', 'presets'].filter(key => key in p).map(key => [key, clone(p[key])])) });
         const active = text.presets.find(x => x.id === text.active);
-        for (const key of ['name', 'url', 'model', 'temperature', 'maxTokens', 'thinking']) if (key in p) active[key] = p[key];
+        for (const key of ['name', 'url', 'model', 'temperature', 'maxTokens', 'thinking', 'stream', 'provider', 'vertexAuthMode', 'vertexRegion', 'vertexSecretId']) if (key in p) active[key] = p[key];
         return normalizeText(text);
     }
     saveText(patch) {
@@ -1295,7 +1297,7 @@ export class TTSBackend {
     }
     async generateTextRaw(context, request) {
         const text = activeText(this.settings.text);
-        if (text.source === 'custom') return customRequest({ text, key: this.textKeys.get(text.id) || '', prompt: request.prompt, responseLength: request.responseLength, fetch: this.textFetch });
+        if (text.source === 'custom') return customRequest({ text, key: this.textKeys.get(text.id) || '', prompt: request.prompt, responseLength: request.responseLength, fetch: this.textFetch, signal: request.signal, context });
         if (!context?.generateRaw) throw Error('当前酒馆版本不支持后台生成');
         // The chat-completion request the tavern builds is kept, so an empty answer can be asked again as a stream:
         // "假流式" channels only answer streamed requests, and the tavern's background generation never streams.
@@ -1734,10 +1736,10 @@ export class TTSBackend {
     async comfyWorkflows() { this.assertOpen(); return tavernWorkflows({ fetch: this.imageFetch, headers: this.tavernHeaders() }); }
     async comfyWorkflow(name) { this.assertOpen(); return tavernWorkflow({ fetch: this.imageFetch, headers: this.tavernHeaders(), name: String(name || '') }); }
     /** Draws with GPT or ComfyUI. Inputs are the NovelAI-shaped picture (scene prompt, one caption per person). */
-    async drawWithEngine(engine, { prompt, negative, characters, quote, signal, comfy }) {
+    async drawWithEngine(engine, { prompt, negative, characters, quote, signal, comfy, comic = false }) {
         const draw = this.settings.draw, p = quote.params;
         if (engine === 'gpt') {
-            const text = gptPrompt({ prompt, characters });
+            const text = gptPrompt({ prompt, characters, comic });
             const blob = await gptGenerate({ fetch: this.imageFetch, settings: draw.gpt, key: this.gptKey, prompt: text, size: `${p.width}x${p.height}`, signal });
             return { blob, seed: -1, params: { model: draw.gpt.model, width: p.width, height: p.height }, prompt: text };
         }
@@ -1758,10 +1760,15 @@ export class TTSBackend {
     }
     /** Generates one image and keeps it in the album. Requests wait in the NovelAI queue (see draw-queue.js).
      *  key identifies the job in the queue (the same key joins the job already waiting); label is shown in the line. */
-    generateImage({ prompt, negative = '', characters = [], params, allowPaid = false, name = '', key, label = '', base = null, refs = [] } = {}) {
+    generateImage({ prompt, negative = '', characters = [], params, allowPaid = false, name = '', key, label = '', base = null, refs = [], comic = false } = {}) {
         this.assertOpen();
         if (!String(prompt || '').trim()) return Promise.reject(Error('请先写提示词'));
         const engine = this.settings.draw.engine;
+        if (hasComicPage(prompt)) {
+            const page = compileComicPage(prompt, {negative, roles: this.settings.routes, dialogue: this.settings.draw.comic?.dialogue !== false});
+            prompt = page.prompt; negative = page.negative; characters = page.characters; comic = true;
+        }
+        if (comic && engine === 'nai' && !isV5(params?.model || this.settings.draw.params.model)) return Promise.reject(Error('漫画模式需要 NovelAI V5，请先在绘图参数中选择 V5，或切换到 GPT 生图'));
         if (!this.drawReady()) return Promise.reject(Error(this.drawMissing()));
         // 底图 (图生图 / 局部重绘) and 角色参考 are NovelAI's: the drawing app sends them only when NovelAI draws.
         const extra = engine === 'nai' ? { base: !!base?.image, refs: (refs || []).filter(r => r?.image).length } : {};
@@ -1771,7 +1778,7 @@ export class TTSBackend {
             // A queued ComfyUI picture keeps the scheme it was asked with, whatever is changed while it waits.
             const c = this.settings.draw.comfy;
             const comfy = engine === 'comfy' ? clone(Object.fromEntries(['url', 'workflow', 'disabledLoras', ...COMFY_PARAM_KEYS].map(k => [k, c[k]]))) : undefined;
-            const picture = {prompt, negative, characters: clone(characters), quote, comfy};
+            const picture = {prompt, negative, characters: clone(characters), quote, comfy, comic};
             const job = this.drawQueue.add({ key, label: label || String(prompt).slice(0, 40), task: async signal => {
                 this.assertOpen();
                 this.emit('draw', { phase: 'generating' });
@@ -2760,7 +2767,7 @@ export class TTSBackend {
             assistantMemoryForget: id => this.assistantMemoryForget(id),
             saveSounds: patch => this.saveSounds(clone(patch)), listSounds: () => this.listSounds(), soundBlob: id => this.soundBlob(id), addSounds: list => this.addSounds(list), updateSound: (id, patch) => this.updateSound(id, clone(patch || {})), deleteSounds: ids => this.deleteSounds([...(ids || [])]),
             packInfo: () => this.packInfo(), soundMissing: () => this.soundMissing(), dismissMissing: (type, name) => this.dismissMissing(type, name), generateSound: input => this.generateSound(clone(input || {})), exportSounds: (ids, name) => this.exportSounds(ids ? [...ids] : null, name), importSounds: (file, options) => this.importSounds(file, clone(options || {})),
-            saveText: patch => this.saveText(clone(patch)), setTextKey: (id, key) => this.setTextKey(id, key), clearTextKey: id => this.clearTextKey(id), textKeyHint: id => this.textKeyHint(id), textModels: draft => this.textModels(clone(draft || {})),
+            saveText: patch => this.saveText(clone(patch)), setTextKey: (id, key) => this.setTextKey(id, key), clearTextKey: id => this.clearTextKey(id), textKeyHint: id => this.textKeyHint(id), textModels: draft => this.textModels(clone(draft || {})), currentVertexSettings: () => vertexSettings(),
             syncStatus: () => this.syncStatus(), saveSync: patch => this.saveSync(clone(patch)), syncNow: () => this.syncNow().then(() => this.syncStatus()), clearSyncFiles: () => this.clearSyncFiles(),
             listMoments: async () => { const here = this.here(); return (await this.moments.list()).filter(p => inSpace(p, here)); }, getMoment: id => this.moments.get(id),
             postMoment: ({ text, photoId } = {}) => this.momentsMutate(async () => (await this.moments.add([{ author: 'me', source: 'me', text, photoId, space: this.cardKey() }]))[0]),

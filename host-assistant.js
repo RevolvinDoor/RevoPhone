@@ -53,7 +53,7 @@ async function requestAssistantTextRaw(ctx, backend, settings, messages, {preset
     onProgress?.(content, {...meta, ...timer.metadata()});
   };
   if (text.source === 'custom') {
-    const result = await customRequest({text, key: backend.textKeys.get(text.id) || '', prompt: messages, signal, details, onProgress: progress, fetch: backend.textFetch || globalThis.fetch});
+    const result = await customRequest({text, key: backend.textKeys.get(text.id) || '', prompt: messages, signal, details, onProgress: progress, fetch: backend.textFetch || globalThis.fetch, context: ctx});
     if (details) Object.assign(result.meta, timer.metadata());
     return result;
   }

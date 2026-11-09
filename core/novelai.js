@@ -145,8 +145,9 @@ export function buildImageRequest({prompt, negative = '', characters = [], param
   };
   if (isV4(p.model)) {
     const chars = characters.filter(c => c.prompt?.trim());
-    const useCoords = chars.some(c => c.position >= 0);
-    const center = c => c.position >= 0 ? gridCenter(c.position) : {x: .5, y: .5};
+    const validCenter = c => c.center && [c.center.x, c.center.y].every(value => Number.isFinite(value) && value >= 0 && value <= 1);
+    const useCoords = chars.some(c => validCenter(c) || c.position >= 0);
+    const center = c => validCenter(c) ? c.center : c.position >= 0 ? gridCenter(c.position) : {x: .5, y: .5};
     Object.assign(parameters, {
       use_coords: useCoords,
       characterPrompts: chars.map(c => ({prompt: c.prompt, uc: c.negative || '', center: center(c), enabled: true})),

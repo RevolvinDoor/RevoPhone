@@ -533,6 +533,7 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
   async function withCount(result, cast = []) { return fillUp(null, result, cast); }
   async function fillUp(prompt, first, cast = []) {
     const s = settings(), b = s.draw?.engine === 'nai' ? tokenBudget(s.draw.params?.model) : null;
+    if (s.draw?.comic?.enabled) return first;
     if (!b) return first;
     let count = estimateTokens;
     try { count = await loadCounter(b.kind); } catch { /* no tokenizer: estimated */ }

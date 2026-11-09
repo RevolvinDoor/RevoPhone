@@ -7,6 +7,7 @@ import { relayUrl, guardParams, isFree, isV5, normalizeDrawParams, takesReferenc
 import { PRESET_REV as DRAW_PRESET_REV, drawPromptPlan, planRequest, validateDrawPreset, normalizeDraw, normalizeVibeSettings, styleParams } from './draw.js';
 import { activeChatPreset } from './chat.js';
 import { VIBE_ANLAS } from './vibes.js';
+import {normalizeComic} from './comic.js';
 
 const clone = value => structuredClone(value);
 
@@ -100,6 +101,7 @@ class DrawSettings {
         if ('queue' in patch) draw.queue = normalizeDraw({ queue: { ...draw.queue, ...clone(patch.queue) } }).queue;
         for (const key of ['enabled', 'auto', 'guard', 'fold', 'strip']) if (key in patch) { if (typeof patch[key] !== 'boolean') throw Error('开关设置无效'); draw[key] = patch[key]; }
         if ('mode' in patch) { if (!['separate', 'inline'].includes(patch.mode)) throw Error('配图方式无效'); draw.mode = patch.mode; }
+        if ('comic' in patch) draw.comic = normalizeComic({...draw.comic, ...patch.comic});
         if ('vibe' in patch) draw.vibe = normalizeVibeSettings({ ...draw.vibe, ...clone(patch.vibe || {}) });
         if ('relay' in patch) {
             const relay = patch.relay && typeof patch.relay === 'object' ? patch.relay : {};

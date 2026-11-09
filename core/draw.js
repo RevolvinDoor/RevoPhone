@@ -19,6 +19,7 @@ import {strength as vibeStrength} from './vibes.js';
 import {DRAW_ENGINES, DRAW_ENGINE_NAMES, defaultGpt, normalizeGpt, defaultComfy, normalizeComfy} from './image-engines.js';
 import {escapeHTML, isPlaceholderRole} from './protocol.js';
 import {xenoDrawTagsFor} from './xeno.js';
+import {normalizeComic, comicGuide, hasComicPage, compileComicPage} from './comic.js';
 
 const xenoDrawingRule = settings => settings.xeno?.enabled
   ? '【绘图排除规则】禁止描绘寄生的背面巨躯、无头巨躯及其展开、收回、身体镶嵌过程；不得将相关结构写入场景标签、人物标签或自然语言绘图描述。剧情提及时，绘图只表现角色本身的独立完整身体、正常四肢、外貌与当前着装，忽略巨躯附加形态；以巨躯为主体的画面改选其他剧情画面。本规则仅约束图片，正文剧情和异构状态照常保留。'
@@ -316,6 +317,7 @@ export function normalizeVibeSettings(value) {
 }
 export function defaultDraw() {
   return {enabled: false, auto: true, guard: true, fold: false, mode: 'separate', strip: true, engine: 'nai', gpt: defaultGpt(), comfy: defaultComfy(),
+    comic: normalizeComic(),
     connections: {nai: normalizeImageConnections('nai'), gpt: normalizeImageConnections('gpt')},
     queue: {gap: 3, retries: 4, cloud: {enabled: false, kind: 'room', url: '', room: ''}}, relay: {url: '', assumeOpus: false}, vibe: defaultVibe(), params: defaultDrawParams(),
     styles: [structuredClone(DEFAULT_STYLE)], activeStyle: 'default', presets: [structuredClone(DEFAULT_PRESET)], activePreset: 'default'};
@@ -362,6 +364,7 @@ export function normalizeDraw(value) {
   d.strip = d.strip !== false;
   d.mode = d.mode === 'inline' ? 'inline' : 'separate';
   d.engine = DRAW_ENGINES.includes(d.engine) ? d.engine : 'nai';
+  d.comic = normalizeComic(d.comic);
   d.gpt = normalizeGpt(d.gpt);
   d.comfy = normalizeComfy(d.comfy);
   const n = (v, min, max, fallback) => { const x = Math.round(Number(v)); return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : fallback; };
@@ -475,6 +478,11 @@ function ruleText(settings, p, format, contract, only = null) {
   const fill = t => t.replaceAll('{{出图格式}}', format).replaceAll('{{角色列表}}', list).replaceAll('{{出图数量}}', String(count));
   const engine = settings.draw?.engine || 'nai', entries = p.entries.filter(e => e.enabled && e.text.trim() && forEngine(e, engine));
   const budget = budgetText(settings, only);
+  if (settings.draw?.comic?.enabled) {
+    const roles = drawable(settings).filter(role => !only || only.includes(role.name));
+    return {entries: [{id: 'comic', text: comicGuide(settings.draw.comic, {pages: count, planning: true, inline: contract === drawContract, roles})}], fill: value => value,
+      tail: [budget, xenoDrawingRule(settings)].filter(Boolean).join('\n\n')};
+  }
   return {entries, fill, tail: [fill(contract(count, settings.promptRules)), budget, xenoDrawingRule(settings)].filter(Boolean).join('\n\n')};
 }
 /**
@@ -485,6 +493,7 @@ function ruleText(settings, p, format, contract, only = null) {
 export function assistantDrawGuide(settings) {
   const draw = settings.draw, p = activePreset(draw);
   if (!draw || !p) return '';
+  if (draw.comic?.enabled) return [comicGuide(draw.comic, {planning: true, inline: true, roles: drawable(settings)}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
   const engine = draw.engine || 'nai', style = activeStyle(draw) || {}, format = promptTemplate(settings.promptRules, 'draw-story', 'format');
   const {entries, fill} = ruleText(settings, {...p, count: 1}, format, () => '');
   return promptText(settings.promptRules, 'assistant', 'drawGuide', {'引擎': DRAW_ENGINE_NAMES[engine] || engine, '画风': style.name || '默认画风',
@@ -617,9 +626,9 @@ export function planRequest(settings, {message, before = [], preset, only = null
 /** 「从剧情生成」 in the drawing app: a request of its own (no story preset, no chain of thought), worded for the engine. */
 export function suggestRequest(settings, {before = [], only = null} = {}) {
   const gpt = settings.draw?.engine === 'gpt';
-  const system = [promptText(settings.promptRules, 'draw-prompt', 'suggest', {'GPT': gpt, '人物规则': peopleRules(settings, [], only), '描述句规则': sentenceRule(settings), '长度': gpt ? '' : lengthLine(settings)}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
+  const system = [settings.draw?.comic?.enabled ? comicGuide(settings.draw.comic, {roles: drawable(settings).filter(role => !only || only.includes(role.name))}) : promptText(settings.promptRules, 'draw-prompt', 'suggest', {'GPT': gpt, '人物规则': peopleRules(settings, [], only), '描述句规则': sentenceRule(settings), '长度': gpt ? '' : lengthLine(settings)}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
   const story = before.length ? before.map(m => `${m.name}：${m.text}`).join('\n') : '（还没有剧情）';
-  return [{role: 'system', content: system}, {role: 'user', content: promptText(settings.promptRules, 'draw-prompt', 'suggestAsk', {'剧情': story})}];
+  return [{role: 'system', content: system}, {role: 'user', content: settings.draw?.comic?.enabled ? `请将最近剧情中的一个完整事件转译为一页漫画：\n${story}` : promptText(settings.promptRules, 'draw-prompt', 'suggestAsk', {'剧情': story})}];
 }
 /** How long the line may be, for NovelAI ('' for the other engines). */
 function lengthLine(settings) {
@@ -658,8 +667,8 @@ function peopleRules(settings, cast = [], only = null) {
  */
 export function writeRequest(settings, {idea = '', cast = [], only = null} = {}) {
   const gpt = settings.draw?.engine === 'gpt';
-  const system = [promptText(settings.promptRules, 'draw-prompt', 'write', {'GPT': gpt, '人物规则': peopleRules(settings, cast, only), '描述句规则': sentenceRule(settings), '长度': gpt ? '' : lengthLine(settings)}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
-  return [{role: 'system', content: system}, {role: 'user', content: promptText(settings.promptRules, 'draw-prompt', 'writeAsk', {'想画的': String(idea).trim()})}];
+  const system = [settings.draw?.comic?.enabled ? comicGuide(settings.draw.comic, {roles: drawable(settings).filter(role => !only || only.includes(role.name))}) : promptText(settings.promptRules, 'draw-prompt', 'write', {'GPT': gpt, '人物规则': peopleRules(settings, cast, only), '描述句规则': sentenceRule(settings), '长度': gpt ? '' : lengthLine(settings)}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
+  return [{role: 'system', content: system}, {role: 'user', content: settings.draw?.comic?.enabled ? `请按下面的需求生成一页漫画分镜：\n${String(idea).trim()}` : promptText(settings.promptRules, 'draw-prompt', 'writeAsk', {'想画的': String(idea).trim()})}];
 }
 /**
  * 改提示词再画: the prompt in Chinese to read ('translate'), or rewritten the way the user asked in their own words
@@ -667,7 +676,7 @@ export function writeRequest(settings, {idea = '', cast = [], only = null} = {})
  */
 export function tagTextRequest(settings, text, mode = 'translate', wish = '') {
   const gpt = settings.draw?.engine === 'gpt', prompt = String(text ?? '').trim();
-  const system = [promptText(settings.promptRules, 'draw-prompt', mode === 'revise' ? 'revise' : 'translate', {'GPT': gpt}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
+  const system = [hasComicPage(prompt) ? comicGuide(settings.draw?.comic, {roles: drawable(settings)}) + '\n保留当前漫画页的分段标记、台词归属与画格结构，仅按用户要求翻译视觉词或修改画面。' : promptText(settings.promptRules, 'draw-prompt', mode === 'revise' ? 'revise' : 'translate', {'GPT': gpt}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
   if (mode !== 'revise') return [{role: 'system', content: system}, {role: 'user', content: prompt}];
   return [{role: 'system', content: system},
     {role: 'user', content: promptText(settings.promptRules, 'draw-prompt', 'reviseAsk', {'提示词': prompt, '想怎么改': String(wish ?? '').trim() || '把里面写的中文换成英文 tag，别的不动'})}];
@@ -681,6 +690,12 @@ export const tagTextAnswer = reply => String(reply ?? '').replace(/<(think|think
  */
 export function readSuggestion(settings, text) {
   if (typeof text !== 'string') throw Error('模型没有返回可用的绘图提示词，请查看日志后重试');
+  const answer = String(text).replace(/<(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '').trim();
+  if (hasComicPage(answer)) {
+    const prompt = answer.replace(/^```[^\n]*\n|\n```\s*$/g, '').replace(/<\/?(?:img|image)\b[^>]*>/gi, '').trim();
+    compileComicPage(prompt);
+    return {prompt, people: []};
+  }
   const people = [];
   const rest = String(text || '').split('\n').filter(line => {
     const m = line.trim().match(/^(?:人物|角色)\s*[:：]\s*(.*)$/);
@@ -770,6 +785,7 @@ const FIELDS = {画幅: 'size', 尺寸: 'size', 场景: 'tags', 基础: 'tags', 
 const split = value => value.split(/[|｜]/).map(x => x.trim());
 /** Reads a block body; null when it has none of the field lines (an older one-line tag). */
 export function parseBlock(body) {
+  if (hasComicPage(body)) return {size: body.match(/(?:^|\n)\s*(?:画幅|尺寸)\s*[:：]\s*([^\n]+)/)?.[1] || 'portrait', tags: body, nl: '', cast: [], register: [], comic: true};
   const spec = {size: '', tags: '', nl: '', cast: [], register: []};
   let found = false, list = '';
   for (const raw of String(body).split(/\r?\n/)) {
@@ -821,7 +837,7 @@ export function parsePictures(message) {
     if (!tag.prompt && !tag.spec?.cast.length) continue;
     const characters = tag.who.split(/[,，、]/).map(x => x.trim()).filter(Boolean), index = found.length;
     const hash = tag.spec ? hashText(index + '|' + tag.body) : hashText(index + '|' + tag.prompt + '|' + characters.join(','));
-    found.push({index, start: tag.start, end: tag.end, prompt: (tag.prompt || '').slice(0, 4000), characters, hash, spec: tag.spec || null, ...(tag.spec ? {body: tag.body} : {})});
+    found.push({index, start: tag.start, end: tag.end, prompt: (tag.prompt || '').slice(0, tag.spec?.comic ? 64000 : 4000), characters, hash, spec: tag.spec || null, ...(tag.spec ? {body: tag.body} : {})});
   }
   return found;
 }
@@ -955,6 +971,7 @@ export function pictureInputs(settings, tag, text = '') {
   const sized = {...draw.params, ...sizeFor(draw.params, spec?.size)};
   const params = draw.guard ? guardParams(sized) : sized;
   const head = [style.artist, style.positive].map(x => (x || '').trim()).filter(Boolean);
+  if (spec?.comic) return {...compileComicPage([...head, spec.tags].join('\n'), {negative: style.negative, roles: drawable(settings), dialogue: draw.comic?.dialogue !== false}), params};
   if (!spec) {
     const roles = pictureRoles(settings, tag, text);
     return {prompt: [...head, tag.prompt].join(', '), negative: style.negative.trim(),

@@ -10,6 +10,7 @@ import {tokenBudget, loadCounter, countPicture, countField, tagCost} from '../co
 import {refPanel} from './draw-refs.js';
 import {pictureData, readNovelAI, fitBase, scaledPicture, enhanceSizes} from './draw-images.js';
 import {DIRECTOR_TOOLS, DIRECTOR_WORDS, EMOTIONS, upscaleBy, UPSCALE_MAX} from '../core/novelai.js';
+import {COMIC_LAYOUTS, COMIC_GUTTERS, hasComicPage} from '../core/comic.js';
 
 const SIZES = [['portrait', '竖图', 832, 1216], ['landscape', '横图', 1216, 832], ['square', '方图', 1024, 1024], ['tall', '大竖图', 1024, 1536]];
 /** Pictures kept in the column beside the canvas (this visit of the app; all of them are also in the album). */
@@ -82,9 +83,21 @@ export function drawApp(ctx) {
     const thumbs = await Promise.all(results.map(r => urlFor(r.photoId)));
     if (v.disposed || ticket !== epoch) return;
     const size = SIZES.find(([, , w, h]) => w === d.params.width && h === d.params.height)?.[0] || 'custom';
-    const tabs = [['prompt', '提示词'], ['chars', '角色'], ...(e === 'nai' ? [['refs', '参考图' + (refs.badge() ? ` · ${refs.badge()}` : '')]] : []), ['params', '参数'], ...(e === 'nai' ? [['vibe', 'Vibe']] : e === 'comfy' ? [['lora', 'LoRA']] : [])];
+    const tabs = [['prompt', '提示词'], ['comic', '漫画'], ['chars', '角色'], ...(e === 'nai' ? [['refs', '参考图' + (refs.badge() ? ` · ${refs.badge()}` : '')]] : []), ['params', '参数'], ...(e === 'nai' ? [['vibe', 'Vibe']] : e === 'comfy' ? [['lora', 'LoRA']] : [])];
     v.root.dataset.engine = e;
     let body = '';
+    if (tab === 'comic') body = `
+      <div class="group pad">
+        <p class="hint">漫画模式把一张图片当作一整页，按格安排人物、镜头和对白。开启后，「帮我写」「从剧情生成」和正文配图使用漫画分镜规则。正文出图规则里的张数表示页数。</p>
+        ${field('色彩', select('comic-color', d.comic.color, [['color', '全彩漫画'], ['monochrome', '黑白网点']]))}
+        ${field('分镜风格', select('comic-layout', d.comic.layout, COMIC_LAYOUTS))}
+        ${field('每页参考格数', input('comic-panels', d.comic.panels, 'number', 'min="1" max="8"'), '经典四格固定为四格；其他风格可随剧情节奏调整。')}
+        ${field('画格边界', select('comic-gutter', d.comic.gutter, COMIC_GUTTERS))}
+        ${field('阅读顺序', select('comic-reading', d.comic.reading, [['rtl', '右 → 左（日漫）'], ['ltr', '左 → 右']]))}
+        ${toggle('comic-dialogue', '对白与文字上画', d.comic.dialogue, '保留原句和发言人，放进对应画格的气泡；关闭后只用画面叙事。文字清晰度取决于绘图模型。')}
+        ${field('漫画附加提示词', textArea('comic-rules', d.comic.rules, 'rows="6" maxlength="12000" placeholder="例如：多用表情特写，格间保持白色留白，不使用跨页。"'), '可以独立编辑分镜、表演、气泡和留白要求。漫画模式使用此处规则，不改写原来的插画预设。')}
+        <p class="hint">${e === 'nai' ? 'NovelAI 漫画使用 V5 的分人物提示词，请在参数里选择 V5。' : e === 'gpt' ? 'GPT 会收到整页分镜与逐格人物、原文对白。' : 'ComfyUI 会合并整页描述，分镜和文字表现取决于工作流与所用模型。'}寄生巨躯继续按既有规则从绘图中排除。</p>
+      </div>`;
     if (tab === 'prompt') body = `
       <div class="group pad">${field('这张图的提示词', textArea('prompt', prompt, 'rows="4" placeholder="英文 tag，逗号分隔，例如 2girls, rainy day, cafe window, sharing an umbrella"'), e === 'gpt' ? '会和画风的固定正面、每个角色的外貌一起整理成一段英文描述发给 GPT。画师串、权重括号和负面不会发给 GPT。' : e === 'comfy' ? '实际发送：画师串 + 固定正面 + 这里的提示词，后面接上每个角色的外貌；NovelAI 的权重写法会自动换成 ComfyUI 的。' : '实际发送：画师串 + 固定正面 + 这里的提示词。')}
         <div class="token-meter" data-token-meter="positive" hidden></div>
@@ -138,6 +151,7 @@ export function drawApp(ctx) {
     // 正文出图 (how story replies get pictures) is set now and then: a chip by the title, not one more tab.
     v.draw(heading('绘图', (keyed && sub ? `<span class="chip">${esc(sub)}</span>` : '') + btn('tab', icon('image') + '正文出图', 'chip-button', `data-tab="chat" aria-pressed="${tab === 'chat'}"`), engineName(e))
       + `<div class="segmented draw-engines" role="group" aria-label="用哪个画">${api.drawCatalog.engines.map(k => `<button data-action="draw-engine" data-pick="${k}" aria-pressed="${k === e}">${esc(engineName(k))}</button>`).join('')}</div>`
+      + `<div class="segmented" role="group" aria-label="绘图模式">${[['illustration', '普通插画'], ['comic', '漫画模式']].map(([key, label]) => `<button type="button" data-action="composition" data-pick="${key}" aria-pressed="${(key === 'comic') === d.comic.enabled}">${label}</button>`).join('')}</div>`
       + (keyed ? '' : `<div class="banner">${icon('key')}<span>${esc(api.drawMissing())}。</span>${btn('go-key', '去填写', 'chip-button')}</div>`)
       + queueCard()
       + `<div class="draw-meta">${btn('pick-style', icon('layers') + esc(style().name) + icon('down'), 'chip-button')}${costChip(q)}${e === 'nai' ? `<label class="chip-button file-button read-png" title="从 NovelAI 画的 PNG 读回提示词、角色和参数">${icon('import')}读图<input type="file" data-read-png accept="image/png" aria-label="从 NovelAI 的图读参数" hidden></label>` : ''}</div>
@@ -275,7 +289,12 @@ export function drawApp(ctx) {
   v.on('change', '[data-param]', el => { api.saveDraw({params: {[el.dataset.param]: Number(el.value)}}); render(); });
   v.on('input', '[data-queue]', el => { el.previousElementSibling.querySelector('output').textContent = el.value + (el.dataset.queue === 'gap' ? ' 秒' : ' 次'); });
   v.on('change', '[data-queue]', el => { api.saveDraw({queue: {[el.dataset.queue]: Number(el.value)}}); });
-  v.on('change', 'select[data-field]', el => { if (/^comfy-/.test(el.dataset.field)) return; api.saveDraw({params: {[el.dataset.field]: el.value}}); render(); });
+  v.on('change', 'select[data-field]', el => { if (/^(?:comfy|comic)-/.test(el.dataset.field)) return; api.saveDraw({params: {[el.dataset.field]: el.value}}); render(); });
+  v.on('change', '[data-field^=comic-]', el => {
+    const key = el.dataset.field.slice(6);
+    api.saveDraw({comic: {[key]: el.type === 'checkbox' ? el.checked : key === 'panels' ? Number(el.value) : el.value}});
+    render();
+  });
   // ComfyUI fields: a select from 读取, or a typed name when nothing was read.
   v.on('change', '[data-field=comfy-preset]', el => plans.choose(el.value));
   // ComfyUI parameters are saved into the scheme in use as soon as they change.
@@ -292,6 +311,7 @@ export function drawApp(ctx) {
   v.on('change', '[data-cloud]', () => { api.saveDraw({queue: {cloud: cloudFields()}}); cloudNote = null; });
   v.on('change', 'input.switch[data-field]', el => {
     const key = el.dataset.field;
+    if (key.startsWith('comic-')) return;
     if (key === 'variety') api.saveDraw({params: {variety: el.checked}});
     else if (key === 'vibeEnabled') api.saveDraw({vibe: {enabled: el.checked}});
     else if (key === 'cloud') api.saveDraw({queue: {cloud: {...cloudFields(), enabled: el.checked}}});
@@ -312,6 +332,7 @@ export function drawApp(ctx) {
     if (el.dataset.action?.startsWith('tool-') && await tools(el)) return;
     const index = Number(el.dataset.index);
     switch (el.dataset.action) {
+      case 'composition': api.saveDraw({comic: {enabled: el.dataset.pick === 'comic'}}); tab = el.dataset.pick === 'comic' ? 'comic' : 'prompt'; render(); break;
       case 'tab': tab = el.dataset.tab; await render(); break;
       case 'draw-engine': api.saveDraw({engine: el.dataset.pick}); render(); refreshSubscription(); break;
       case 'gpt-quality': api.saveDraw({gpt: {quality: el.dataset.value}}); render(); break;
@@ -421,11 +442,13 @@ export function drawApp(ctx) {
     render();
   }
   async function generate() {
+    if (state().comic.enabled && !hasComicPage(prompt)) throw Error('请先用「帮我写」或「从剧情生成」生成漫画分镜，也可以填写 @page / @panel 分镜提示词');
+    if (hasComicPage(prompt) && eng() === 'nai' && !/^nai-diffusion-5/.test(state().params.model)) throw Error('漫画模式需要 NovelAI V5，请先在参数中选择 V5');
     const s = style(), q = quote(), extra = eng() === 'nai' ? refs.payload() : {base: null, refs: []};
     const paid = await askPaid(q, count);
     if (paid === false) return;
     await drawMany({
-      prompt: [s.artist, s.positive, prompt].map(x => (x || '').trim()).filter(Boolean).join(', '),
+      prompt: [s.artist, s.positive, prompt].map(x => (x || '').trim()).filter(Boolean).join(hasComicPage(prompt) ? '\n' : ', '),
       negative: [s.negative, negative].map(x => (x || '').trim()).filter(Boolean).join(', '),
       characters: characters.filter(c => c.prompt.trim()).map(c => ({prompt: c.prompt, position: c.position})),
       params: eng() === 'nai' ? {...state().params, seed} : {seed}, name: engineName().replace(/\s+/g, ''), label: '绘图 App · ' + (prompt.trim().slice(0, 24) || s.name),
@@ -436,7 +459,7 @@ export function drawApp(ctx) {
   function requestOf(result) {
     if (result?.request) return result.request;
     const s = style();
-    return {prompt: [s.artist, s.positive, prompt].map(x => (x || '').trim()).filter(Boolean).join(', '), negative: [s.negative, negative].map(x => (x || '').trim()).filter(Boolean).join(', '),
+    return {prompt: [s.artist, s.positive, prompt].map(x => (x || '').trim()).filter(Boolean).join(hasComicPage(prompt) ? '\n' : ', '), negative: [s.negative, negative].map(x => (x || '').trim()).filter(Boolean).join(', '),
       characters: characters.filter(c => c.prompt.trim()).map(c => ({prompt: c.prompt, position: c.position}))};
   }
   /** 变体: the shown picture drawn again from itself, as much changed as picked, n times. */

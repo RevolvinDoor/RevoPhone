@@ -69,11 +69,12 @@ export function enginesApp(ctx) {
     const comfy = id === 'comfy', saved = comfy ? !!api.getState().draw.comfy.url : api.keyStatus(id), nai = id === 'nai', llm = id === 'llm', vector = id === 'embed', d = api.getState().draw;
     const em = vector ? (engine === 'embed' && embedDraft ? embedDraft : api.getState().embed) : null;
     const name = nameOf(id), t = llm ? (engine === 'llm' && textDraft ? textDraft : api.getState().text) : null, custom = t?.source === 'custom';
+    const vertex = custom && t.presets.find(p => p.id === t.active)?.provider === 'vertexai';
     const fields = vector ? [['MODEL', em.model || '未填写'], ['MEMORY', em.enabled ? '语义检索' : '本地检索']]
       : id === 'gpt' ? [['MODEL', d.gpt.model], ['QUALITY', d.gpt.quality.toUpperCase()]]
       : comfy ? [['MODEL', d.comfy.model ? d.comfy.model.replace(/\.[^.]*$/, '').slice(0, 18) : '未选'], ['WORKFLOW', d.comfy.workflows.find(p => p.id === d.comfy.activeWorkflow)?.name || '默认工作流']]
       : llm
-      ? [['SOURCE', custom ? 'CUSTOM API' : 'TAVERN'], ['MODEL', custom ? t.presets.find(p => p.id === t.active)?.model || '未填写' : '跟随酒馆']]
+      ? [['SOURCE', vertex ? 'VERTEX AI' : custom ? 'CUSTOM API' : 'TAVERN'], ['MODEL', custom ? t.presets.find(p => p.id === t.active)?.model || '未填写' : '跟随酒馆']]
       : nai
       ? [['TIER', subscription ? TIERS[subscription.tier] || '未知' : '—'], ['ANLAS', subscription ? String(subscription.anlas) : '—']]
       : id === 'custom'
@@ -85,7 +86,7 @@ export function enginesApp(ctx) {
     const attrs = tag === 'button' ? `data-action="engine" data-engine="${id}" aria-label="${name}，${front ? '点一下打开' : '点一下抽到最前面'}"` : `data-engine="${id}"`;
     const dots = comfy ? '' : `•••• •••• •••• ${api.keyHint?.(id) || '••••'}`;
     const ownApi = id === 'custom' ? (api.getState().connections.custom.params.url || '').replace(/^https?:\/\//, '') : '';
-    const number = id === 'custom' ? (ownApi || '还没填接口地址 · 点卡片去填写') : vector ? (em.enabled ? (saved ? dots : '未绑定密钥 · 本地接口可以不填') : '没开 · 记忆用本地检索') : comfy ? d.comfy.url.replace(/^https?:\/\//, '') : llm ? (custom ? (saved ? dots : '未绑定密钥 · 点卡片去填写') : '用酒馆当前连接的模型') : saved ? dots : '未绑定密钥 · 点卡片去填写';
+    const number = id === 'custom' ? (ownApi || '还没填接口地址 · 点卡片去填写') : vector ? (em.enabled ? (saved ? dots : '未绑定密钥 · 本地接口可以不填') : '没开 · 记忆用本地检索') : comfy ? d.comfy.url.replace(/^https?:\/\//, '') : llm ? (vertex ? 'Vertex · 使用酒馆保存的凭据' : custom ? (saved ? dots : '未绑定密钥 · 点卡片去填写') : '用酒馆当前连接的模型') : saved ? dots : '未绑定密钥 · 点卡片去填写';
     return `<${tag} class="bank-card${tag === 'div' ? ' detail-card' : ''}" ${attrs}>${spark()}
       <span class="card-top"><span class="card-name">${name}</span><span class="card-kind">${IMAGE.includes(id) ? 'IMAGE' : llm ? 'TEXT' : vector ? 'VECTOR' : 'VOICE'}${icon('nfc')}</span></span>
       <span class="card-chip"></span>
@@ -429,20 +430,26 @@ export function enginesApp(ctx) {
     v.root.dataset.engine = 'llm';
     v.draw(heading('文字模型', custom && (saved || all.presets.length > 1) ? moreButton() : '', 'Text Card')
       + card('llm', 'div')
-      + groupTitle('谁来写手机里的字', help('手机里的字：聊天回复、朋友圈、来电，以及正文配图时挑画面。正文本身始终用酒馆的模型。\n酒馆主模型：和正文一样，用酒馆当前连接的模型，换了酒馆的模型手机也跟着换。\n自定义接口：用你自己的 OpenAI 兼容接口，不占用酒馆正在用的模型，正文和手机可以用不同的模型。插件直接从浏览器连接这个接口，不经过酒馆。'))
+      + groupTitle('谁来写手机里的字', help('手机里的字：聊天回复、朋友圈、来电，以及正文配图时挑画面。正文本身始终用酒馆的模型。\n酒馆主模型：跟随酒馆当前连接。\n自定义接口：可选 OpenAI 兼容或 Google Vertex AI，独立保存模型与参数。Vertex 通过酒馆保存的凭据转发，不切换主连接。'))
       + `<div class="group pad"><div class="segmented" style="margin:0">${[['tavern', '酒馆主模型'], ['custom', '自定义接口']].map(([k, l]) => `<button type="button" data-action="text-source" data-source="${k}" aria-pressed="${all.source === k}">${l}</button>`).join('')}</div>
 </div>`
       + (custom ? groupTitle('接口', help('可以存好几套自定义接口：地址、模型、密钥、温度、长度各一份，点一下切换正在用的那套。每套的密钥分开保存；删掉一套（右上角「⋯」），它的密钥也一起删掉。切换、新建、删除和改名都要点下面的「保存」才生效。'))
         + `<div class="group pad"><div class="text-presets">${all.presets.map(p => `<button type="button" class="combo-chip" data-action="text-preset" data-id="${esc(p.id)}" aria-pressed="${p.id === all.active}">${esc(p.name)}</button>`).join('')}${btn('text-new', icon('add'), 'chip-button', 'aria-label="新建一套接口"')}</div>
           ${field('名字', input('text-name', t.name, 'text', 'maxlength="40" autocomplete="off"'))}
-          ${field('接口地址', input('text-url', t.url, 'url', 'autocomplete="off" placeholder="https://api.openai.com/v1"'), '填到 /v1 为止，后面的 /chat/completions 不用写。OpenAI 格式的服务都可以：OpenAI、DeepSeek、OpenRouter、硅基流动、各种中转站。接口要允许网页直接访问（CORS），不然浏览器会拦下请求。')}
-          ${keyBox('API Key', saved && hint, '这个接口的密钥（本地模型可以不填）', '填完点一下别处就保存了。密钥只保存在当前浏览器和酒馆地址，不会写进设置或备份。')}
+          ${field('渠道', select('text-provider', t.provider || 'openai', [['openai', 'OpenAI 兼容'], ['vertexai', 'Google Vertex AI（酒馆凭据）']]))}
+          ${t.provider === 'vertexai' ? `
+            <div class="actions">${btn('text-vertex-current', '读取当前酒馆 Vertex 设置', 'secondary')}</div>
+            ${field('认证方式', select('text-vertexAuthMode', t.vertexAuthMode, [['express', 'Express（API Key）'], ['full', '完整认证（服务账号）']]))}
+            ${field('区域', input('text-vertexRegion', t.vertexRegion, 'text', 'placeholder="global" autocomplete="off"'))}
+            ${field('凭据 ID（可留空）', input('text-vertexSecretId', t.vertexSecretId, 'text', 'autocomplete="off"'), '在酒馆 API 连接中保存 Vertex 凭据；这里填写凭据的 ID，不是 API Key 或服务账号 JSON。留空使用酒馆对应类型的默认凭据。此渠道通过酒馆转发，可以独立选择模型。')}
+          ` : field('接口地址', input('text-url', t.url, 'url', 'autocomplete="off" placeholder="https://api.openai.com/v1"'), '填到 /v1 为止，后面的 /chat/completions 不用写。支持 OpenAI、DeepSeek、OpenRouter 等兼容接口。')}
+          ${t.provider === 'vertexai' ? '' : keyBox('API Key', saved && hint, '这个接口的密钥（本地模型可以不填）', '填完点一下别处就保存了。密钥只保存在当前浏览器和酒馆地址，不会写进设置或备份。')}
           ${field('模型', /volces\.com|volcengine/i.test(t.url || '') ? input('text-model', t.model, 'text', 'autocomplete="off" placeholder="推理接入点 ID（ep- 开头）或模型名"') : `<div class="music-selfhost">${input('text-model', t.model, 'text', 'autocomplete="off" placeholder="例如 gpt-4o-mini、deepseek-chat"')}${btn('text-models', icon('refresh') + '读取', 'secondary small')}</div>`, /volces\.com|volcengine/i.test(t.url || '') ? '火山方舟没有模型列表：直接填推理接入点 ID（ep- 开头）或开通了的模型名，在火山方舟控制台的「在线推理」或「开通管理」里能看到。' : '「读取」列出这个接口有哪些模型，点一个就选上。')}
           <div class="combo-menu model-list" data-model-list ${models.length ? '' : 'hidden'}>${models.map(m => `<button type="button" class="combo-chip" data-action="text-pick" data-model="${esc(m)}" aria-pressed="${m === t.model}">${esc(m)}</button>`).join('')}</div>
           <p class="hint" data-text-status></p>
           ${field('温度', input('text-temperature', t.temperature, 'number', 'min="0" max="2" step="0.05"'), '越高越随性，越低越稳定。0.7–1 比较常用。')}
           ${field('流式', select('text-stream', t.stream === false ? 'off' : 'on', [['on', '流式（默认）'], ['off', '不用流式']]), '流式：回复一边写一边传回来，模型想得久、写得长也不会等到超时。\n\n不用流式：等整条写完一次给回来。有的模型或中转（比如一些 Gemini 的接口）流式传回来的回复会被截断、只剩一半，改成「不用流式」就好；一次最多等 5 分钟。')}
-          ${field('思考', select('text-thinking', t.thinking || 'auto', [['auto', '按模型默认'], ['off', '关掉思考']]), '会先思考的模型（GLM、Qwen3、豆包、DeepSeek 思考版……）写手机里的字时可以关掉思考：快很多，也省钱，长度不会被思考用光。插件会发 enable_thinking: false 和 thinking: disabled，大多数接口认其中一个；接口报错不认识这些参数时改回「按模型默认」。')}
+          ${field('思考', select('text-thinking', t.thinking || 'auto', [['auto', '按模型默认'], ['off', t.provider === 'vertexai' ? '尽量减少思考' : '关掉思考']]), t.provider === 'vertexai' ? '选择减少思考时，通过酒馆发送最低思考档位；能否完全关闭取决于模型，部分 Gemini 模型仍会保留必要思考。' : '发送 enable_thinking: false 和 thinking: disabled；接口不支持时改回「按模型默认」。')}
           ${field('最长回复（tokens）', input('text-maxTokens', t.maxTokens, 'number', 'min="64" max="128000" step="1"'), '一次回复最多写多少（最多 128000），所有用到文字模型的地方都至少给这么多。配音、配图规划这些要重写整段正文的，正文很长时会自动给到更多，不会比这里少。会先思考的模型，思考也算在里面。')}
         </div>` : '')
       + `<div class="savebar"><span class="save-state" data-save-state>${dirty ? '未保存' : '已保存'}</span>${btn('save-text', '保存', 'primary')}</div>`);
@@ -502,9 +509,10 @@ export function enginesApp(ctx) {
     }
     if (engine === 'llm') {
       const key = el.dataset.field.replace(/^text-/, '');
-      if (!['name', 'url', 'model', 'temperature', 'maxTokens', 'thinking', 'stream'].includes(key)) return;
+      if (!['name', 'url', 'model', 'temperature', 'maxTokens', 'thinking', 'stream', 'provider', 'vertexAuthMode', 'vertexRegion', 'vertexSecretId'].includes(key)) return;
       textPreset()[key] = key === 'stream' ? el.value !== 'off' : ['temperature', 'maxTokens'].includes(key) ? Number(el.value) : el.value.trim();
       changed();
+      if (key === 'provider' || key === 'vertexAuthMode') { models = []; render(); }
       return;
     }
     if (el.dataset.field === 'gpt-model') { api.saveDraw({gpt: {model: el.value.trim()}}); updateGptModels(); return; }
@@ -625,6 +633,7 @@ export function enginesApp(ctx) {
         textDraft.presets = textDraft.presets.filter(p => p.id !== gone.id); textDraft.active = textDraft.presets[0].id; models = []; changed(); dirty = true; render();
         break;
       }
+      case 'text-vertex-current': Object.assign(textPreset(), api.currentVertexSettings()); models = []; changed(); render(); ctx.notify('已读取 Vertex 设置，点击保存后生效'); break;
       case 'save-text': { const typed = v.root.querySelector('[data-field=key]')?.value.trim(); if (typed) api.setTextKey(textDraft.active, typed); } api.saveText(textDraft); textDraft = structuredClone(api.getState().text); dirty = false; render(); ctx.notify('文字模型已保存'); break;
       case 'save-embed': {
         const typed = v.root.querySelector('[data-field=key]')?.value || '';

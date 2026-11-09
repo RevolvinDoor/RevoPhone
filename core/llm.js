@@ -5,13 +5,15 @@
 // Each preset's key lives with the other keys (core/keys.js, engine 'llm', one line per preset) and never appears in
 // settings, requests shown to the user, or error messages.
 import {proxyAddress} from './proxy-url.js';
+import {vertexBody, vertexModels, vertexReply} from './vertex.js';
 
 // idle: a streamed answer may go this long without sending anything (thinking counts as sending); whole: the longest
 // any request may take; timeout: an answer that is not streamed (it says nothing until it is done).
 export const TEXT_LIMITS = Object.freeze({maxTokens: [64, 128000], temperature: [0, 2], idle: 90000, whole: 600000, timeout: 300000});
 
 export function defaultTextPreset(id = 'default', name = '自定义接口') {
-  return {id, name, url: '', model: '', temperature: 0.9, maxTokens: 1200, thinking: 'auto', stream: true};
+  return {id, name, provider: 'openai', url: '', model: '', temperature: 0.9, maxTokens: 1200, thinking: 'auto', stream: true,
+    vertexAuthMode: 'express', vertexRegion: 'global', vertexSecretId: ''};
 }
 export function defaultText() {
   return {source: 'tavern', active: 'default', presets: [defaultTextPreset()]};
@@ -21,6 +23,10 @@ const count = (value, [min, max], fallback, round = true) => { const n = round ?
 function normalizePreset(value, index) {
   const base = defaultTextPreset();
   return {id: TEXT_PRESET_ID.test(String(value?.id || '')) ? String(value.id) : crypto.randomUUID(), name: String(value?.name || '').trim().slice(0, 40) || '接口 ' + (index + 1),
+    provider: value?.provider === 'vertexai' ? 'vertexai' : 'openai',
+    vertexAuthMode: value?.vertexAuthMode === 'full' ? 'full' : 'express',
+    vertexRegion: String(value?.vertexRegion || 'global').trim().slice(0, 100) || 'global',
+    vertexSecretId: String(value?.vertexSecretId || '').trim().slice(0, 200),
     url: String(value?.url || '').trim().slice(0, 500), model: String(value?.model || '').trim().slice(0, 200),
     temperature: Math.round(count(value?.temperature, TEXT_LIMITS.temperature, base.temperature, false) * 100) / 100, maxTokens: count(value?.maxTokens, TEXT_LIMITS.maxTokens, base.maxTokens),
     thinking: value?.thinking === 'off' ? 'off' : 'auto',
@@ -86,6 +92,8 @@ export function chatBody(text, prompt, responseLength) {
 
 /** The reply text of a Chat Completions answer (reasoning kept apart by the provider is left out). */
 export function replyText(json) {
+  const native = vertexReply(json);
+  if (native) return native;
   const choice = json?.choices?.[0];
   const content = choice?.message?.content ?? choice?.text;
   if (Array.isArray(content)) return content.map(part => typeof part === 'string' ? part : part?.text || '').join('');
@@ -176,8 +184,14 @@ const thoughtOnly = finish => Error(finish === 'length'
 // like "cannot connect". Chatting itself is allowed from web pages.
 const ARK = /volces\.com|volcengine/i;
 const ARK_MODEL = '火山方舟没有模型列表：在「模型」里直接填推理接入点 ID（ep- 开头）或模型名（比如 doubao-seed-1-6-250615），在火山方舟控制台的「在线推理」或「开通管理」里能看到';
-export async function customRequest({text, key, prompt, responseLength, fetch: send = globalThis.fetch, signal, details = false, onProgress}) {
-  const base = apiBase(text.url), body = chatBody(text, prompt, responseLength);
+export async function customRequest({text, key, prompt, responseLength, fetch: send = globalThis.fetch, signal, details = false, onProgress, context = globalThis.SillyTavern?.getContext?.()}) {
+  const vertex = text.provider === 'vertexai';
+  if (vertex && typeof context?.getRequestHeaders !== 'function') throw Error('当前环境没有酒馆的 Vertex 请求接口，请在支持 Vertex 的 SillyTavern 或 TauriTavern 中使用');
+  const base = vertex ? '' : apiBase(text.url);
+  const body = vertex ? vertexBody(text, asMessages(prompt), answerRoom(responseLength, text.maxTokens)) : chatBody(text, prompt, responseLength);
+  const headers = vertex ? {'Content-Type': 'application/json', ...context.getRequestHeaders()} : {'Content-Type': 'application/json', ...(key ? {Authorization: 'Bearer ' + key} : {})};
+  const endpoint = vertex ? '/api/backends/chat-completions/generate' : base + '/chat/completions';
+  if (vertex) key = '';
   const meta = {requestedModel: text.model};
   const finish = answer => details ? {text: answer, meta} : answer;
   const post = async stream => {
@@ -189,13 +203,13 @@ export async function customRequest({text, key, prompt, responseLength, fetch: s
     alive();
     let response;
     try {
-      response = await send(base + '/chat/completions', {method: 'POST', headers: {'Content-Type': 'application/json', ...(key ? {Authorization: 'Bearer ' + key} : {})}, body: JSON.stringify({...body, stream}),
+      response = await send(endpoint, {method: 'POST', headers, body: JSON.stringify({...body, stream}),
         signal: signals.length > 1 && AbortSignal.any ? AbortSignal.any(signals) : idle.signal});
     } catch (error) {
       clearTimeout(timer);
       if (error?.name === 'AbortError' || error?.name === 'TimeoutError') throw Error(TOO_SLOW);
       if (ARK.test(base)) throw Error('文字模型：火山方舟没有回答。它在密钥不对、模型名不对、没开通这个模型时返回的错误浏览器读不到，看起来就像连不上：请检查密钥，以及「模型」填的是不是推理接入点 ID（ep- 开头）或开通了的模型名');
-      throw Error('文字模型：连不上这个接口。可能是地址写错了，或者这个接口不允许网页直接访问（CORS）');
+      throw Error(vertex ? '文字模型：无法连接酒馆的 Vertex 接口，请检查酒馆连接与 Vertex 凭据' : '文字模型：连不上这个接口。可能是地址写错了，或者这个接口不允许网页直接访问（CORS）');
     }
     /** Reads the answer while the timer keeps watch; clears it whatever happens. */
     const read = async work => {
@@ -214,7 +228,9 @@ export async function customRequest({text, key, prompt, responseLength, fetch: s
     try { reply = replyText(json); } catch { /* no text */ }
     if (reply.trim()) return reply;
     const choice = json?.choices?.[0];
-    if (choice?.message?.reasoning_content || choice?.message?.reasoning) throw thoughtOnly(choice.finish_reason);
+    if (choice?.message?.reasoning_content || choice?.message?.reasoning || json?.candidates?.[0]?.content?.parts?.some(part => part.thought)) throw thoughtOnly(choice?.finish_reason);
+    if (json?.error) throw failure(500, json, key);
+    if (vertex && (json?.promptFeedback?.blockReason || /SAFETY|RECITATION|BLOCKLIST|PROHIBITED_CONTENT/i.test(json?.candidates?.[0]?.finishReason || ''))) throw Error('文字模型：Vertex 未返回正文，请检查酒馆中的响应说明或调整请求内容');
     return '';
   };
   // 不用流式: asked the ordinary way at once.
@@ -246,7 +262,8 @@ export async function customRequest({text, key, prompt, responseLength, fetch: s
 }
 
 /** Model ids the API lists (GET /models): for picking a model and checking the connection. Listing costs nothing. */
-export async function listModels({text, key, fetch: send = globalThis.fetch}) {
+export async function listModels({text, key, fetch: send = globalThis.fetch, context, document}) {
+  if (text.provider === 'vertexai') return vertexModels(text, context, document);
   const base = apiBase(text.url);
   let response;
   // Some APIs (火山方舟 among them) have no list of models: the model is written by hand then.

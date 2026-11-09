@@ -70,7 +70,12 @@ function place(position) {
   return y ? `${x}, ${y} of the picture` : `${x} of the picture`;
 }
 /** One English request for GPT from the picture: scene tags, then each person's tags and place in the frame. */
-export function gptPrompt({prompt = '', characters = []} = {}) {
+export function gptPrompt({prompt = '', characters = [], comic = false} = {}) {
+  if (comic) return [
+    'Draw one complete comic page. Follow the panel layout and reading order below. Each appearance belongs to its described panel; repeated names refer to the same person across panels. Render each Text: passage verbatim in its assigned speech bubble or narration. If no Text: passages are present, draw no text or speech bubbles.',
+    prompt,
+    ...characters.map((character, index) => `Panel appearance ${index + 1}${character.name ? ` (${character.name})` : ''}:\n${character.prompt}`)
+  ].filter(Boolean).join('\n\n');
   const scene = plainTags(prompt), people = characters.map(c => ({tags: plainTags(c.prompt), where: place(c.position)})).filter(c => c.tags);
   const lines = ['Draw one illustration described by the Danbooru-style tags and short phrases below. Follow them closely; do not add text or captions to the picture.'];
   if (scene) lines.push('Scene and style: ' + scene + '.');
