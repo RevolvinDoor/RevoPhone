@@ -1085,7 +1085,10 @@ export class TTSBackend {
             ['━━ 正文注入预览（当前状态实际发送内容） ━━', blocks.map(b => `【${b.key} · 深度 ${b.depth}】\n${b.text}`).join('\n\n') || '（当前没有启用的正文注入内容）'],
             ['━━ 洞察推荐扫描（点击扫描评估报告时发送） ━━', getEntry('insightPrompt')?.text || ''],
             ['━━ 从剧情同步状态栏（点击从剧情同步时发送） ━━', getEntry('syncPrompt')?.text || ''],
-            ['━━ 商城进货工作台（比例尺 + 姿势提示词 + 皮躯/肉躯/服饰打版） ━━', ['scaleRule', 'mallPosePrompt', 'skinWorkbench', 'ringWorkbench', 'apparelWorkbench'].map(k => getEntry(k)?.text || '').filter(Boolean).join('\n\n')]
+            ['━━ 商城进货工作台（前置对话 + 破限头 + 比例尺 + 姿势预设 + 皮躯/肉躯/服饰打版） ━━', ['restockPreUser', 'restockPreAssistant', 'restockSysHeader', 'scaleRule', 'mallPosePrompt', 'mallPoseStand', 'mallPoseSolo', 'skinWorkbench', 'ringWorkbench', 'apparelWorkbench'].map(k => {
+                const e = getEntry(k);
+                return e && e.enabled !== false ? e.text : '';
+            }).filter(Boolean).join('\n\n')]
         ];
         return scenes.map(([title, body]) => `${title}\n\n${body}`).join('\n\n');
     }
@@ -1294,10 +1297,50 @@ export class TTSBackend {
         // "假流式" channels only answer streamed requests, and the tavern's background generation never streams.
         // A length the task asks for replaces the tavern's own for that request: the tavern's, when longer, is kept.
         const own = context?.mainApi === 'openai' ? context.chatCompletionSettings?.openai_max_tokens : 0;
-        const outgoing=tavernTextRequest(request.responseLength ? {...request, responseLength: answerRoom(request.responseLength, own)} : request);
-        const source = context.eventSource, event = context.eventTypes?.CHAT_COMPLETION_SETTINGS_READY, last = JSON.stringify(asMessages(outgoing.prompt).at(-1)?.content ?? '');
+        const baseOutgoing = tavernTextRequest(request.responseLength ? {...request, responseLength: answerRoom(request.responseLength, own)} : request);
+        // Preserve multimodal content arrays (e.g. [{type:'text'},{type:'image_url'}]) across TauriTavern's createRawPrompt,
+        // which otherwise calls substituteParams(message.content) and coerces non-string content to "[object Object]".
+        const multimodalMap = new Map();
+        const outgoing = Array.isArray(baseOutgoing.prompt)
+            ? {
+                ...baseOutgoing,
+                prompt: baseOutgoing.prompt.map((m, idx) => {
+                    if (m && Array.isArray(m.content)) {
+                        multimodalMap.set(idx, clone(m.content));
+                        const textPart = m.content.filter(p => p?.type === 'text' && typeof p.text === 'string').map(p => p.text).join('\n');
+                        return {...m, content: textPart.replaceAll('{{', '{\u200b{')};
+                    }
+                    return m && typeof m.content === 'string' ? {...m, content: m.content.replaceAll('{{', '{\u200b{')} : m;
+                })
+            }
+            : baseOutgoing;
+        const restoreMultimodal = list => {
+            if (!multimodalMap.size || !Array.isArray(list)) return;
+            for (const [idx, contentArr] of multimodalMap.entries()) {
+                if (list[idx] && typeof list[idx] === 'object') {
+                    list[idx].content = clone(contentArr);
+                }
+            }
+        };
+        const source = context.eventSource;
+        const promptReadyEvent = context.eventTypes?.CHAT_COMPLETION_PROMPT_READY;
+        const event = context.eventTypes?.CHAT_COMPLETION_SETTINGS_READY;
+        const last = JSON.stringify(asMessages(outgoing.prompt).at(-1)?.content ?? '');
         let payload = null;
-        const keep = data => { if (!payload && data?.type === 'quiet' && JSON.stringify(data.messages?.at?.(-1)?.content ?? '') === last) { payload = clone(data); const id = this.requestLog.add('酒馆最终请求', data); this.requestLog.finish(id, {state: '已交给酒馆发送'}); } };
+        const onPromptReady = data => {
+            if (Array.isArray(data?.chat)) restoreMultimodal(data.chat);
+        };
+        const keep = data => {
+            if (data?.type === 'quiet' && Array.isArray(data?.messages)) {
+                restoreMultimodal(data.messages);
+            }
+            if (!payload && data?.type === 'quiet' && (multimodalMap.size || JSON.stringify(data.messages?.at?.(-1)?.content ?? '') === last)) {
+                payload = clone(data);
+                const id = this.requestLog.add('酒馆最终请求', data);
+                this.requestLog.finish(id, {state: '已交给酒馆发送'});
+            }
+        };
+        if (source?.on && promptReadyEvent && multimodalMap.size) source.on(promptReadyEvent, onPromptReady);
         if (source?.on && event) source.on(event, keep);
         let empty = false;
         try {
@@ -1307,7 +1350,10 @@ export class TTSBackend {
         } catch (error) {
             if (!payload || !/no message generated|empty/i.test(String(error?.message || ''))) throw error;
             empty = true;
-        } finally { source?.removeListener?.(event, keep); }
+        } finally {
+            if (promptReadyEvent && multimodalMap.size) source?.removeListener?.(promptReadyEvent, onPromptReady);
+            source?.removeListener?.(event, keep);
+        }
         if (empty) { const id = this.requestLog.add('文字模型重试', {reason: '普通请求为空，改用流式'}, 'warn'); this.requestLog.finish(id, {retry: true}); return this.streamTavern(context, payload); }
     }
     /** Sends the tavern's chat-completion request again with streaming on, and reads the whole answer. */

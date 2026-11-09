@@ -6,10 +6,9 @@
 import {storyLines} from './core/moments.js';
 import {activeChatPreset, cleanTagged} from './core/chat.js';
 import {cardRoutes, findRoute, roleTypeOf} from './core/routes.js';
-import {ensureTarget, normalizeCatalogItem, GENDERS, xenoPromptEntryText, XENO_PROMPT_DEFAULTS, extractCardProtagonistProfile, applyXenoUpdateFromText} from './core/xeno.js';
+import {ensureTarget, normalizeCatalogItem, GENDERS, xenoPromptEntryText, xenoMallPosePromptText, XENO_PROMPT_DEFAULTS, extractCardProtagonistProfile, applyXenoUpdateFromText} from './core/xeno.js';
 import {searchStoryMessages} from './host-tt.js';
 import {worldInfoFor, loreOptions} from './host-lore.js';
-import {requestAssistantText} from './host-assistant.js';
 
 export function createXenoHost({context, settings, backend, notice = () => {}}) {
   const busy = {insight: null, sync: null, restock: null};
@@ -29,16 +28,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
     return p;
   }
 
-  async function generateRestockText(ctx, messages, hasImage = false) {
-    if (hasImage) {
-      try {
-        const res = await requestAssistantText(ctx, backend, settings(), messages, {label: '商城 · 识图进货'});
-        const text = typeof res === 'string' ? res : String(res?.text || '');
-        if (text.trim()) return text;
-      } catch (err) {
-        backend.reportDiagnostic?.('商城 · 识图进货', err, 'warn');
-      }
-    }
+  async function generateRestockText(ctx, messages) {
     return String(await backend.generateText(ctx, {prompt: messages, responseLength: 1800, trimNames: false}) || '');
   }
 
@@ -291,7 +281,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
       const preAssistant = xenoPromptEntryText(cur, 'restockPreAssistant');
       const sysHeader = xenoPromptEntryText(cur, 'restockSysHeader') || XENO_PROMPT_DEFAULTS.restockSysHeader;
       const WORKBENCH_SCALE_RULE = xenoPromptEntryText(cur, 'scaleRule') || XENO_PROMPT_DEFAULTS.scaleRule;
-      const WORKBENCH_POSE_PROMPT = xenoPromptEntryText(cur, 'mallPosePrompt');
+      const WORKBENCH_POSE_PROMPT = xenoMallPosePromptText(cur);
       const WORKBENCH_SKIN_SUIT_RULE = xenoPromptEntryText(cur, 'skinWorkbench') || XENO_PROMPT_DEFAULTS.skinWorkbench;
       const WORKBENCH_FLESH_RING_RULE = xenoPromptEntryText(cur, 'ringWorkbench') || XENO_PROMPT_DEFAULTS.ringWorkbench;
       const WORKBENCH_APPAREL_RULE = xenoPromptEntryText(cur, 'apparelWorkbench') || XENO_PROMPT_DEFAULTS.apparelWorkbench;

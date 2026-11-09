@@ -7,6 +7,12 @@ import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {lineEffect} from './voice-fx.js';
 export {XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset};
 
+export const MALL_POSE_ENTRIES = Object.freeze([
+  {id: 'mallPosePrompt', label: '🧍 T-pose+三视图', title: '商城进货 · 姿势预设1（T-pose+三视图）'},
+  {id: 'mallPoseStand', label: '📐 标准站姿三视图', title: '商城进货 · 姿势预设2（标准站姿三视图）'},
+  {id: 'mallPoseSolo', label: '✨ 单人全身展示', title: '商城进货 · 姿势预设3（单人全身展示）'}
+]);
+
 export const GENDERS = Object.freeze(['男', '女', '扶她']);
 export const POSSESSION_MODES = Object.freeze(['浅层共鸣', '意识共存', '完全占据', '认知覆盖']);
 export const POSSESSION_WAYS = Object.freeze(['洞察推荐', '近距锁定', '灵体游离']);
@@ -430,12 +436,16 @@ export function normalizeXenoPreset(raw) {
     if (id === 'syncPrompt' && entryText.startsWith('你是【异构终端】的实时状态栏提取引擎。请根据最新剧情与角色设定') && builtin?.text) {
       entryText = builtin.text;
     }
+    let entryTitle = clip(e.title, 80) || builtin?.title || '自定义提示词条目';
+    if (id === 'mallPosePrompt' && entryTitle === '商城进货 · 商品生图姿势提示词（T-pose+三视图）' && builtin?.title) {
+      entryTitle = builtin.title;
+    }
     const normEntry = {
       id,
-      title: clip(e.title, 80) || builtin?.title || '自定义提示词条目',
+      title: entryTitle,
       scope,
       triggerMode,
-      enabled: e.enabled !== false,
+      enabled: typeof e.enabled === 'boolean' ? e.enabled : (builtin ? builtin.enabled !== false : true),
       text: entryText
     };
     byId.set(id, normEntry);
@@ -466,6 +476,24 @@ export function xenoPromptEntryText(xeno, entryId) {
   if (!entry) return XENO_PROMPT_DEFAULTS[entryId] || '';
   if (entry.enabled === false) return '';
   return String(entry.text ?? '');
+}
+
+export function activeMallPoseEntryId(xeno) {
+  const preset = activeXenoPreset(xeno);
+  for (const {id} of MALL_POSE_ENTRIES) {
+    const entry = preset.entries?.find(e => e.id === id);
+    if (entry ? entry.enabled !== false : id === 'mallPosePrompt') return id;
+  }
+  return '';
+}
+
+export function xenoMallPosePromptText(xeno) {
+  const parts = [];
+  for (const {id} of MALL_POSE_ENTRIES) {
+    const text = xenoPromptEntryText(xeno, id).trim();
+    if (text) parts.push(text);
+  }
+  return parts.join(', ');
 }
 
 /** Extracts per-chat session state (excluding global mall/wardrobe catalog & global preferences) for chat isolation & floor snapshots. */

@@ -146,6 +146,8 @@ export const XENO_PROMPT_DEFAULTS = Object.freeze({
     '3. 扶她阳具（如有）：疲软状态 7cm - 10cm，充血勃起状态严格限制在 15cm - 22cm 之间，粗度（直径）3.5cm - 5cm。严禁出现超过25cm、手臂粗或触手化等猎奇尺寸。'
   ].join('\n'),
   mallPosePrompt: 'character sheet, reference sheet, multiple views, three-view drawing, front view, side view, back view, t-pose, arms outstretched, full body, standing, symmetrical, simple background, white background',
+  mallPoseStand: 'character sheet, reference sheet, multiple views, three-view drawing, front view, side view, back view, full body, standing, simple background, white background',
+  mallPoseSolo: 'solo, full body, standing, looking at viewer, fashion showcase, simple background, high quality',
   skinWorkbench: [
     '<skin_suit_design_workbench>',
     '【活体皮躯（Skin Suit）视觉还原与创造台】',
@@ -210,7 +212,9 @@ export const DEFAULT_XENO_ENTRIES = Object.freeze([
   {id: 'restockPreAssistant', title: '商城进货 · 前置助手提示词（设计师小此回复）', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.restockPreAssistant},
   {id: 'restockSysHeader', title: '商城进货 · 设计工作台破限头', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.restockSysHeader},
   {id: 'scaleRule', title: '商城进货 · 比例尺规范（身高/罩杯/尺寸）', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.scaleRule},
-  {id: 'mallPosePrompt', title: '商城进货 · 商品生图姿势提示词（T-pose+三视图）', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.mallPosePrompt},
+  {id: 'mallPosePrompt', title: '商城进货 · 姿势预设1（T-pose+三视图）', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.mallPosePrompt},
+  {id: 'mallPoseStand', title: '商城进货 · 姿势预设2（标准站姿三视图）', scope: 'mall', triggerMode: 'auto', enabled: false, text: XENO_PROMPT_DEFAULTS.mallPoseStand},
+  {id: 'mallPoseSolo', title: '商城进货 · 姿势预设3（单人全身展示）', scope: 'mall', triggerMode: 'auto', enabled: false, text: XENO_PROMPT_DEFAULTS.mallPoseSolo},
   {id: 'skinWorkbench', title: '商城进货 · 活体皮躯工作台提示词', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.skinWorkbench},
   {id: 'ringWorkbench', title: '商城进货 · 活体肉躯工作台提示词', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.ringWorkbench},
   {id: 'apparelWorkbench', title: '商城进货 · 高定服饰打版工作台提示词', scope: 'mall', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.apparelWorkbench}

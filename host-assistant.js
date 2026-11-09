@@ -101,8 +101,38 @@ async function requestAssistantTextRaw(ctx, backend, settings, messages, {preset
   if (typeof ctx.generateRaw !== 'function') throw Error('当前酒馆版本未提供独立文本生成接口');
   // generateRaw expands arbitrary SillyTavern macros in every message, including user text. Break only the macro
   // opener in this request copy; retained conversation text stays exact, and no persona/state macro runs a second time.
-  const prompt = messages.map(message => ({...message, content: String(message.content || '').replaceAll('{{', '{\u200b{')}));
-  return ctx.generateRaw({prompt, api: ctx.mainApi, trimNames: false});
+  const multimodalMap = new Map();
+  const prompt = messages.map((message, idx) => {
+    if (Array.isArray(message.content)) {
+      multimodalMap.set(idx, structuredClone(message.content));
+      const textPart = message.content.filter(p => p?.type === 'text' && typeof p.text === 'string').map(p => p.text).join('\n');
+      return {...message, content: textPart.replaceAll('{{', '{\u200b{')};
+    }
+    return {...message, content: String(message.content || '').replaceAll('{{', '{\u200b{')};
+  });
+  const source = ctx.eventSource;
+  const promptReadyEvent = ctx.eventTypes?.CHAT_COMPLETION_PROMPT_READY;
+  const settingsReadyEvent = ctx.eventTypes?.CHAT_COMPLETION_SETTINGS_READY;
+  const restore = list => {
+    if (!multimodalMap.size || !Array.isArray(list)) return;
+    for (const [idx, arr] of multimodalMap.entries()) {
+      if (list[idx] && typeof list[idx] === 'object') list[idx].content = structuredClone(arr);
+    }
+  };
+  const onPromptReady = data => { if (Array.isArray(data?.chat)) restore(data.chat); };
+  const onSettingsReady = data => { if (data?.type === 'quiet' && Array.isArray(data?.messages)) restore(data.messages); };
+  if (source?.on && multimodalMap.size) {
+    if (promptReadyEvent) source.on(promptReadyEvent, onPromptReady);
+    if (settingsReadyEvent) source.on(settingsReadyEvent, onSettingsReady);
+  }
+  try {
+    return await ctx.generateRaw({prompt, api: ctx.mainApi, trimNames: false});
+  } finally {
+    if (multimodalMap.size) {
+      if (promptReadyEvent) source?.removeListener?.(promptReadyEvent, onPromptReady);
+      if (settingsReadyEvent) source?.removeListener?.(settingsReadyEvent, onSettingsReady);
+    }
+  }
 }
 
 /** Whether the conversation is about pictures (the drawing guide is sent then, not with every message). */

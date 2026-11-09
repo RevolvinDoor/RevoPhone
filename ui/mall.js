@@ -7,17 +7,11 @@
 
 import {createView, esc, heading} from './common.js';
 import {icon} from './icons.js';
-import {getEntity, formatVoiceRoleLabel, activeXenoPreset, xenoPromptEntryText, XENO_PROMPT_DEFAULTS} from '../core/xeno.js';
+import {getEntity, formatVoiceRoleLabel, activeXenoPreset, xenoPromptEntryText, activeMallPoseEntryId, MALL_POSE_ENTRIES, XENO_PROMPT_DEFAULTS} from '../core/xeno.js';
 import {blobToDataUrl, generateItemPreview, renderVoiceBindSelectOptions, openVoicePoolPickerDialog} from './xeno-media.js';
 import {saveFile} from '../download.js';
 
 export const MALL_ITEMS_FILE = 'revophone-mall-items';
-
-const POSE_PRESETS = [
-  ['🧍 T-pose+三视图', XENO_PROMPT_DEFAULTS.mallPosePrompt],
-  ['📐 标准站姿三视图', 'character sheet, reference sheet, multiple views, three-view drawing, front view, side view, back view, full body, standing, simple background, white background'],
-  ['✨ 单人全身展示', 'solo, full body, standing, looking at viewer, fashion showcase, simple background, high quality']
-];
 
 const SHELVES = [
   ['skin_suit', '皮躯专柜'],
@@ -59,22 +53,54 @@ export function mallApp(ctx) {
   const origDispose = v.dispose.bind(v);
   v.dispose = () => { unsubscribe?.(); origDispose(); };
 
-  function savePosePrompt(nextPoseText) {
+  function ensurePoseEntriesInPreset(preset) {
+    for (const def of MALL_POSE_ENTRIES) {
+      if (!preset.entries.some(e => e.id === def.id)) {
+        preset.entries.push({
+          id: def.id,
+          title: def.title,
+          scope: 'mall',
+          triggerMode: 'auto',
+          enabled: def.id === 'mallPosePrompt',
+          text: XENO_PROMPT_DEFAULTS[def.id] || ''
+        });
+      }
+    }
+  }
+
+  function selectPosePresetEntry(targetEntryId) {
     const xeno = xenoState();
     const preset = structuredClone(activeXenoPreset(xeno));
-    const entry = preset.entries.find(e => e.id === 'mallPosePrompt');
+    ensurePoseEntriesInPreset(preset);
+    const curActiveId = activeMallPoseEntryId(xeno);
+    const poseInput = v.root.querySelector('#mall-pose-prompt-input');
+    if (curActiveId && poseInput) {
+      const curEntry = preset.entries.find(e => e.id === curActiveId);
+      if (curEntry && poseInput.value.trim() !== String(curEntry.text || '').trim()) {
+        curEntry.text = poseInput.value.trim();
+      }
+    }
+    const targetEntry = preset.entries.find(e => e.id === targetEntryId);
+    const wasOnlyActive = curActiveId === targetEntryId && targetEntry?.enabled !== false;
+    for (const def of MALL_POSE_ENTRIES) {
+      const entry = preset.entries.find(e => e.id === def.id);
+      if (!entry) continue;
+      entry.enabled = wasOnlyActive ? false : (def.id === targetEntryId);
+    }
+    api.saveXenoPreset(preset);
+    return !wasOnlyActive;
+  }
+
+  function savePosePrompt(nextPoseText, targetEntryId = '') {
+    const xeno = xenoState();
+    const preset = structuredClone(activeXenoPreset(xeno));
+    ensurePoseEntriesInPreset(preset);
+    const id = targetEntryId || activeMallPoseEntryId(xeno) || 'mallPosePrompt';
+    const entry = preset.entries.find(e => e.id === id);
+    const clean = String(nextPoseText ?? '').trim();
     if (entry) {
-      entry.text = String(nextPoseText ?? '').trim();
-      entry.enabled = !!entry.text;
-    } else {
-      preset.entries.push({
-        id: 'mallPosePrompt',
-        title: '商城进货 · 商品生图姿势提示词（T-pose+三视图）',
-        scope: 'mall',
-        triggerMode: 'auto',
-        enabled: !!String(nextPoseText ?? '').trim(),
-        text: String(nextPoseText ?? '').trim()
-      });
+      entry.text = clean;
+      if (clean && !activeMallPoseEntryId(xeno)) entry.enabled = true;
     }
     api.saveXenoPreset(preset);
   }
@@ -204,7 +230,11 @@ export function mallApp(ctx) {
   function renderRestockPanel() {
     const busy = restocking || !!api.xenoBusy?.('restock');
     const xeno = xenoState();
-    const curPosePrompt = xenoPromptEntryText(xeno, 'mallPosePrompt');
+    const preset = activeXenoPreset(xeno);
+    const activePoseId = activeMallPoseEntryId(xeno);
+    const activePoseEntry = activePoseId ? preset.entries?.find(e => e.id === activePoseId) : null;
+    const curPosePrompt = activePoseEntry ? String(activePoseEntry.text ?? '') : '';
+    const activePoseMeta = MALL_POSE_ENTRIES.find(d => d.id === activePoseId);
     return `
       <section class="xeno-status-card mall-restock-box">
         <header class="xeno-status-head">
@@ -267,12 +297,16 @@ export function mallApp(ctx) {
           </div>
           <div class="xeno-field-inline" style="margin-top:6px">
             <div class="xeno-row-between" style="margin-bottom:4px;flex-wrap:wrap;gap:4px">
-              <span>商品生图姿势与构图提示词（如 T-pose + 三视图，自动用于进货与商品生图）</span>
+              <span>商品生图姿势与构图提示词（${activePoseMeta ? `当前：${esc(activePoseMeta.label)} · 预设独立保存` : '未启用姿势预设 · 点击右侧按钮切换'}）</span>
               <div class="xeno-chip-group" style="margin:0">
-                ${POSE_PRESETS.map(([label, val]) => `<button type="button" class="xeno-mini-btn ${curPosePrompt.trim() === val ? 'primary' : ''}" data-action="set-pose-preset" data-pose="${esc(val)}">${esc(label)}</button>`).join('')}
+                ${MALL_POSE_ENTRIES.map(({id, label}) => {
+                  const entry = preset.entries?.find(e => e.id === id);
+                  const isOn = entry ? entry.enabled !== false : id === 'mallPosePrompt';
+                  return `<button type="button" class="xeno-mini-btn ${isOn ? 'primary' : ''}" data-action="set-pose-preset" data-pose-id="${esc(id)}" title="切换「${esc(label)}」独立预设条目（不会覆盖其他姿势提示词）">${esc(label)}</button>`;
+                }).join('')}
               </div>
             </div>
-            <input type="text" class="xeno-input" id="mall-pose-prompt-input" data-change="save-pose-prompt" value="${esc(curPosePrompt)}" placeholder="例如：character sheet, multiple views, front view, side view, back view, t-pose, full body">
+            <input type="text" class="xeno-input" id="mall-pose-prompt-input" data-pose-id="${esc(activePoseId || 'mallPosePrompt')}" data-change="save-pose-prompt" value="${esc(curPosePrompt)}" placeholder="${activePoseId ? '当前姿势预设的提示词（修改后仅保存在该按钮对应的预设条目中）' : '点击上方任意姿势按钮启用对应预设，或直接输入自定义姿势 Tag'}">
           </div>
           <div class="xeno-row-controls">
             <button type="button" class="xeno-btn primary full" data-action="run-restock" ${busy ? 'disabled' : ''}>
@@ -432,8 +466,10 @@ export function mallApp(ctx) {
     if (act === 'open-mall-batch') { openBatchManageSheet(); return; }
     if (act === 'set-pose-preset') {
       restockText = v.root.querySelector('#mall-restock-text')?.value || restockText;
-      savePosePrompt(el.dataset.pose || '');
-      ctx.notify('已更新商品生图姿势提示词');
+      const poseId = el.dataset.poseId || 'mallPosePrompt';
+      const enabled = selectPosePresetEntry(poseId);
+      const meta = MALL_POSE_ENTRIES.find(d => d.id === poseId);
+      ctx.notify(enabled ? `已切换为「${meta?.label || poseId}」独立姿势预设` : `已关闭「${meta?.label || poseId}」姿势预设`);
       return;
     }
     if (act === 'mall-shelf') { activeShelf = el.dataset.shelf; v.refresh(); return; }
@@ -492,8 +528,9 @@ export function mallApp(ctx) {
       if (restocking || api.xenoBusy?.('restock')) return;
       restockText = v.root.querySelector('#mall-restock-text')?.value || '';
       const poseInput = v.root.querySelector('#mall-pose-prompt-input');
-      if (poseInput && poseInput.value.trim() !== xenoPromptEntryText(xeno, 'mallPosePrompt').trim()) {
-        savePosePrompt(poseInput.value.trim());
+      const activePoseId = activeMallPoseEntryId(xeno);
+      if (poseInput && activePoseId && poseInput.value.trim() !== xenoPromptEntryText(xeno, activePoseId).trim()) {
+        savePosePrompt(poseInput.value.trim(), activePoseId);
       }
       restocking = true;
       v.refresh();
@@ -665,8 +702,8 @@ export function mallApp(ctx) {
     if (act === 'select-mall-wearer') { api.xenoAct('selectWardrobeTarget', {key: el.value}); return; }
     if (act === 'save-pose-prompt') {
       restockText = v.root.querySelector('#mall-restock-text')?.value || restockText;
-      savePosePrompt(el.value);
-      ctx.notify('已保存商品生图姿势提示词（同步至「预设 · 异构」）');
+      savePosePrompt(el.value, el.dataset.poseId || '');
+      ctx.notify('已保存到当前姿势预设条目（同步至「预设 · 异构」）');
       return;
     }
     if (act === 'restock-cat') {
