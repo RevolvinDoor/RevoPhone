@@ -6,6 +6,7 @@
 import {createView, esc, heading} from './common.js';
 import {icon} from './icons.js';
 import {getEntity, effectiveEntityView, formatVoiceRoleLabel, resolveWear, itemOccupant, wearLayers, itemVoiceRef} from '../core/xeno.js';
+import {extensionEnabled} from '../core/xeno-wear.js';
 import {blobToDataUrl, generateItemPreview, openVoicePoolPickerDialog, openItemVoiceListPicker, generateEntityPortrait, openEntityPortraitDialog} from './xeno-media.js';
 
 const SLOT_NAMES = {
@@ -80,7 +81,7 @@ export function wardrobeApp(ctx) {
                 <button type="button" class="xeno-mini-btn" data-action="pick-item-fav-voice" data-id="${id}">♡ 从收藏夹选</button>
               </div>
               <p class="xeno-hint">音色随这件装备永久保存，换聊天或移除收藏后仍保留。</p>
-              ${!isSkin ? `<div class="xeno-row-controls">${[['idle','静息'],['forward','前方延展'],['backward','后方延展']].map(([mode,label]) => `<button type="button" class="xeno-mini-btn ${layer.extendMode === mode ? 'primary' : ''}" data-action="ring-mode" data-id="${id}" data-mode="${mode}">${label}</button>`).join('')}</div>` : ''}
+              ${!isSkin ? `<div class="xeno-row-controls">${[['idle','静息'],['forward','前方延展'],['backward','后方延展']].map(([mode,label]) => `<button type="button" class="xeno-mini-btn ${(mode === 'idle' ? layer.extendMode === 'idle' : extensionEnabled(layer.extendMode, mode)) ? 'primary' : ''}" aria-pressed="${mode === 'idle' ? layer.extendMode === 'idle' : extensionEnabled(layer.extendMode, mode)}" data-action="ring-mode" data-id="${id}" data-mode="${mode}">${label}</button>`).join('')}</div><p class="xeno-hint">前、后方延展可同时开启；再次点击只关闭对应方向，静息会收起两个方向。</p>` : ''}
               <div class="xeno-row-controls">
                 ${[['full','全脸覆面'],['neck','收起本层头部']].map(([mode,label]) => `<button type="button" class="xeno-mini-btn ${layer.faceMode === mode ? 'primary' : ''}" data-action="${isSkin ? 'skin-face' : 'ring-face'}" data-id="${id}" data-mode="${mode}">${label}</button>`).join('')}
                 <button type="button" class="xeno-mini-btn ${layer.organOut ? 'accent' : ''}" data-action="layer-organ" data-id="${id}">${layer.organOut ? '外露部位：启用' : '外露部位：收起'}</button>
@@ -306,7 +307,12 @@ export function wardrobeApp(ctx) {
       return;
     }
     if (act === 'ring-mode') {
-      api.xenoAct('updateMountOption', {targetKey, itemId: el.dataset.id, patch: {fleshExtendMode: el.dataset.mode}});
+      const layer = wearLayers(entity).find(layer => layer.itemId === el.dataset.id);
+      if (!layer) return;
+      const mode = el.dataset.mode;
+      const patch = mode === 'idle' ? {fleshExtendMode: 'idle'}
+        : {[mode === 'forward' ? 'fleshForwardEnabled' : 'fleshBackwardEnabled']: !extensionEnabled(layer.extendMode, mode)};
+      api.xenoAct('updateMountOption', {targetKey, itemId: layer.itemId, patch});
       return;
     }
     if (act === 'ring-face') {

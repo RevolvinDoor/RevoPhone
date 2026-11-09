@@ -6,7 +6,7 @@ import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS, XENO_PROMPT_DEFAULTS, XENO_TRIGGER_
 import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {encodeBoundVoiceRef, parseBoundVoiceRef} from './xeno-voice.js';
 import {lineEffect} from './voice-fx.js';
-import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, itemVoiceRef} from './xeno-wear.js';
+import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, itemVoiceRef, extensionEnabled, extensionMode} from './xeno-wear.js';
 export {wearLayers, resolveWear, itemOccupant, itemVoiceRef};
 export {XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset};
 
@@ -927,7 +927,7 @@ export function freezeItemVoices(settings) {
  * 2. 肉体互换 (Body Swap): 双向互换后双方肉体音色永久对调；单向夺舍后主角永久使用目标 B 的音色。
  * 3. 融合之术 (Fusion): 融合期间开口说话使用目标 B 的音色；主角心声保留主角自己的原音色。
  * 4. 活体皮躯 (Skin Suit): 仅在「全脸覆面」(skinFaceMode === 'full') 时开口使用皮躯绑定的音色；「露原貌」(neck) 恢复本人当前肉体音色。
- * 5. 活体肉躯 (Flesh Ring): 仅在「后方全身延展」且「全脸覆面」(fleshExtendMode === 'backward' && fleshFaceMode === 'full') 时开口使用肉躯绑定的音色；「露原貌」(neck) 或静息/前方延展恢复本人当前肉体音色。
+ * 5. 活体肉躯 (Flesh Ring): 后方延展开启（含前后同时延展）且全脸覆面时使用有效头部绑定的音色；头部收起或后方延展关闭时继续向内查找有效头部，最终回到本人音色。
  * 6. 肉体改造 (Body Mod): 若肉体绑定了新建/指定的音色角色 (`entity.voiceRole`)，则使用该角色音色。
  */
 function itemMatchesSpeaker(item, rawName) {
@@ -2030,7 +2030,7 @@ export function xenoEquipItem(state, {targetKey = '__protagonist__', itemId, mod
     if (replace && entity.livingMount.layers.length) entity.livingMount.layers.pop();
     entity.livingMount.layers.push({
       itemId: item.id, kind: item.category, faceMode: mode === 'neck' ? 'neck' : 'full',
-      extendMode: ['idle', 'forward', 'backward'].includes(mode) ? mode : item.category === 'flesh_ring' ? 'forward' : 'idle',
+      extendMode: ['idle', 'forward', 'backward', 'both'].includes(mode) ? mode : item.category === 'flesh_ring' ? 'forward' : 'idle',
       organOut: true, voiceRole: clip(itemVoiceRef(next, item), 4000)
     });
     syncWearMount(entity.livingMount);
@@ -2060,7 +2060,13 @@ export function xenoUpdateMountOption(state, {targetKey = '__protagonist__', ite
     if (typeof patch.skinOrganOut === 'boolean') skin.organOut = patch.skinOrganOut;
   }
   if (ring) {
-    if (['idle', 'forward', 'backward'].includes(patch.fleshExtendMode)) ring.extendMode = patch.fleshExtendMode;
+    if (['idle', 'forward', 'backward', 'both'].includes(patch.fleshExtendMode)) ring.extendMode = patch.fleshExtendMode;
+    if (typeof patch.fleshForwardEnabled === 'boolean' || typeof patch.fleshBackwardEnabled === 'boolean') {
+      ring.extendMode = extensionMode(
+        typeof patch.fleshForwardEnabled === 'boolean' ? patch.fleshForwardEnabled : extensionEnabled(ring.extendMode, 'forward'),
+        typeof patch.fleshBackwardEnabled === 'boolean' ? patch.fleshBackwardEnabled : extensionEnabled(ring.extendMode, 'backward')
+      );
+    }
     if (patch.fleshFaceMode) ring.faceMode = patch.fleshFaceMode === 'neck' ? 'neck' : 'full';
     if (typeof patch.organOut === 'boolean') ring.organOut = patch.organOut;
   }

@@ -2,6 +2,14 @@ const text = (value, limit = 120) => typeof value === 'string' ? value.trim().sl
 const kinds = ['skin_suit', 'flesh_ring'];
 const last = (list, predicate) => list.slice().reverse().find(predicate);
 
+export function extensionEnabled(mode, direction) {
+  return mode === direction || mode === 'both';
+}
+
+export function extensionMode(forward, backward) {
+  return forward ? backward ? 'both' : 'forward' : backward ? 'backward' : 'idle';
+}
+
 export function normalizeWearMount(raw = {}) {
   raw = raw && typeof raw === 'object' ? raw : {};
   let input = raw.layers;
@@ -19,7 +27,7 @@ export function normalizeWearMount(raw = {}) {
     layers.push({
       itemId, kind: entry.kind,
       faceMode: entry.faceMode === 'neck' ? 'neck' : 'full',
-      extendMode: ['idle', 'forward', 'backward'].includes(entry.extendMode) ? entry.extendMode : 'idle',
+      extendMode: ['idle', 'forward', 'backward', 'both'].includes(entry.extendMode) ? entry.extendMode : 'idle',
       organOut: entry.organOut !== false,
       voiceRole: text(entry.voiceRole, 4000)
     });
@@ -64,7 +72,7 @@ export function resolveWear(xeno, entity) {
   const items = new Map((xeno.items || []).map(item => [item.id, item]));
   const layers = wearLayers(entity).map((layer, index) => ({...layer, index, item: items.get(layer.itemId)}))
     .filter(layer => layer.item && layer.item.category === layer.kind);
-  const covering = layer => layer.kind === 'skin_suit' || layer.extendMode === 'backward';
+  const covering = layer => layer.kind === 'skin_suit' || extensionEnabled(layer.extendMode, 'backward');
   const body = last(layers, covering) || null;
   const head = last(layers, layer => covering(layer) && layer.faceMode === 'full') || null;
   const organ = last(layers, layer => layer.organOut && (
@@ -79,7 +87,7 @@ export function resolveWear(xeno, entity) {
     headAppearance: head?.item.appearance || entity?.appearance || '',
     organAppearance: organ ? (organ.item.forwardExtension || organ.item.physiology || organ.item.summary || organ.item.name)
       : ['男', '扶她'].includes(entity?.gender) ? '本体外观（未单独记录）' : '',
-    layerText: layers.length ? layers.map(layer => `${layer.index + 1}. ${layer.item.name}［${layer.kind === 'skin_suit' ? '皮躯' : '肉躯 · ' + layer.extendMode} · ${layer.faceMode === 'full' ? '覆面' : '头部收起'} · 独立部位${layer.organOut ? '启用' : '收起'}］`).join(' → ') : '未穿戴'
+    layerText: layers.length ? layers.map(layer => `${layer.index + 1}. ${layer.item.name}［${layer.kind === 'skin_suit' ? '皮躯' : '肉躯 · ' + ({idle: '静息', forward: '前方延展', backward: '后方延展', both: '前后同时延展'}[layer.extendMode])} · ${layer.faceMode === 'full' ? '覆面' : '头部收起'} · 独立部位${layer.organOut ? '启用' : '收起'}］`).join(' → ') : '未穿戴'
   };
 }
 
