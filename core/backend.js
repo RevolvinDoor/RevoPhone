@@ -12,6 +12,7 @@ import { normalizeMoments, buildMomentsRequest } from './moments.js';
 import { normalizeCalls, buildCallRequest } from './call.js';
 import { normalizeText, activeText, customRequest, listModels, streamText, asMessages, tavernTextRequest, answerRoom, TEXT_PRESET_ID } from './llm.js';
 import {vertexSettings} from './vertex.js';
+import {wardrobeActionPlan, applyWardrobeReply} from './xeno-actions.js';
 import {hasComicPage, compileComicPage} from './comic.js';
 import { normalizeEmbed, embedReady, embedTexts } from './embed.js';
 import { bookId, emptyBook, cleanBook, removeNode, pruneBook } from './memory.js';
@@ -825,81 +826,133 @@ export class TTSBackend {
         floors[fid] ||= { before: extractXenoSession(this.settings.xeno), swipes: {} };
         if (!floors[fid].before) floors[fid].before = extractXenoSession(this.settings.xeno);
     }
+    prepareXenoStory(session) {
+        const current = this.settings.xeno;
+        const desiredIds = new Set((session?.wardrobePurchases || []).map(receipt => receipt.id));
+        const global = clone(current);
+        let balance = this.settings.chat.wallet.balance;
+        for (const receipt of current.wardrobePurchases || []) {
+            if (desiredIds.has(receipt.id)) continue;
+            balance = cents(balance + receipt.amount);
+            const item = global.items.find(candidate => candidate.id === receipt.itemId);
+            if (item?.storyPurchaseId === receipt.id) {
+                item.owned = false;
+                item.storyPurchaseId = '';
+            }
+        }
+        return {xeno: syncXenoWithRoutes(mergeXenoSession(global, session, this.cardKey()), this.routesHere(), this.cardKey()), balance};
+    }
+    saveXenoStory(desired) {
+        const previous = this.settings.xeno.wardrobePurchases || [];
+        const receipts = desired.wardrobePurchases || [];
+        const oldIds = new Set(previous.map(receipt => receipt.id));
+        const newIds = new Set(receipts.map(receipt => receipt.id));
+        const changes = [
+            ...previous.filter(receipt => !newIds.has(receipt.id)).map(receipt => ({...receipt, value: receipt.amount})),
+            ...receipts.filter(receipt => !oldIds.has(receipt.id)).map(receipt => ({...receipt, value: -receipt.amount}))
+        ];
+        const result = this.saveXeno((current, next) => {
+            const wallet = next.chat.wallet;
+            const balance = cents(wallet.balance + changes.reduce((sum, receipt) => sum + receipt.value, 0));
+            if (balance < 0) throw Error('余额不足，剧情穿戴未更新');
+            wallet.balance = balance;
+            for (const receipt of changes.filter(receipt => receipt.value !== 0)) {
+                wallet.ledger.unshift({id: crypto.randomUUID(), at: Date.now(), amount: receipt.value,
+                    kind: receipt.value > 0 ? 'refund' : 'shop', note: receipt.value > 0 ? '剧情回退 · 商城退款' : '剧情购买 · 异构商城', who: ''});
+            }
+            wallet.ledger.length = Math.min(wallet.ledger.length, WALLET_LIMITS.ledger);
+            return desired;
+        });
+        if (changes.length) this.emit('wallet', {balance: this.settings.chat.wallet.balance});
+        return result;
+    }
     /** Records and applies `<xeno_update>` for a received story floor + swipe. */
-    applyXenoFloorReply(floorId, swipeId = 0, messageText = '', { protagonistName = '' } = {}) {
+    applyXenoFloorReply(floorId, swipeId = 0, messageText = '', options = {}) {
         const fid = String(Number.isInteger(Number(floorId)) ? Number(floorId) : 0);
         const sid = String(Number.isInteger(Number(swipeId)) ? Number(swipeId) : 0);
-        const cardKey = this.cardKey();
         const floors = this.getChatFloors();
         floors[fid] ||= { before: extractXenoSession(this.settings.xeno), swipes: {} };
+        if (floors[fid].activeSwipe === sid && floors[fid].texts?.[sid] === messageText) return this.cardState().xeno;
         const baseSession = floors[fid].before || extractXenoSession(this.settings.xeno);
-        const baseXeno = syncXenoWithRoutes(mergeXenoSession(this.settings.xeno, baseSession, cardKey), this.routesHere(), cardKey);
+        floors[fid].operationId ||= crypto.randomUUID();
+        const prepared = this.prepareXenoStory(baseSession);
+        const baseXeno = prepared.xeno;
         const updated = messageText
-            ? applyXenoUpdateFromText(baseXeno, messageText, { routes: this.routesHere(), protagonistName, cardMembers: this.space?.members || [] })
+            ? applyXenoUpdateFromText(baseXeno, messageText, { routes: this.routesHere(), protagonistName: options.protagonistName, cardMembers: this.space?.members || [] })
             : null;
-        const finalXeno = updated || baseXeno;
+        const applied = applyWardrobeReply(updated || baseXeno, messageText, {
+            ...options, balance: prepared.balance, operationId: `${floors[fid].operationId}:${sid}`, baseline: baseXeno
+        });
+        const finalXeno = applied.state;
+        for (const entity of [finalXeno.protagonist, ...finalXeno.targets]) {
+            const original = [baseXeno.protagonist, ...baseXeno.targets].find(candidate => candidate.id === entity.id);
+            const targetKey = entity.id === '__protagonist__' ? '__protagonist__' : entity.name;
+            if (original && (original.livingMount.layers.length || entity.livingMount.layers.length || applied.affectedKeys?.includes(targetKey))) {
+                for (const field of ['gender', 'appearance', 'bodyBuild', 'physiology']) entity[field] = original[field];
+            }
+        }
         finalXeno.pendingActionNote = '';
+        const result = this.saveXenoStory(finalXeno);
         floors[fid].swipes ||= {};
         floors[fid].swipes[sid] = extractXenoSession(finalXeno);
+        floors[fid].texts ||= {};
+        floors[fid].texts[sid] = messageText;
+        floors[fid].activeSwipe = sid;
         this.pruneChatFloors(floors);
-        return this.saveXeno(finalXeno);
+        if (applied.messages.length) this.notify([...new Set(applied.messages)].join('；'));
+        this.persistActiveChatXeno().catch(() => {});
+        return result;
     }
     /** Restores or recomputes Xeno state when the user swipes/rerolls a story floor. */
-    rollbackXenoOnSwipe(floorId, swipeId = 0, messageText = '', { protagonistName = '' } = {}) {
-        const fid = String(Number.isInteger(Number(floorId)) ? Number(floorId) : 0);
-        const sid = String(Number.isInteger(Number(swipeId)) ? Number(swipeId) : 0);
-        const cardKey = this.cardKey();
-        const floors = this.getChatFloors();
-        const entry = floors[fid];
-        if (!entry) {
-            if (messageText) {
-                const updated = applyXenoUpdateFromText(this.cardState().xeno, messageText, { routes: this.routesHere(), protagonistName, cardMembers: this.space?.members || [] });
-                if (updated) return this.saveXeno(updated);
-            }
-            return null;
-        }
-        if (messageText && entry.swipes?.[sid]) {
-            return this.saveXeno(mergeXenoSession(this.settings.xeno, entry.swipes[sid], cardKey));
-        }
-        const baseXeno = syncXenoWithRoutes(mergeXenoSession(this.settings.xeno, entry.before, cardKey), this.routesHere(), cardKey);
-        const updated = messageText
-            ? applyXenoUpdateFromText(baseXeno, messageText, { routes: this.routesHere(), protagonistName, cardMembers: this.space?.members || [] })
-            : null;
-        const finalXeno = updated || baseXeno;
-        if (messageText) {
-            entry.swipes ||= {};
-            entry.swipes[sid] = extractXenoSession(finalXeno);
-        }
-        return this.saveXeno(finalXeno);
+    rollbackXenoOnSwipe(floorId, swipeId = 0, messageText = '', options = {}) {
+        if (!this.getChatFloors()[String(floorId)]) return null;
+        return this.replayXenoStory(floorId, swipeId, messageText, options);
     }
     /** Recomputes Xeno state when a story floor is edited. */
-    rollbackXenoOnEdit(floorId, swipeId = 0, messageText = '', { protagonistName = '' } = {}) {
-        const fid = String(Number.isInteger(Number(floorId)) ? Number(floorId) : 0);
-        const sid = String(Number.isInteger(Number(swipeId)) ? Number(swipeId) : 0);
-        const cardKey = this.cardKey();
+    rollbackXenoOnEdit(floorId, swipeId = 0, messageText = '', options = {}) {
+        if (!this.getChatFloors()[String(floorId)]) return null;
+        return this.replayXenoStory(floorId, swipeId, messageText, options);
+    }
+    replayXenoStory(floorId, swipeId, messageText, options = {}) {
         const floors = this.getChatFloors();
-        const entry = floors[fid];
-        const baseXeno = entry?.before
-            ? syncXenoWithRoutes(mergeXenoSession(this.settings.xeno, entry.before, cardKey), this.routesHere(), cardKey)
-            : this.cardState().xeno;
-        const updated = messageText
-            ? applyXenoUpdateFromText(baseXeno, messageText, { routes: this.routesHere(), protagonistName, cardMembers: this.space?.members || [] })
-            : null;
-        const finalXeno = updated || baseXeno;
-        if (entry) {
-            entry.swipes ||= {};
-            entry.swipes[sid] = extractXenoSession(finalXeno);
+        const entry = floors[String(floorId)];
+        if (!entry?.before) return null;
+        entry.activeSwipe = null;
+        let result = this.applyXenoFloorReply(floorId, swipeId, messageText, options);
+        const chat = options.chat || [];
+        for (const key of Object.keys(floors).map(Number).filter(key => key > Number(floorId)).sort((left, right) => left - right)) {
+            delete floors[key];
         }
-        return this.saveXeno(finalXeno);
+        for (let index = Number(floorId) + 1; index < chat.length; index++) {
+            const message = chat[index];
+            if (!message || message.is_user || message.is_system) continue;
+            result = this.applyXenoFloorReply(index, message.swipe_id || 0, message.mes || '', {
+                ...options, ...this.xenoStoryContext(chat, index)
+            });
+        }
+        this.persistActiveChatXeno().catch(() => {});
+        return result;
+    }
+    xenoStoryContext(chat, floorId) {
+        const previous = chat.slice(0, Number(floorId)).filter(message => message && !message.is_system);
+        return {
+            userText: [...previous].reverse().find(message => message.is_user)?.mes || '',
+            previousReply: [...previous].reverse().find(message => !message.is_user)?.mes || ''
+        };
+    }
+    xenoGenerationState(type, chat = []) {
+        const last = chat.length - 1;
+        const before = ['regenerate', 'swipe'].includes(type) && !chat[last]?.is_user
+            ? this.getChatFloors()[String(last)]?.before : null;
+        return before ? this.prepareXenoStory(before) : {xeno: this.cardState().xeno, balance: this.settings.chat.wallet.balance};
     }
     /** Restores Xeno state when one or more story floors at the tail are deleted. */
     rollbackXenoOnDelete(newChatLength = 0) {
         const lastFloor = Number(newChatLength) - 1;
-        const cardKey = this.cardKey();
         const floors = this.getChatFloors();
         if (lastFloor < 0) {
             this.xenoFloors.set(this.activeChatKey || 'default', {});
-            return this.saveXeno(mergeXenoSession(this.settings.xeno, null, cardKey));
+            return this.saveXenoStory(this.prepareXenoStory(null).xeno);
         }
         const deletedKeys = Object.keys(floors).map(Number).filter(k => Number.isInteger(k) && k > lastFloor).sort((a, b) => a - b);
         let restoreSession = null;
@@ -910,7 +963,7 @@ export class TTSBackend {
             delete floors[k];
         }
         if (restoreSession) {
-            return this.saveXeno(mergeXenoSession(this.settings.xeno, restoreSession, cardKey));
+            return this.saveXenoStory(this.prepareXenoStory(restoreSession).xeno);
         }
         return null;
     }
@@ -980,6 +1033,9 @@ export class TTSBackend {
                     }
                     for (const ent of [xeno.protagonist, ...(xeno.targets || []), ...(xeno.targetPool || [])]) {
                         if (!ent?.livingMount) continue;
+                        for (const layer of ent.livingMount.layers || []) {
+                            if (layer.itemId === item.id) layer.voiceRole = item.voiceRole || '';
+                        }
                         if (ent.livingMount.skinSuitId === item.id) ent.livingMount.skinVoiceRole = item.voiceRole || '';
                         if (ent.livingMount.fleshRingId === item.id) ent.livingMount.fleshVoiceRole = item.voiceRole || '';
                     }
@@ -1032,21 +1088,26 @@ export class TTSBackend {
         });
     }
     buyXenoItem(itemId, { equipTargetKey = '', equipMode = '' } = {}) {
-        const cur = normalizeXeno(this.settings.xeno);
-        const item = cur.items.find(i => i.id === itemId);
-        if (!item) throw Error('商城里没有这件商品');
-        if (!item.owned && !cur.freeShop && item.price > 0) {
-            this.walletMove(-item.price, { kind: 'shop', note: '异构商城 · ' + item.shortName });
-        }
-        return this.saveXeno(xeno => {
+        const result = this.saveXeno((xeno, next) => {
             const found = xeno.items.find(i => i.id === itemId);
-            if (found) found.owned = true;
+            if (!found) throw Error('商城里没有这件商品');
+            const cost = !found.owned && !xeno.freeShop ? found.price : 0;
+            found.owned = true;
+            let equipped = xeno;
             if (equipTargetKey) {
-                if (found?.category === 'consumable') return xenoUseConsumable(xeno, { targetKey: equipTargetKey, itemId });
-                return xenoEquipItem(xeno, { targetKey: equipTargetKey, itemId, mode: equipMode });
+                equipped = found.category === 'consumable' ? xenoUseConsumable(xeno, { targetKey: equipTargetKey, itemId })
+                    : xenoEquipItem(xeno, { targetKey: equipTargetKey, itemId, mode: equipMode });
             }
-            return xeno;
+            if (next.chat.wallet.balance < cost) throw Error('余额不足，未购买或穿戴');
+            if (cost > 0) {
+                next.chat.wallet.balance = cents(next.chat.wallet.balance - cost);
+                next.chat.wallet.ledger.unshift({id: crypto.randomUUID(), at: Date.now(), amount: -cost, kind: 'shop', note: '异构商城 · ' + found.shortName, who: ''});
+                next.chat.wallet.ledger.length = Math.min(next.chat.wallet.ledger.length, WALLET_LIMITS.ledger);
+            }
+            return equipped;
         });
+        this.emit('wallet', {balance: this.settings.chat.wallet.balance});
+        return result;
     }
     saveXenoPreset(rawPreset) {
         const preset = normalizeXenoPreset({ ...clone(rawPreset || {}), id: rawPreset?.id || ('xeno-' + crypto.randomUUID()) });
@@ -1081,10 +1142,11 @@ export class TTSBackend {
             return xeno;
         });
     }
-    previewXenoPrompt(preset) {
+    previewXenoPrompt(preset, triggerContext = {}) {
         const state = this.cardState();
         const xeno = { ...clone(state.xeno), enabled: true };
-        const blocks = xenoPromptPlan(xeno, preset || activeXenoPreset(xeno));
+        const blocks = [...xenoPromptPlan(xeno, preset || activeXenoPreset(xeno), triggerContext),
+            ...wardrobeActionPlan(xeno, {...triggerContext, balance: state.chat?.wallet?.balance || 0})];
         const p = preset ? normalizeXenoPreset(preset) : activeXenoPreset(xeno);
         const getEntry = id => (p.entries || []).find(e => e.id === id);
         const scenes = [

@@ -16,7 +16,7 @@ const roles = [['system', '系统'], ['user', '用户'], ['assistant', '助手']
 const KINDS = [['tts', '配音', 'listen'], ['chat', '聊天', 'chat'], ['draw', '绘图', 'draw'], ['xeno', '异构', 'xeno']];
 const USES = [['dm', '私聊'], ['group', '群聊'], ['moments', '朋友圈'], ['call', '电话'], ['forum', '论坛'], ['peek', '查手机'], ['story', '正文']];
 const XENO_TRIGGERS = [
-  ['auto', '按需注入（对应能力/装备激活时注入正文，省 Token）'],
+  ['auto', '按需注入（命中关键词或能力/装备已启用）'],
   ['always', '常驻注入（只要开启异构终端就始终注入正文）']
 ];
 // Drawing rules: which engines an entry is sent with (none ticked or all ticked: every engine).
@@ -203,7 +203,7 @@ export function presetsApp(ctx) {
       const tag = e.scope === 'mall' ? '商城进货工作台'
         : e.scope === 'task' ? '主动扫描/同步任务'
         : e.id === 'autoSync' ? '正文状态栏末尾协议'
-        : e.triggerMode === 'always' ? '正文常驻注入' : '正文按需注入（激活时生效）';
+        : e.triggerMode === 'always' ? '正文常驻注入' : '正文按需注入（关键词或已启用状态）';
       const modified = RULE_DEFAULTS[e.id] && e.text !== RULE_DEFAULTS[e.id] ? ' · 已手动修改' : '';
       const preview = String(e.text || '').replace(/\s+/g, ' ').trim().slice(0, 32);
       return `${tag}${modified}${preview ? ' · ' + preview : ''}`;
@@ -220,6 +220,7 @@ export function presetsApp(ctx) {
     const books = (p.loreSkipBooks || []).length, entries = (p.loreSkipEntries || []).length;
     const basics = chat ? ''
       : xeno ? field('实时状态栏插入深度', input('statusDepth', p.statusDepth ?? 1, 'number', 'min="0" max="10000" step="1"'), '主角与目标实时状态栏（含本轮强制执行指令与 <xeno_update> 协议）在聊天内的插入深度，默认深度 1。')
+        + field('关键词扫描最近正文条数', input('scanDepth', p.scanDepth ?? 4, 'number', 'min="0" max="20" step="1"'), '默认检查最近 4 条已发送正文和本轮输入，用户与角色消息都算；0 表示只检查本轮输入。隐藏消息不扫描。命中任意关键词即提供对应规则，不额外请求模型，也不会直接发动能力或穿戴。')
       : draw ? field('每条回复出图数量', input('count', p.count ?? 1, 'number', `min="1" max="${api.drawCountMax}" step="1"`), '每条回复固定出这么多张图。规则里写 {{出图数量}} 会换成这个数字；插件还会在规则最后加一段硬性要求，让张数更稳定。张数越多，出图越久。\n\n规则里写 {{出图格式}} 会换成下面这段（回复后单独配图时，还会多一行「位置」）；{{角色列表}} 会换成已登记的角色和他们的固定外貌。别的插件要排除出图内容时，排除标签填 <img></img>。\n\n' + api.picTagFormat)
       : field('正文显示', select('voiceLayout', p.format===FREE_FORMAT?'free':'paired', [['paired','译文与原文配对'],['free','自由正文 · 只渲染 tts 标签']]), '自由正文保留对白的语言和排版，英语、双语括号都可以。标签内仍写角色、情绪、朗读原文。') + field('台词格式', textArea('format', p.format, 'class="code short" rows="3"'), '配对模式：{译文}、{角色}、{情绪}、{文本} 各保留一次。自由正文模式：<tts>{角色}|{情绪}|{文本}</tts>，前面的正文不限制格式。译文供阅读，原语言供语音生成。默认格式是成对的 <tts></tts>，别的插件要排除语音原文时，排除标签填 <tts></tts>。\n\n这里的格式只管正文；手机里的语音消息和电话固定用默认格式，不跟着改。');
     const marks = p.marks || {inner: [], phone: []}, marked = (marks.inner || []).length + (marks.phone || []).length;
@@ -248,7 +249,8 @@ export function presetsApp(ctx) {
     const showXenoTrigger = xeno && (!e.scope || e.scope === 'story') && e.id !== 'autoSync';
     const d = ctx.dialog(e.title || '未命名条目', `<div data-entry="${i}">
       ${field('名称', input('title', e.title))}
-      ${showXenoTrigger ? field('注入时机', select('triggerMode', e.triggerMode || 'auto', XENO_TRIGGERS), '按需注入可大幅节省上下文 Token；若希望模型在未激活该能力前就熟知规则，可改为常驻注入。') : ''}
+      ${showXenoTrigger ? field('注入时机', select('triggerMode', e.triggerMode || 'auto', XENO_TRIGGERS), '按需：本轮输入或最近正文命中关键词，或对应能力/装备已启用时，提供这条规则。只提供设定，不直接执行动作。常驻：每次正文请求都提供。')
+        + field('触发关键词', textArea('keywords', (e.keywords || []).join('、'), 'rows="3" placeholder="例如：皮躯、活体皮衣、skinsuit"'), '命中任意一个即可，英文不区分大小写；用逗号、顿号、分号或换行分隔，按普通文字匹配，不执行正则。最多 40 个，每个 80 字。清空后只按已启用状态触发；常驻模式忽略关键词。保存预设后生效。') : ''}
       ${draw ? `<div class="field"><span>用在哪个引擎${help('勾了哪个，用那个引擎画图时才把这条规则发给模型。都勾或都不勾就是三个都用。在绘图 App 顶上选用哪个画。')}</span><div class="use-row">${ENGINE_USES.map(([u, l]) => `<label class="use-chip"><input type="checkbox" data-engine-use="${u}" ${!e.engines?.length || e.engines.includes(u) ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>` : ''}
       ${chat ? `<div class="field"><span>用在${help('私聊、群聊、朋友圈、电话、论坛、查手机都是各自单独的一次请求。勾了哪几个，这条规则就在那几次请求里各出现一次。勾「正文」的话，写正文时也带上。')}</span><div class="use-row">${USES.map(([u, l]) => `<label class="use-chip"><input type="checkbox" data-use="${u}" ${(e.use || []).includes(u) ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>` : ''}
       ${field(draw || chat ? '规则' : '提示词', textArea('text', e.text, 'class="code" rows="12"'), ruleHelp(e, draw, chat, xeno))}
@@ -311,9 +313,10 @@ export function presetsApp(ctx) {
     } else if (index !== undefined) {
       const entry = current.entries[Number(index)];
       if (key === 'customInjection') { if (el.checked) entry.injection = structuredClone(current.injection); else delete entry.injection; }
+      else if (key === 'keywords') entry.keywords = el.value.split(/[,，、;；\n]+/).map(word => word.trim()).filter(Boolean);
       else entry[key] = el.type === 'checkbox' ? el.checked : el.value;
     } else if (key.startsWith('memory.')) { current.memory = {...current.memory}; current.memory[key.slice(7)] = el.type === 'checkbox' ? el.checked : Number(el.value); }
-    else if (key === 'statusDepth') current.statusDepth = Number(el.value);
+    else if (key === 'statusDepth' || key === 'scanDepth') current[key] = Number(el.value);
     else current[key] = el.type === 'checkbox' ? el.checked : el.value;
     mark();
     if (redraw) render();

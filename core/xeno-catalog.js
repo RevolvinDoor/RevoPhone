@@ -246,6 +246,16 @@ export const XENO_PROMPT_DEFAULTS = Object.freeze({
   ].join('\n')
 });
 
+export const XENO_TRIGGER_KEYWORDS = Object.freeze({
+  possession: ['附身', '夺舍', '意识共存', '完全占据', '认知覆盖', '灵体游离'],
+  fusion: ['融合', '合体', '共存融合'],
+  parasite: ['寄生', '子体', '潜伏共生', '共生同化', '合作共生', '巨躯'],
+  skinSuit: ['皮躯', '活体皮衣', 'skinsuit', 'skin suit'],
+  fleshRing: ['肉躯', '活体肉环'],
+  vore: ['丸吞', '体内收纳', 'vore'],
+  alienation: ['肉体改造', '丸吞尾', '吞噬孔洞', '异化捕食尾']
+});
+
 export const DEFAULT_XENO_ENTRIES = Object.freeze([
   {id: 'coreTerms', title: '核心概念定义（原始本体与目标肉体）', scope: 'story', triggerMode: 'always', enabled: true, text: XENO_PROMPT_DEFAULTS.coreTerms},
   {id: 'possession', title: '核心能力一：附身之术', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.possession},
@@ -276,7 +286,8 @@ export function defaultXenoPreset() {
     name: '默认异构预设',
     injection: {position: 'in_chat', depth: 2, role: 'system'},
     statusDepth: 1,
-    entries: DEFAULT_XENO_ENTRIES.map(e => ({...e}))
+    scanDepth: 4,
+    entries: DEFAULT_XENO_ENTRIES.map(e => ({...e, keywords: [...(XENO_TRIGGER_KEYWORDS[e.id] || [])]}))
   };
 }
 

@@ -5,7 +5,7 @@
 
 import {createView, esc, heading} from './common.js';
 import {icon} from './icons.js';
-import {getEntity, effectiveEntityView, formatVoiceRoleLabel} from '../core/xeno.js';
+import {getEntity, effectiveEntityView, formatVoiceRoleLabel, resolveWear, itemOccupant, wearLayers} from '../core/xeno.js';
 import {blobToDataUrl, generateItemPreview, renderVoiceBindSelectOptions, openVoicePoolPickerDialog, generateEntityPortrait, openEntityPortraitDialog} from './xeno-media.js';
 
 const SLOT_NAMES = {
@@ -36,16 +36,10 @@ export function wardrobeApp(ctx) {
       ['__protagonist__', `👤 主角${xeno.protagonist.name ? '：' + xeno.protagonist.name : ''}${xeno.protagonist.gender ? `（${xeno.protagonist.gender}）` : ''}`],
       ...xeno.targets.map(t => [t.name, `🎯 目标：${t.name}${t.identity || t.gender ? `（${[t.identity, t.gender].filter(Boolean).join(' · ')}）` : ''}`])
     ];
-    const items = xeno.items || [];
-    const skin = entity.livingMount.skinSuitId ? items.find(i => i.id === entity.livingMount.skinSuitId) : null;
-    const ring = entity.livingMount.fleshRingId ? items.find(i => i.id === entity.livingMount.fleshRingId) : null;
+    const layers = resolveWear(xeno, entity).layers;
     const state = api.getState();
     const routes = (state.routes || []).filter(r => r?.name && r.roleKind !== 'narrator');
     const voicePool = state.voicePool || [];
-    const skinVoiceCur = skin ? (skin.voiceRole || xeno.itemVoiceBindings?.[skin.id] || entity.livingMount.skinVoiceRole || skin.sourceTargetName || '') : '';
-    const ringVoiceCur = ring ? (ring.voiceRole || xeno.itemVoiceBindings?.[ring.id] || entity.livingMount.fleshVoiceRole || ring.sourceTargetName || '') : '';
-    const skinVoiceLabel = skin ? formatVoiceRoleLabel(skinVoiceCur, voicePool) : '';
-    const ringVoiceLabel = ring ? formatVoiceRoleLabel(ringVoiceCur, voicePool) : '';
     const view = effectiveEntityView(xeno, entity);
     const hasCoat = /风衣/.test(entity.outfit.outerwear);
 
@@ -68,61 +62,31 @@ export function wardrobeApp(ctx) {
           </select>
         </div>
         <p class="xeno-hint">当前显性外貌：<b>${esc(view.gender || '未定')}</b> ｜ 🎙️ 声带音色：<b>${esc(view.voiceStateText)}</b></p>
+        <p class="xeno-hint">身体来源：${esc(view.bodySource)}<br>头部：${esc(view.headSource)} · ${esc(view.headAppearance || '未记录')}<br>肉棒外观：${esc(view.organAppearance || '未显露')} · 来源：${esc(view.organSource)}</p>
+        <div class="xeno-row-controls">
+          <span class="xeno-hint">穿戴层次从内到外排列；脱下内层会先脱去它外面的各层。</span>
+          ${layers.length ? '<button type="button" class="xeno-mini-btn danger" data-action="unequip-slot" data-slot="outermost">脱最外层</button><button type="button" class="xeno-mini-btn danger" data-action="unequip-slot" data-slot="all">脱全部叠层</button>' : ''}
+        </div>
         <div class="wardrobe-slot-list">
-          <div class="wardrobe-slot-row ${skin ? 'equipped' : ''}">
-            <div class="slot-head">
-              <span class="slot-tag">1. 活体皮躯槽</span>
-              <strong>${skin ? esc(skin.name) : '未穿戴'}</strong>
-              ${skin ? `<button type="button" class="xeno-mini-btn danger" data-action="unequip-slot" data-slot="skin_suit">脱卸</button>` : ''}
-            </div>
-            ${skin ? `
-              <p class="slot-desc">${esc(skin.summary || skin.bodyBuild)}</p>
-              <div class="xeno-row-between" style="margin:2px 0 4px;gap:6px">
-                <span class="xeno-hint" style="margin:0">🎙️ 皮躯音色：<b>${esc(skinVoiceLabel || '未绑定（保持本人音色）')}</b>（全脸覆面生效）</span>
-                <button type="button" class="xeno-mini-btn" data-action="pick-item-fav-voice" data-id="${esc(skin.id)}">♡ 从收藏夹选</button>
-              </div>
-              <div style="margin-bottom:6px">
-                <select class="xeno-select" data-change="slot-item-voice" data-id="${esc(skin.id)}" aria-label="选择皮躯绑定音色">
-                  ${renderVoiceBindSelectOptions({currentValue: skinVoiceCur, emptyLabel: '（不切换音色，保持穿戴者本人音色）', routes, voicePool})}
-                </select>
-              </div>
+          ${layers.length ? layers.map(layer => {
+            const item = layer.item, isSkin = layer.kind === 'skin_suit', id = esc(item.id);
+            const voice = item.voiceRole || xeno.itemVoiceBindings?.[item.id] || layer.voiceRole || item.sourceTargetName || '';
+            return `<div class="wardrobe-slot-row equipped" data-layer-id="${id}">
+              <div class="slot-head"><span class="slot-tag">第 ${layer.index + 1} 层 · ${isSkin ? '皮躯' : '肉躯'}${layer.index === layers.length - 1 ? ' · 最外层' : ''}</span>
+                <strong>${esc(item.name)}</strong><button type="button" class="xeno-mini-btn danger" data-action="unequip-slot" data-id="${id}">${layer.index === layers.length - 1 ? '脱下' : '脱至此层（含外层）'}</button></div>
+              <p class="slot-desc">${esc(item.summary || item.bodyBuild)}</p>
+              <p class="xeno-hint">绑定音色：${esc(formatVoiceRoleLabel(voice, voicePool) || '未绑定，成为有效头部时使用本体音色')}</p>
+              <select class="xeno-select" data-change="slot-item-voice" data-id="${id}" aria-label="第 ${layer.index + 1} 层绑定音色">
+                ${renderVoiceBindSelectOptions({currentValue: voice, emptyLabel: '（未绑定，使用本体音色）', routes, voicePool})}
+              </select>
+              <button type="button" class="xeno-mini-btn" data-action="pick-item-fav-voice" data-id="${id}">♡ 从收藏夹选</button>
+              ${!isSkin ? `<div class="xeno-row-controls">${[['idle','静息'],['forward','前方延展'],['backward','后方延展']].map(([mode,label]) => `<button type="button" class="xeno-mini-btn ${layer.extendMode === mode ? 'primary' : ''}" data-action="ring-mode" data-id="${id}" data-mode="${mode}">${label}</button>`).join('')}</div>` : ''}
               <div class="xeno-row-controls">
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.skinFaceMode === 'full' ? 'primary' : ''}" data-action="skin-face" data-mode="full">全脸覆面（皮躯音色）</button>
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.skinFaceMode === 'neck' ? 'primary' : ''}" data-action="skin-face" data-mode="neck">露原貌（本人音色）</button>
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.skinOrganOut ? 'accent' : ''}" data-action="skin-organ">
-                  ${entity.livingMount.skinOrganOut ? '扶她器官：充血释出' : '扶她器官：收纳隐藏'}
-                </button>
+                ${[['full','全脸覆面'],['neck','收起本层头部']].map(([mode,label]) => `<button type="button" class="xeno-mini-btn ${layer.faceMode === mode ? 'primary' : ''}" data-action="${isSkin ? 'skin-face' : 'ring-face'}" data-id="${id}" data-mode="${mode}">${label}</button>`).join('')}
+                <button type="button" class="xeno-mini-btn ${layer.organOut ? 'accent' : ''}" data-action="layer-organ" data-id="${id}">${layer.organOut ? '外露部位：启用' : '外露部位：收起'}</button>
               </div>
-            ` : '<small class="slot-empty">从下方「皮躯库」选择活体皮躯穿入背部脊椎裂口</small>'}
-          </div>
-          <div class="wardrobe-slot-row ${ring ? 'equipped' : ''}">
-            <div class="slot-head">
-              <span class="slot-tag">2. 活体肉躯槽</span>
-              <strong>${ring ? esc(ring.name) : '未安装'}</strong>
-              ${ring ? `<button type="button" class="xeno-mini-btn danger" data-action="unequip-slot" data-slot="flesh_ring">取下</button>` : ''}
-            </div>
-            ${ring ? `
-              <p class="slot-desc">${esc(ring.summary || ring.ringAppearance)}</p>
-              <div class="xeno-row-between" style="margin:2px 0 4px;gap:6px">
-                <span class="xeno-hint" style="margin:0">🎙️ 肉躯音色：<b>${esc(ringVoiceLabel || '未绑定（保持本人音色）')}</b>（后方延展·全脸覆面生效）</span>
-                <button type="button" class="xeno-mini-btn" data-action="pick-item-fav-voice" data-id="${esc(ring.id)}">♡ 从收藏夹选</button>
-              </div>
-              <div style="margin-bottom:6px">
-                <select class="xeno-select" data-change="slot-item-voice" data-id="${esc(ring.id)}" aria-label="选择肉躯绑定音色">
-                  ${renderVoiceBindSelectOptions({currentValue: ringVoiceCur, emptyLabel: '（不切换音色，保持穿戴者本人音色）', routes, voicePool})}
-                </select>
-              </div>
-              <div class="xeno-row-controls">
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'idle' ? 'primary' : ''}" data-action="ring-mode" data-mode="idle">静息饰品形态</button>
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'forward' ? 'primary' : ''}" data-action="ring-mode" data-mode="forward">前方延展(肉棒重构)</button>
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'backward' ? 'primary' : ''}" data-action="ring-mode" data-mode="backward">后方延展(全身重构)</button>
-              </div>
-              <div class="xeno-row-controls" style="margin-top:4px">
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'backward' && (entity.livingMount.fleshFaceMode || 'full') === 'full' ? 'primary' : ''}" data-action="ring-face" data-mode="full">全脸覆面（肉躯音色）</button>
-                <button type="button" class="xeno-mini-btn ${entity.livingMount.fleshExtendMode === 'backward' && entity.livingMount.fleshFaceMode === 'neck' ? 'primary' : ''}" data-action="ring-face" data-mode="neck">露原貌（本人音色）</button>
-              </div>
-            ` : '<small class="slot-empty">从下方「肉躯库」选择活体肉躯环扣合于阴茎口/阴蒂口</small>'}
-          </div>
+            </div>`;
+          }).join('') : '<p class="xeno-hint">尚未穿戴皮躯或肉躯，可从下方库存叠加穿戴。</p>'}
           ${['outerwear', 'underwear', 'privacyCover', 'accessories'].map((slot, idx) => `
             <div class="wardrobe-slot-row">
               <div class="slot-head">
@@ -165,11 +129,8 @@ export function wardrobeApp(ctx) {
           <input type="file" accept="image/*" id="wardrobe-item-file" data-change="wardrobe-item-file" hidden>
           <div class="tb-product-list">
             ${owned.map(item => {
-              const isEquipped = item.category === 'skin_suit'
-                ? entity.livingMount.skinSuitId === item.id
-                : item.category === 'flesh_ring'
-                ? entity.livingMount.fleshRingId === item.id
-                : entity.outfit[item.slot + 'ItemId'] === item.id;
+              const occupied = itemOccupant(xeno, item.id);
+              const isEquipped = occupied?.entity.name === entity.name;
               const isDrawing = drawingIds.has(item.id);
               return `
                 <article class="tb-card ${isEquipped ? 'equipped' : ''}" data-action="view-design" data-id="${esc(item.id)}">
@@ -190,16 +151,18 @@ export function wardrobeApp(ctx) {
                       <strong class="tb-title">${esc(item.name)}</strong>
                     </div>
                     <p class="tb-desc">${esc(item.summary)}</p>
+                    ${occupied ? `<p class="tb-spec">使用中：${esc(occupied.entity.name || '主角')}${occupied.layer ? ` · 第 ${occupied.layer} 层` : ''}</p>` : ''}
                     ${item.bodyBuild ? `<p class="tb-spec"><b>体态：</b>${esc(item.bodyBuild)}</p>` : ''}
                     <div class="tb-bottom-row">
                       <div class="tb-buy-group">
-                        ${item.category === 'flesh_ring' ? `
+                        ${occupied ? '<button type="button" class="tb-btn-buy" disabled>已占用，请先脱下</button>' : item.category === 'flesh_ring' ? `
                           <button type="button" class="tb-btn-cart" data-action="equip-item" data-id="${esc(item.id)}" data-mode="forward">前方延展</button>
                           <button type="button" class="tb-btn-buy" data-action="equip-item" data-id="${esc(item.id)}" data-mode="backward">后方延展</button>
                         ` : `
                           ${item.source === 'fusion' ? `<button type="button" class="tb-btn-cart" data-action="restore-fusion-item" data-id="${esc(item.id)}">还原角色</button>` : ''}
                           <button type="button" class="tb-btn-buy" data-action="equip-item" data-id="${esc(item.id)}">立即穿戴</button>
                         `}
+                        ${!occupied && item.category !== 'apparel' && wearLayers(entity).length ? `<button type="button" class="tb-btn-cart" data-action="equip-item" data-id="${esc(item.id)}" data-replace="true" ${item.category === 'flesh_ring' ? 'data-mode="backward"' : ''}>换最外层</button>` : ''}
                       </div>
                     </div>
                   </div>
@@ -350,19 +313,21 @@ export function wardrobeApp(ctx) {
     if (act === 'wardrobe-tab') { activeTab = el.dataset.tab; v.refresh(); return; }
     if (act === 'filter-apparel') { apparelFilter = el.dataset.filter; v.refresh(); return; }
     if (act === 'skin-face') {
-      api.xenoAct('updateMountOption', {targetKey, patch: {skinFaceMode: el.dataset.mode}});
+      api.xenoAct('updateMountOption', {targetKey, itemId: el.dataset.id, patch: {skinFaceMode: el.dataset.mode}});
       return;
     }
-    if (act === 'skin-organ') {
-      api.xenoAct('updateMountOption', {targetKey, patch: {skinOrganOut: !entity.livingMount.skinOrganOut}});
+    if (act === 'layer-organ') {
+      const layer = wearLayers(entity).find(layer => layer.itemId === el.dataset.id);
+      if (!layer) return;
+      api.xenoAct('updateMountOption', {targetKey, itemId: layer.itemId, patch: {[layer.kind === 'skin_suit' ? 'skinOrganOut' : 'organOut']: !layer.organOut}});
       return;
     }
     if (act === 'ring-mode') {
-      api.xenoAct('updateMountOption', {targetKey, patch: {fleshExtendMode: el.dataset.mode}});
+      api.xenoAct('updateMountOption', {targetKey, itemId: el.dataset.id, patch: {fleshExtendMode: el.dataset.mode}});
       return;
     }
     if (act === 'ring-face') {
-      api.xenoAct('updateMountOption', {targetKey, patch: {fleshExtendMode: 'backward', fleshFaceMode: el.dataset.mode}});
+      api.xenoAct('updateMountOption', {targetKey, itemId: el.dataset.id, patch: {fleshFaceMode: el.dataset.mode}});
       return;
     }
     if (act === 'coat-pose') {
@@ -382,8 +347,8 @@ export function wardrobeApp(ctx) {
       return;
     }
     if (act === 'unequip-slot') {
-      api.xenoAct('unequipSlot', {targetKey, slot: el.dataset.slot});
-      ctx.notify('已卸下对应槽位装束');
+      api.xenoAct('unequipSlot', {targetKey, slot: el.dataset.slot, itemId: el.dataset.id || ''});
+      ctx.notify('已按从外到内的顺序脱下');
       return;
     }
     if (act === 'edit-slot-text') {
@@ -411,7 +376,7 @@ export function wardrobeApp(ctx) {
       return;
     }
     if (act === 'equip-item') {
-      api.xenoAct('equipItem', {targetKey, itemId: el.dataset.id, mode: el.dataset.mode || ''});
+      api.xenoAct('equipItem', {targetKey, itemId: el.dataset.id, mode: el.dataset.mode || '', replace: el.dataset.replace === 'true'});
       ctx.notify(`已为「${entity.name}」穿戴单品`);
       return;
     }

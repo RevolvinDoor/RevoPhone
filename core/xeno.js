@@ -2,9 +2,11 @@
 // three new apps: 1. 异构终端 (xeno), 2. 衣柜 (wardrobe), 3. 购物商城 (mall).
 // Replaces TavernDB with zero-latency local actions, on-demand rule injection, and automatic story state sync.
 
-import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS, XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset} from './xeno-catalog.js';
+import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS, XENO_PROMPT_DEFAULTS, XENO_TRIGGER_KEYWORDS, DEFAULT_XENO_ENTRIES, defaultXenoPreset} from './xeno-catalog.js';
 import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {lineEffect} from './voice-fx.js';
+import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags} from './xeno-wear.js';
+export {wearLayers, resolveWear, itemOccupant};
 export {XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset};
 
 export const MALL_POSE_ENTRIES = Object.freeze([
@@ -125,16 +127,7 @@ const cleanField = (val, max = 1200) => {
 };
 
 export function normalizeLivingMount(raw = {}) {
-  return {
-    skinSuitId: clip(raw?.skinSuitId, 120),
-    skinFaceMode: raw?.skinFaceMode === 'neck' ? 'neck' : 'full', // 'full' = 全脸覆面拟态, 'neck' = 收缩至颈部露原貌
-    skinOrganOut: raw?.skinOrganOut !== false, // true = 充血释出, false = 收纳回阴蒂口
-    skinVoiceRole: clip(raw?.skinVoiceRole, 300),
-    fleshRingId: clip(raw?.fleshRingId, 120),
-    fleshExtendMode: ['idle', 'forward', 'backward'].includes(raw?.fleshExtendMode) ? raw.fleshExtendMode : 'idle',
-    fleshFaceMode: raw?.fleshFaceMode === 'neck' ? 'neck' : 'full', // 'full' = 后方延展全脸覆面, 'neck' = 后方延展褪至颈部露原貌
-    fleshVoiceRole: clip(raw?.fleshVoiceRole, 300)
-  };
+  return normalizeWearMount(raw);
 }
 
 export function normalizeOutfit(raw = {}) {
@@ -245,6 +238,7 @@ export function normalizeCatalogItem(raw = {}) {
     slot,
     price,
     owned: raw?.owned === true,
+    storyPurchaseId: clip(raw?.storyPurchaseId, 300),
     source: ['shop', 'fusion', 'restock'].includes(raw?.source) ? raw.source : 'shop',
     sourceTargetName: clip(raw?.sourceTargetName, 80),
     voiceRole: raw?.voiceRole !== undefined ? clip(raw.voiceRole, 300) : clip(raw?.sourceTargetName, 300),
@@ -268,6 +262,9 @@ export function defaultXeno() {
   return {
     enabled: true,
     autoUpdateTag: true,
+    autoWardrobe: true,
+    wardrobePending: null,
+    wardrobePurchases: [],
     worldCarrier: 'auto',
     freeShop: false,
     activePreset: 'xeno-default',
@@ -357,26 +354,36 @@ export function normalizeXeno(raw) {
   for (const t of targets) {
     poolMap.set(t.name, t);
   }
+  const occupied = new Set();
+  for (const ent of [protagonist, ...targets]) {
+    ent.livingMount.layers = ent.livingMount.layers.filter(layer => {
+      const item = byId.get(layer.itemId);
+      if (!item || item.category !== layer.kind || occupied.has(layer.itemId)) return false;
+      occupied.add(layer.itemId);
+      return true;
+    });
+    syncWearMount(ent.livingMount);
+    for (const slot of ['outerwear', 'underwear', 'privacyCover', 'accessories']) {
+      const itemId = ent.outfit[slot + 'ItemId'];
+      if (!itemId) continue;
+      if (occupied.has(itemId) || !byId.has(itemId)) {
+        ent.outfit[slot + 'ItemId'] = '';
+        ent.outfit[slot] = '';
+      } else occupied.add(itemId);
+    }
+  }
   for (const ent of [protagonist, ...targets, ...poolMap.values()]) {
     if (!ent?.livingMount) continue;
-    if (ent.livingMount.skinSuitId) {
-      const skin = byId.get(ent.livingMount.skinSuitId);
-      const v = clip(skin?.voiceRole || itemVoiceBindings[ent.livingMount.skinSuitId] || ent.livingMount.skinVoiceRole || skin?.sourceTargetName, 300);
-      if (v) {
-        ent.livingMount.skinVoiceRole = v;
-        itemVoiceBindings[ent.livingMount.skinSuitId] = v;
-        if (skin && !skin.voiceRole) skin.voiceRole = v;
+    for (const layer of ent.livingMount.layers) {
+      const item = byId.get(layer.itemId);
+      const voice = clip(item?.voiceRole || itemVoiceBindings[layer.itemId] || layer.voiceRole || item?.sourceTargetName, 300);
+      if (voice) {
+        layer.voiceRole = voice;
+        itemVoiceBindings[layer.itemId] = voice;
+        if (item && !item.voiceRole) item.voiceRole = voice;
       }
     }
-    if (ent.livingMount.fleshRingId) {
-      const ring = byId.get(ent.livingMount.fleshRingId);
-      const v = clip(ring?.voiceRole || itemVoiceBindings[ent.livingMount.fleshRingId] || ent.livingMount.fleshVoiceRole || ring?.sourceTargetName, 300);
-      if (v) {
-        ent.livingMount.fleshVoiceRole = v;
-        itemVoiceBindings[ent.livingMount.fleshRingId] = v;
-        if (ring && !ring.voiceRole) ring.voiceRole = v;
-      }
-    }
+    syncWearMount(ent.livingMount);
   }
   const selectedTarget = targets.some(t => t.name === raw.selectedTarget)
     ? raw.selectedTarget
@@ -398,6 +405,17 @@ export function normalizeXeno(raw) {
   return {
     enabled: raw.enabled !== false,
     autoUpdateTag: raw.autoUpdateTag !== false,
+    autoWardrobe: raw.autoWardrobe !== false,
+    wardrobePending: raw.wardrobePending?.itemId ? {
+      itemId: clip(raw.wardrobePending.itemId, 120),
+      targetKey: clip(raw.wardrobePending.targetKey, 120),
+      price: Number.isFinite(Number(raw.wardrobePending.price)) ? Math.max(0, Math.round(Number(raw.wardrobePending.price) * 100) / 100) : 0,
+      mode: clip(raw.wardrobePending.mode, 20),
+      evidence: clip(raw.wardrobePending.evidence, 1000)
+    } : null,
+    wardrobePurchases: Array.isArray(raw.wardrobePurchases) ? [...new Map(raw.wardrobePurchases
+      .filter(entry => entry?.id && entry?.itemId && Number.isFinite(entry.amount) && entry.amount >= 0)
+      .map(entry => [clip(entry.id, 300), {id: clip(entry.id, 300), itemId: clip(entry.itemId, 120), amount: Math.round(entry.amount * 100) / 100}])).values()].slice(-500) : [],
     worldCarrier: WORLD_CARRIERS.some(([k]) => k === raw.worldCarrier) ? raw.worldCarrier : 'auto',
     freeShop: raw.freeShop === true,
     activePreset,
@@ -499,6 +517,11 @@ export function normalizeParasiteState(raw = {}) {
   };
 }
 
+export function normalizeXenoKeywords(raw) {
+  const words = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/[,，、;；\n]+/) : [];
+  return [...new Set(words.filter(word => typeof word === 'string').map(word => word.normalize('NFKC').trim().toLowerCase().slice(0, 80)).filter(Boolean))].slice(0, 40);
+}
+
 export function normalizeXenoPreset(raw) {
   const base = defaultXenoPreset();
   if (!raw || typeof raw !== 'object') return base;
@@ -514,6 +537,9 @@ export function normalizeXenoPreset(raw) {
   const statusDepth = Number.isFinite(Number(raw.statusDepth))
     ? Math.max(0, Math.min(10000, Math.round(Number(raw.statusDepth))))
     : base.statusDepth;
+  const scanDepth = Number.isFinite(Number(raw.scanDepth))
+    ? Math.max(0, Math.min(20, Math.round(Number(raw.scanDepth))))
+    : base.scanDepth;
   const rawEntries = Array.isArray(raw.entries) ? raw.entries : [];
   const byId = new Map();
   const entries = [];
@@ -540,6 +566,7 @@ export function normalizeXenoPreset(raw) {
       title: entryTitle,
       scope,
       triggerMode,
+      keywords: normalizeXenoKeywords(e.keywords === undefined ? XENO_TRIGGER_KEYWORDS[id] : e.keywords),
       enabled: typeof e.enabled === 'boolean' ? e.enabled : (builtin ? builtin.enabled !== false : true),
       text: entryText
     };
@@ -548,7 +575,7 @@ export function normalizeXenoPreset(raw) {
   }
   for (const builtin of DEFAULT_XENO_ENTRIES) {
     if (!byId.has(builtin.id)) {
-      entries.push({...builtin});
+      entries.push({...builtin, keywords: [...(XENO_TRIGGER_KEYWORDS[builtin.id] || [])]});
     }
   }
   return {
@@ -556,6 +583,7 @@ export function normalizeXenoPreset(raw) {
     name: clip(raw.name, 60) || base.name,
     injection: {position: pos, depth, role},
     statusDepth,
+    scanDepth,
     entries
   };
 }
@@ -613,6 +641,8 @@ export function extractXenoSession(xeno) {
     possession: structuredClone(norm.possession),
     fusion: structuredClone(norm.fusion),
     parasite: structuredClone(norm.parasite),
+    wardrobePending: structuredClone(norm.wardrobePending),
+    wardrobePurchases: structuredClone(norm.wardrobePurchases),
     pendingActionNote: norm.pendingActionNote
   };
 }
@@ -649,7 +679,6 @@ export function mergeXenoSession(globalXeno, session = null, cardKey = '') {
     ? cleanBaselineProtagonist(base.cardProtagonists[targetCard])
     : null;
   const mergedPoolMap = new Map();
-  for (const t of base.targetPool || []) if (t?.name) mergedPoolMap.set(t.name, t);
   for (const t of Array.isArray(s.targetPool) ? s.targetPool : []) if (t?.name) mergedPoolMap.set(t.name, t);
   return normalizeXeno({
     ...base,
@@ -666,6 +695,8 @@ export function mergeXenoSession(globalXeno, session = null, cardKey = '') {
     possession: s.possession ?? fresh.possession,
     fusion: s.fusion ?? fresh.fusion,
     parasite: s.parasite ?? fresh.parasite,
+    wardrobePending: s.wardrobePending ?? null,
+    wardrobePurchases: s.wardrobePurchases ?? [],
     pendingActionNote: s.pendingActionNote ?? ''
   });
 }
@@ -796,7 +827,7 @@ export function syncXenoWithRoutes(xeno, routes = [], cardKey = '') {
   if (out.cogModTarget !== '__protagonist__' && !out.targets.some(t => t.name === out.cogModTarget)) {
     out.cogModTarget = out.selectedTarget || '__protagonist__';
   }
-  return out;
+  return normalizeXeno(out);
 }
 
 /** Returns the entity for '__protagonist__' or a target's name. */
@@ -873,19 +904,7 @@ function itemMatchesSpeaker(item, rawName) {
 
 function resolveMountVoice(xeno, m) {
   if (!m) return '';
-  const items = xeno?.items || [];
-  const bindings = xeno?.itemVoiceBindings || {};
-  if (m.skinSuitId && (m.skinFaceMode || 'full') === 'full') {
-    const skin = items.find(i => i.id === m.skinSuitId);
-    const skinVoice = clip(skin?.voiceRole || bindings[m.skinSuitId] || m.skinVoiceRole || skin?.sourceTargetName, 300);
-    if (skinVoice) return skinVoice;
-  }
-  if (m.fleshRingId && m.fleshExtendMode === 'backward' && (m.fleshFaceMode || 'full') === 'full') {
-    const ring = items.find(i => i.id === m.fleshRingId);
-    const ringVoice = clip(ring?.voiceRole || bindings[m.fleshRingId] || m.fleshVoiceRole || ring?.sourceTargetName, 300);
-    if (ringVoice) return ringVoice;
-  }
-  return '';
+  return resolveWear(xeno, {livingMount: m}).headVoice;
 }
 
 export function resolveXenoVoiceRole(xeno, speakerName, {inner = false, routes = []} = {}) {
@@ -903,21 +922,11 @@ export function resolveXenoVoiceRole(xeno, speakerName, {inner = false, routes =
     for (const ent of [xeno.protagonist, ...(xeno.targets || [])]) {
       const m = ent?.livingMount;
       if (!m) continue;
-      if (m.skinSuitId && (m.skinFaceMode || 'full') === 'full') {
-        const skin = items.find(i => i.id === m.skinSuitId);
-        if (itemMatchesSpeaker(skin, rawName)) {
-          actor = ent;
-          isProt = ent === xeno.protagonist;
-          break;
-        }
-      }
-      if (m.fleshRingId && m.fleshExtendMode === 'backward' && (m.fleshFaceMode || 'full') === 'full') {
-        const ring = items.find(i => i.id === m.fleshRingId);
-        if (itemMatchesSpeaker(ring, rawName)) {
-          actor = ent;
-          isProt = ent === xeno.protagonist;
-          break;
-        }
+      const head = resolveWear(xeno, ent).head;
+      if (head && itemMatchesSpeaker(head.item, rawName)) {
+        actor = ent;
+        isProt = ent === xeno.protagonist;
+        break;
       }
     }
   }
@@ -942,8 +951,10 @@ export function resolveXenoVoiceRole(xeno, speakerName, {inner = false, routes =
   // 检查最外层活体挂载（皮躯全脸覆面 / 肉躯后方全身延展）
   const mounts = bodyEntity !== actor ? [actor.livingMount, bodyEntity.livingMount] : [bodyEntity.livingMount];
   for (const m of mounts) {
+    const head = resolveWear(xeno, {livingMount: m}).head;
     const mountedVoice = resolveMountVoice(xeno, m);
     if (mountedVoice) return mountedVoice;
+    if (head) return bodyEntity.voiceRole || bodyEntity.name || rawName;
   }
 
   return bodyEntity.voiceRole || bodyEntity.name || rawName;
@@ -1050,42 +1061,23 @@ export function effectiveSpeakingRoutes(settings) {
 /** Effective display of an entity's 6 core fields + 8 detail fields, accounting for worn 皮躯 / 肉躯! */
 export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
   const e = normalizeEntity(entity, entity?.id === '__protagonist__');
-  const items = xeno.items || [];
-  const skin = e.livingMount.skinSuitId ? items.find(i => i.id === e.livingMount.skinSuitId) : null;
-  const ring = e.livingMount.fleshRingId ? items.find(i => i.id === e.livingMount.fleshRingId) : null;
+  const wear = resolveWear(xeno, e);
 
   let gender = e.gender;
   let appearance = e.appearance;
   let bodyBuild = e.bodyBuild;
   let physiology = e.physiology;
 
-  if (skin) {
-    gender = skin.gender || gender;
-    appearance = e.livingMount.skinFaceMode === 'full'
-      ? `【皮躯全脸覆面：${skin.shortName}】${skin.appearance || e.appearance}`
-      : `【皮躯露原貌：面部为${e.name || '穿戴者'}原貌，颈部以下为${skin.shortName}】${skin.appearance || e.appearance}`;
-    if (skin.bodyBuild) bodyBuild = `【皮躯体态】${skin.bodyBuild}`;
-    if (skin.physiology) {
-      const organState = e.livingMount.skinOrganOut ? '扶她器官充血释出态' : '扶她器官收纳隐藏态';
-      physiology = `【皮躯生理（${organState}）】${skin.physiology}`;
-    }
+  if (wear.body) {
+    const outer = wear.body.item;
+    gender = outer.gender || gender;
+    appearance = outer.appearance || appearance;
+    bodyBuild = outer.bodyBuild || bodyBuild;
+    physiology = outer.physiology || physiology;
   }
-  if (ring) {
-    if (e.livingMount.fleshExtendMode === 'backward') {
-      // 后方延展：全身被新躯体包裹覆盖
-      gender = ring.gender || '扶她';
-      const ringFullFace = (e.livingMount.fleshFaceMode || 'full') === 'full';
-      appearance = ringFullFace
-        ? `【肉躯后方全身延展·全脸覆面：${ring.shortName}】${ring.appearance || e.appearance}`
-        : `【肉躯后方延展·露原貌：面部为${e.name || '穿戴者'}原貌，颈部以下为${ring.shortName}】${ring.appearance || e.appearance}`;
-      if (ring.bodyBuild) bodyBuild = `【肉躯外躯体态】${ring.bodyBuild}`;
-      if (ring.physiology) physiology = `【肉躯生理】${ring.physiology}`;
-    } else if (e.livingMount.fleshExtendMode === 'forward') {
-      // 前方延展：按数据库规则，女性通过肉躯拥有阴茎时基础性别仍保持原样（女），在生理与挂载状态中标注
-      physiology = `${physiology}；【肉躯前方延展（${ring.shortName}）】：${ring.forwardExtension || ring.physiology}`;
-    } else {
-      physiology = `${physiology}；【肉躯静息佩戴（${ring.shortName}）】：根部扣合活体肉环`;
-    }
+  if (wear.organ && gender === '女') gender = '扶她';
+  if (wear.head?.itemId !== wear.body?.itemId && wear.layers.length) {
+    appearance = `身体：${appearance}；头部来源：${wear.headSource}；头部外观：${wear.headAppearance}`;
   }
   if (e.predatorTail !== 'none') {
     const tailLabel = e.predatorTail === 'deployed' ? '展开态（尾椎粗壮肉尾+花蕊吞噬巨口）' : '隐蔽态（收缩于尾椎内）';
@@ -1163,17 +1155,6 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
     }
   }
 
-  const skinText = skin
-    ? `${skin.name}（${e.livingMount.skinFaceMode === 'full' ? '全脸覆面' : '褪至颈部露原貌'} · ${e.livingMount.skinOrganOut ? '器官释出' : '器官收纳'}）`
-    : '未穿戴';
-  const ringModeMap = {idle: '静息饰品形态', forward: '前方延展（肉棒重构）', backward: '后方延展（全身躯体重构）'};
-  const ringFaceSuffix = e.livingMount.fleshExtendMode === 'backward'
-    ? ((e.livingMount.fleshFaceMode || 'full') === 'neck' ? ' · 褪至颈部露原貌' : ' · 全脸覆面')
-    : '';
-  const ringText = ring
-    ? `${ring.name}（${ringModeMap[e.livingMount.fleshExtendMode] || '静息'}${ringFaceSuffix}）`
-    : '未安装';
-
   const voreText = e.voreStorage.length
     ? e.voreStorage.map(v => `${v.preyName}［${v.location} · 经由${v.channel} · ${v.status} · ${v.digestion}］`).join('；')
     : '无';
@@ -1190,11 +1171,8 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
     } else {
       voiceStateText = `使用【${spokenLabel}】音色`;
     }
-  } else if (skin && e.livingMount.skinFaceMode === 'neck') {
-    voiceStateText = `皮躯露原貌：恢复【${spokenLabel || e.name || '本人'}】音色`;
-  } else if (ring && e.livingMount.fleshExtendMode === 'backward' && e.livingMount.fleshFaceMode === 'neck') {
-    voiceStateText = `肉躯露原貌：恢复【${spokenLabel || e.name || '本人'}】音色`;
   }
+  if (wear.head && !wear.headVoice) voiceStateText += ' ｜ 当前头部未绑定音色，使用本体音色';
 
   return {
     // 6 core fields
@@ -1204,12 +1182,18 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
     appearance,
     bodyBuild,
     physiology,
+    headAppearance: wear.headAppearance,
+    headSource: wear.headSource,
+    organAppearance: wear.organAppearance,
+    organSource: wear.organSource,
+    bodySource: wear.bodySource,
+    layerText: wear.layerText,
     // 8 detail fields
     originalBody: e.originalBody,
     currentBody,
     changeReason,
     hostingState,
-    livingMountText: `皮躯：${skinText} ｜ 肉躯：${ringText}`,
+    livingMountText: wear.layerText,
     outfitText: `外搭：${e.outfit.outerwear || '无'}${/风衣/.test(e.outfit.outerwear) ? (e.outfit.coatPose === 'open' ? '（展开姿态）' : '（遮蔽形态）') : ''} ｜ 内衣：${e.outfit.underwear || '无'} ｜ 遮挡：${e.outfit.privacyCover || '无'} ｜ 饰品：${e.outfit.accessories || '无'}`,
     voreText,
     cognitionText: rebuildCognitionSummary(e.cognitionState),
@@ -1590,8 +1574,9 @@ export function xenoRestoreFromLivingItem(state, itemId) {
   const targetName = item.sourceTargetName || item.shortName.replace(/(?:皮躯|肉躯)$/, '');
   // Unequip from anyone wearing it
   for (const ent of [next.protagonist, ...next.targets]) {
-    if (ent.livingMount.skinSuitId === itemId) ent.livingMount.skinSuitId = '';
-    if (ent.livingMount.fleshRingId === itemId) ent.livingMount.fleshRingId = '';
+    const index = ent.livingMount.layers.findIndex(layer => layer.itemId === itemId);
+    if (index >= 0) ent.livingMount.layers.splice(index);
+    syncWearMount(ent.livingMount);
   }
   next.items = next.items.filter(i => i.id !== itemId);
   const target = ensureTarget(next, targetName);
@@ -1995,30 +1980,25 @@ export function xenoApplyCognitionMod(state, {targetKey, relationOverride, fakeM
 
 // ==================== 5. 衣柜 & 购物商城 Operations ====================
 
-export function xenoEquipItem(state, {targetKey = '__protagonist__', itemId, mode = ''}) {
+export function xenoEquipItem(state, {targetKey = '__protagonist__', itemId, mode = '', replace = false}) {
   const next = normalizeXeno(state);
-  const entity = getEntity(next, targetKey) || next.protagonist;
+  const entity = getEntity(next, targetKey);
+  if (!entity) throw Error('找不到指定的穿戴者，请先确认目标角色');
   const item = next.items.find(i => i.id === itemId);
   if (!item) throw Error('找不到该单品');
   if (!item.owned) throw Error('这件单品还在【购物商城】里，请先购买入库后再穿戴');
+  const occupant = itemOccupant(next, itemId);
+  if (occupant) throw Error(`「${item.name}」已由「${occupant.entity.name || '主角'}」使用${occupant.layer ? `（第 ${occupant.layer} 层）` : ''}，请先脱下`);
 
-  if (item.category === 'skin_suit') {
-    entity.livingMount.skinSuitId = item.id;
-    entity.livingMount.skinFaceMode = mode === 'neck' ? 'neck' : 'full';
-    entity.livingMount.skinVoiceRole = clip(item.voiceRole || next.itemVoiceBindings?.[item.id] || item.sourceTargetName, 300);
-    next.pendingActionNote = `【本轮衣柜操作：穿戴活体皮躯】「${entity.name || '主角'}」从背部脊椎裂口穿入了【${item.name}】（${entity.livingMount.skinFaceMode === 'full' ? '活体组织向上蔓延覆盖全脸，完全拟态为皮躯容貌与声带音色' : '头部组织收缩至颈部，露出原本面孔与本人音色'}），建立双向神经感官直连。`;
-  } else if (item.category === 'flesh_ring') {
-    entity.livingMount.fleshRingId = item.id;
-    entity.livingMount.fleshExtendMode = ['idle', 'forward', 'backward'].includes(mode) ? mode : 'forward';
-    if (mode === 'backward' || !entity.livingMount.fleshFaceMode) entity.livingMount.fleshFaceMode = 'full';
-    entity.livingMount.fleshVoiceRole = clip(item.voiceRole || next.itemVoiceBindings?.[item.id] || item.sourceTargetName, 300);
-    const faceNote = entity.livingMount.fleshFaceMode === 'neck' ? '头部收缩至颈部露原貌（保持本人音色）' : '全脸覆面拟态（切换为肉躯音色）';
-    const modeDesc = {
-      idle: '静息饰品形态（紧扣在阴茎口/阴蒂口上）',
-      forward: `前方延展形态（向前方增殖重构出巨型肉棒：${item.forwardExtension}）`,
-      backward: `后方延展形态（向后方全身蔓延包裹，${faceNote}，彻底重构为：${item.backwardExtension}）`
-    }[entity.livingMount.fleshExtendMode];
-    next.pendingActionNote = `【本轮衣柜操作：佩戴活体肉躯】「${entity.name || '主角'}」在阴茎口/阴蒂口扣合佩戴了【${item.name}】，当前意念延展形态为：${modeDesc}。`;
+  if (['skin_suit', 'flesh_ring'].includes(item.category)) {
+    if (replace && entity.livingMount.layers.length) entity.livingMount.layers.pop();
+    entity.livingMount.layers.push({
+      itemId: item.id, kind: item.category, faceMode: mode === 'neck' ? 'neck' : 'full',
+      extendMode: ['idle', 'forward', 'backward'].includes(mode) ? mode : item.category === 'flesh_ring' ? 'forward' : 'idle',
+      organOut: true, voiceRole: clip(item.voiceRole || next.itemVoiceBindings?.[item.id] || item.sourceTargetName, 300)
+    });
+    syncWearMount(entity.livingMount);
+    next.pendingActionNote = `【本轮衣柜操作：${replace ? '更换最外层' : '叠加穿戴'}】「${entity.name || '主角'}」穿上【${item.name}】，位于第 ${entity.livingMount.layers.length} 层。当前穿戴：${resolveWear(next, entity).layerText}。请依照实际层次更新最终外观、头部与音色。`;
   } else if (item.category === 'apparel') {
     const slot = ['outerwear', 'underwear', 'privacyCover', 'accessories'].includes(item.slot) ? item.slot : 'outerwear';
     entity.outfit[slot] = `${item.name}（${item.summary}）`;
@@ -2031,25 +2011,24 @@ export function xenoEquipItem(state, {targetKey = '__protagonist__', itemId, mod
   return next;
 }
 
-export function xenoUpdateMountOption(state, {targetKey = '__protagonist__', patch = {}}) {
+export function xenoUpdateMountOption(state, {targetKey = '__protagonist__', itemId = '', patch = {}}) {
   const next = normalizeXeno(state);
-  const entity = getEntity(next, targetKey) || next.protagonist;
-  if (patch.skinFaceMode) {
-    entity.livingMount.skinFaceMode = patch.skinFaceMode === 'neck' ? 'neck' : 'full';
-    next.pendingActionNote = entity.livingMount.skinFaceMode === 'neck'
-      ? `【本轮衣柜操作：皮躯头部收缩露原貌】「${entity.name || '主角'}」令活体皮躯头部组织向下收缩至颈部，露出原本面容并恢复本人声带音色。`
-      : `【本轮衣柜操作：皮躯全脸覆面】「${entity.name || '主角'}」令活体皮躯头部组织向上蔓延覆盖全脸，完全拟态为皮躯容貌与声带音色。`;
+  const entity = getEntity(next, targetKey);
+  if (!entity) throw Error('找不到指定的穿戴者');
+  const layers = entity.livingMount.layers;
+  const skin = itemId ? layers.find(layer => layer.itemId === itemId && layer.kind === 'skin_suit') : layers.slice().reverse().find(layer => layer.kind === 'skin_suit');
+  const ring = itemId ? layers.find(layer => layer.itemId === itemId && layer.kind === 'flesh_ring') : layers.slice().reverse().find(layer => layer.kind === 'flesh_ring');
+  if (itemId && !layers.some(layer => layer.itemId === itemId)) throw Error('这件装备当前没有穿在该角色身上');
+  if (skin) {
+    if (patch.skinFaceMode) skin.faceMode = patch.skinFaceMode === 'neck' ? 'neck' : 'full';
+    if (typeof patch.skinOrganOut === 'boolean') skin.organOut = patch.skinOrganOut;
   }
-  if (typeof patch.skinOrganOut === 'boolean') entity.livingMount.skinOrganOut = patch.skinOrganOut;
-  if (patch.fleshExtendMode && ['idle', 'forward', 'backward'].includes(patch.fleshExtendMode)) {
-    entity.livingMount.fleshExtendMode = patch.fleshExtendMode;
+  if (ring) {
+    if (['idle', 'forward', 'backward'].includes(patch.fleshExtendMode)) ring.extendMode = patch.fleshExtendMode;
+    if (patch.fleshFaceMode) ring.faceMode = patch.fleshFaceMode === 'neck' ? 'neck' : 'full';
+    if (typeof patch.organOut === 'boolean') ring.organOut = patch.organOut;
   }
-  if (patch.fleshFaceMode) {
-    entity.livingMount.fleshFaceMode = patch.fleshFaceMode === 'neck' ? 'neck' : 'full';
-    next.pendingActionNote = entity.livingMount.fleshFaceMode === 'neck'
-      ? `【本轮衣柜操作：肉躯头部收缩露原貌】「${entity.name || '主角'}」令后方延展的活体肉躯头部组织向下收缩至颈部，露出原本面容并恢复本人声带音色。`
-      : `【本轮衣柜操作：肉躯全脸覆面】「${entity.name || '主角'}」令后方延展的活体肉躯头部组织向上蔓延覆盖全脸，完全拟态为肉躯外躯容貌与声带音色。`;
-  }
+  syncWearMount(entity.livingMount);
   if (patch.coatPose && ['cover', 'open'].includes(patch.coatPose)) {
     entity.outfit.coatPose = patch.coatPose;
   }
@@ -2057,21 +2036,23 @@ export function xenoUpdateMountOption(state, {targetKey = '__protagonist__', pat
   if (patch.underwear !== undefined) { entity.outfit.underwear = clip(patch.underwear, 500) || '真空（无内衣）'; entity.outfit.underwearItemId = ''; }
   if (patch.privacyCover !== undefined) { entity.outfit.privacyCover = clip(patch.privacyCover, 500) || '无'; entity.outfit.privacyCoverItemId = ''; }
   if (patch.accessories !== undefined) { entity.outfit.accessories = clip(patch.accessories, 500) || '无'; entity.outfit.accessoriesItemId = ''; }
+  syncWearMount(entity.livingMount);
+  if (skin || ring) next.pendingActionNote = `【本轮衣柜操作：调整穿戴设置】当前层次：${resolveWear(next, entity).layerText}。头部来源：${resolveWear(next, entity).headSource}。`;
   return next;
 }
 
-export function xenoUnequipSlot(state, {targetKey = '__protagonist__', slot}) {
+export function xenoUnequipSlot(state, {targetKey = '__protagonist__', slot, itemId = ''}) {
   const next = normalizeXeno(state);
-  const entity = getEntity(next, targetKey) || next.protagonist;
-  if (slot === 'skin_suit') {
-    entity.livingMount.skinSuitId = '';
-    entity.livingMount.skinVoiceRole = '';
-    next.pendingActionNote = `【本轮衣柜操作：脱卸皮躯】「${entity.name}」令背部脊椎接口裂开，从活体皮躯中脱出，恢复自身原本肉体。`;
-  } else if (slot === 'flesh_ring') {
-    entity.livingMount.fleshRingId = '';
-    entity.livingMount.fleshExtendMode = 'idle';
-    entity.livingMount.fleshVoiceRole = '';
-    next.pendingActionNote = `【本轮衣柜操作：取下肉躯】「${entity.name}」令肉躯组织收缩回根部环体并取下肉躯环。`;
+  const entity = getEntity(next, targetKey);
+  if (!entity) throw Error('找不到指定的穿戴者');
+  if (itemId || ['skin_suit', 'flesh_ring', 'outermost', 'all'].includes(slot)) {
+    const layers = entity.livingMount.layers;
+    const index = slot === 'all' ? 0 : itemId ? layers.findIndex(layer => layer.itemId === itemId)
+      : slot === 'outermost' ? layers.length - 1 : layers.map(layer => layer.kind).lastIndexOf(slot);
+    if (index < 0 || index >= layers.length) throw Error('没有找到要脱下的穿戴层');
+    const removed = layers.splice(index);
+    syncWearMount(entity.livingMount);
+    next.pendingActionNote = `【本轮衣柜操作：从外向内脱卸】「${entity.name || '主角'}」依次脱下【${removed.slice().reverse().map(layer => next.items.find(item => item.id === layer.itemId)?.name || layer.itemId).join('、')}】，物品回到衣柜。剩余穿戴：${resolveWear(next, entity).layerText}。`;
   } else if (['outerwear', 'underwear', 'privacyCover', 'accessories'].includes(slot)) {
     entity.outfit[slot] = slot === 'underwear' ? '真空（未穿内衣裤）' : '无';
     entity.outfit[slot + 'ItemId'] = '';
@@ -2104,16 +2085,14 @@ export function xenoUseConsumable(state, {targetKey = '__protagonist__', itemId}
 /** Collects active生图提示词 (Prompt) from worn skin_suit / flesh_ring / apparel for a character. */
 export function xenoDrawTagsFor(xeno, name) {
   if (!xeno?.enabled) return '';
-  const entity = (!name || name === xeno.protagonist.name || name === 'me')
+  const entity = (!name || name === '__protagonist__' || name === '主角' || name === xeno.protagonist.name || name === 'me')
     ? xeno.protagonist
     : xeno.targets.find(t => t.name === name);
   if (!entity) return '';
   const tags = [];
   const items = xeno.items || [];
-  const skin = entity.livingMount.skinSuitId ? items.find(i => i.id === entity.livingMount.skinSuitId) : null;
-  const ring = entity.livingMount.fleshRingId ? items.find(i => i.id === entity.livingMount.fleshRingId) : null;
-  if (skin?.drawPrompt) tags.push(skin.drawPrompt);
-  if (ring?.drawPrompt && entity.livingMount.fleshExtendMode !== 'idle') tags.push(ring.drawPrompt);
+  const visible = wearDrawingTags(xeno, entity);
+  if (visible) tags.push(visible);
   for (const slot of ['outerwear', 'underwear', 'privacyCover', 'accessories']) {
     const id = entity.outfit[slot + 'ItemId'];
     const app = id ? items.find(i => i.id === id) : null;
@@ -2143,19 +2122,8 @@ export function buildEntityPortraitPrompt(xeno, entity) {
   const equipTags = xenoDrawTagsFor(state, e.id === '__protagonist__' ? '__protagonist__' : e.name);
   if (equipTags) tags.push(equipTags);
 
-  const items = state.items || [];
-  const skin = e.livingMount.skinSuitId ? items.find(i => i.id === e.livingMount.skinSuitId) : null;
-  const ring = e.livingMount.fleshRingId ? items.find(i => i.id === e.livingMount.fleshRingId) : null;
-  if (skin) {
-    if (e.livingMount.skinFaceMode === 'neck') tags.push('living bodysuit, retracted hood, exposed original face, neck seam');
-    if (e.livingMount.skinOrganOut) tags.push('futanari, erection');
-  }
-  if (ring && e.livingMount.fleshExtendMode === 'forward') {
-    tags.push('futanari, biological penis, erection');
-  }
-  if (ring && e.livingMount.fleshExtendMode === 'backward' && e.livingMount.fleshFaceMode === 'neck') {
-    tags.push('living bodysuit, retracted hood, exposed original face');
-  }
+  const wear = resolveWear(state, e);
+  if (wear.body && wear.head?.itemId !== wear.body.itemId) tags.push('retracted hood');
   if (e.voreStorage?.length > 0) {
     tags.push('distended belly, stomach bulge, vore, belly bulge, squirming bulge');
   }
@@ -2176,12 +2144,26 @@ export function buildEntityPortraitPrompt(xeno, entity) {
 
 // ==================== 6. SillyTavern Prompt Injection & Auto-Sync ====================
 
-export function xenoPromptPlan(xeno, presetOverride = null) {
+export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = '', generationType = ''} = {}) {
   if (!xeno || xeno.enabled === false) return [];
   const state = normalizeXeno(xeno);
   const preset = presetOverride ? normalizeXenoPreset(presetOverride) : activeXenoPreset(state);
   const entryMap = new Map((preset.entries || []).map(e => [e.id, e]));
   const blocks = [];
+  let history = Array.isArray(chat) ? chat : [];
+  if (['regenerate', 'swipe'].includes(generationType) && history.length && !history.at(-1)?.is_user) {
+    history = history.slice(0, -1);
+  }
+  const scanMessages = [];
+  for (let index = history.length - 1; index >= 0 && scanMessages.length < preset.scanDepth; index--) {
+    const message = history[index];
+    if (message && !message.is_system && typeof message.mes === 'string') scanMessages.push(message.mes);
+  }
+  const scanText = [...scanMessages, input].filter(text => typeof text === 'string').map(text => text
+    .replace(/<(think|thinking|analysis|xeno_update|xeno_action|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ')
+    .replace(/<img\b(?![^>]*\bsrc\s*=)[^>]*>[^<]*(?:<\/img\s*>|$)/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .normalize('NFKC').toLowerCase()).join('\n');
 
   const carrierNote = {
     auto: '能力载体随当前故事世界观自动适配（现代/科幻为神秘手机App或异能，修仙为夺舍/合体功法，西幻为血肉灵魂秘术）。',
@@ -2203,6 +2185,8 @@ export function xenoPromptPlan(xeno, presetOverride = null) {
     `- 体型身材：${pView.bodyBuild || '（待同步：请严格跟随当前角色卡与人设中的主角身高/体型/身材设定）'}`,
     `- 生理特征：${pView.physiology || '（待同步：请严格跟随当前角色卡与人设中的主角生理特征设定）'}`,
     ...(protNeedSync ? ['- [主角外观同步指令] 当前主角外观尚未写入终端，请务必遵循当前角色卡与世界书对主角（{{user}}）的外观/身份/身材设定，并在本轮正文末尾 <xeno_update> 中第一行输出主角完整8项数据！'] : []),
+    `- 头部：${pView.headSource} ｜ 外观：${pView.headAppearance} ｜ 音色：${pView.voiceStateText}`,
+    `- 肉棒外观：${pView.organAppearance || '未显露'} ｜ 来源：${pView.organSource}`,
     `- [详情] 原始肉体：${pView.originalBody} ｜ 当前肉体：${pView.currentBody} ｜ 变更原因：${pView.changeReason}`,
     `- [详情] 本体托管状态：${pView.hostingState}`,
     `- [详情] 声带与音色：${pView.voiceStateText}`,
@@ -2221,6 +2205,8 @@ export function xenoPromptPlan(xeno, presetOverride = null) {
         `  - 外貌特征：${tv.appearance}`,
         `  - 体型身材：${tv.bodyBuild}`,
         `  - 生理特征：${tv.physiology}`,
+        `  - 头部：${tv.headSource} ｜ 外观：${tv.headAppearance} ｜ 音色：${tv.voiceStateText}`,
+        `  - 肉棒外观：${tv.organAppearance || '未显露'} ｜ 来源：${tv.organSource}`,
         `  - [详情] 原始肉体：${tv.originalBody} ｜ 当前肉体：${tv.currentBody} ｜ 变更原因：${tv.changeReason} ｜ 托管/意识：${tv.hostingState}`,
         `  - [详情] 声带与音色：${tv.voiceStateText}`,
         `  - [详情] 皮躯/肉躯挂载：${tv.livingMountText}`,
@@ -2233,8 +2219,8 @@ export function xenoPromptPlan(xeno, presetOverride = null) {
 
   // 2. On-demand rule injection: only include rules for active states/equipment to save tokens!
   const allEntities = [state.protagonist, ...state.targets];
-  const wornSkinIds = new Set(allEntities.map(e => e.livingMount.skinSuitId).filter(Boolean));
-  const wornRingIds = new Set(allEntities.map(e => e.livingMount.fleshRingId).filter(Boolean));
+  const wornSkinIds = new Set(allEntities.flatMap(e => wearLayers(e).filter(layer => layer.kind === 'skin_suit').map(layer => layer.itemId)));
+  const wornRingIds = new Set(allEntities.flatMap(e => wearLayers(e).filter(layer => layer.kind === 'flesh_ring').map(layer => layer.itemId)));
   const wornApparelIds = new Set(
     allEntities.flatMap(e => ['outerwearItemId', 'underwearItemId', 'privacyCoverItemId', 'accessoriesItemId'].map(k => e.outfit[k])).filter(Boolean)
   );
@@ -2248,14 +2234,14 @@ export function xenoPromptPlan(xeno, presetOverride = null) {
     if (id === 'fleshRing') return wornRingIds.size > 0;
     if (id === 'vore') return allEntities.some(e => e.voreStorage.length > 0);
     if (id === 'alienation') return allEntities.some(e => e.predatorTail !== 'none' || ORIFICE_SLOTS.some(([k]) => e.orificeMods[k] !== '常态'));
-    return true;
+    return false;
   };
 
   const activeRuleBlocks = [];
   for (const e of preset.entries || []) {
     if (e.enabled === false || !String(e.text || '').trim()) continue;
     if (e.id === 'autoSync' || e.scope === 'task' || e.scope === 'mall') continue;
-    if (e.triggerMode === 'always' || isTriggered(e.id)) {
+    if (e.triggerMode === 'always' || isTriggered(e.id) || e.keywords.some(keyword => scanText.includes(keyword))) {
       activeRuleBlocks.push(String(e.text).trim());
     }
   }
@@ -2266,6 +2252,7 @@ export function xenoPromptPlan(xeno, presetOverride = null) {
     const item = state.items.find(i => i.id === id);
     if (item?.rawDesign) designBlocks.push(`【当前穿戴单品设定：${item.name}】\n${item.rawDesign}`);
   }
+  if (wornSkinIds.size || wornRingIds.size) activeRuleBlocks.push('【叠层外观判定】穿戴顺序由内到外。外层身体形态独立，不叠加内层体型；头部从外往内取仍覆面的有效层，音色跟随该头部。收起头部只露出下一层头部。独立部位外观按状态栏单独字段。下方完整设计用于记录各层来源，已被覆盖的内层外观不得混入最终形态或绘图。');
 
   if (state.pendingActionNote) {
     statusLines.push('', `⚡【本轮强制执行指令】\n${state.pendingActionNote}\n请在本次正文回复中直接体现上述状态变化与身体/意识反应！`);
@@ -2315,6 +2302,8 @@ const THINK_BLOCK_RE = /<(?:think|thinking)\b[^>]*>[\s\S]*?<\/(?:think|thinking)
 /** Strips `<xeno_update>...</xeno_update>` blocks from rendered/outgoing story text so the chat stays clean. */
 export function stripXenoUpdate(text) {
   return String(text ?? '')
+    .replace(/<xeno_action\b[^>]*>[\s\S]*?(?:<\/xeno_action\s*>|$)/gi, '')
+    .replace(/<\/xeno_action\s*>/gi, '')
     .replace(XENO_UPDATE_RE, '')
     .replace(/<\/?xeno_update\b[^>]*>/gi, '')
     .trimEnd();

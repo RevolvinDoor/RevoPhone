@@ -80,6 +80,8 @@ export function xenoApp(ctx) {
             <div class="xeno-kv"><span class="k">外貌特征</span><span class="v">${esc(view.appearance)}</span></div>
             <div class="xeno-kv"><span class="k">体型身材</span><span class="v">${esc(view.bodyBuild)}</span></div>
             <div class="xeno-kv"><span class="k">生理特征</span><span class="v">${esc(view.physiology)}</span></div>
+            <div class="xeno-kv"><span class="k">头部</span><span class="v">${esc(view.headAppearance || '未记录')}<br><small>来源：${esc(view.headSource)} ｜ ${esc(view.voiceStateText)}</small></span></div>
+            <div class="xeno-kv"><span class="k">肉棒外观</span><span class="v">${esc(view.organAppearance || '未显露')}<br><small>来源：${esc(view.organSource)}</small></span></div>
           </div>
           ${detailOpen ? `
             <div class="xeno-detail-list">
@@ -718,6 +720,10 @@ export function xenoApp(ctx) {
               ${WORLD_CARRIERS.map(([k, label]) => `<option value="${esc(k)}" ${xeno.worldCarrier === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}
             </select>
           </label>
+          <div class="setting-row">
+            <span>正文自动穿脱与购买确认${help('复用正文模型识别已完成的穿脱，无额外模型请求。衣柜物品直接同步；商店物品先询问名称与价格，确认后才扣费穿戴。')}</span>
+            <button type="button" role="switch" aria-checked="${xeno.autoWardrobe}" class="xeno-switch-btn ${xeno.autoWardrobe ? 'on' : ''}" data-action="toggle-auto-wardrobe"><i></i></button>
+          </div>
           <div class="xeno-row-controls" style="margin-top:6px">
             <button type="button" class="xeno-btn secondary full" data-action="open-xeno-presets">📝 手动修改异构提示词（前往「预设 · 异构」）</button>
           </div>
@@ -897,6 +903,7 @@ export function xenoApp(ctx) {
     if (act === 'toggle-xeno-settings') { settingsOpen = !settingsOpen; v.refresh(); return; }
     if (act === 'toggle-xeno-enabled') { api.saveXeno({enabled: !xeno.enabled}); return; }
     if (act === 'toggle-xeno-autosync') { api.saveXeno({autoUpdateTag: !xeno.autoUpdateTag}); return; }
+    if (act === 'toggle-auto-wardrobe') { api.saveXeno({autoWardrobe: !xeno.autoWardrobe}); return; }
     if (act === 'clear-pending') { api.xenoAct('clearPendingNote'); return; }
     if (act === 'toggle-prot-detail') { showProtDetail = !showProtDetail; v.refresh(); return; }
     if (act === 'toggle-target-detail') { showTargetDetail = !showTargetDetail; v.refresh(); return; }

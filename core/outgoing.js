@@ -44,7 +44,7 @@ export function outgoingChat(chat, {pictures = true, voice = true, keepLatest = 
     let mes = m.mes;
     if (pictures && /<img\b/i.test(mes)) mes = withoutPictures(mes);
     if (sounds && /<(?:sfx|ambience)\b/i.test(mes)) mes = withoutSounds(mes);
-    if (/<\/?xeno_update\b/i.test(mes)) mes = stripXenoUpdate(mes);
+    if (/<\/?xeno_(?:update|action)\b/i.test(mes)) mes = stripXenoUpdate(mes);
     if (voice && formats.length && i !== keep) mes = withoutVoice(mes, formats);
     if (mes !== m.mes) chat[i] = {...m, mes};
   }

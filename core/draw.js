@@ -18,7 +18,7 @@ import {tokenBudget, counterNow, estimateTokens, countField, tagCost} from './to
 import {strength as vibeStrength} from './vibes.js';
 import {DRAW_ENGINES, DRAW_ENGINE_NAMES, defaultGpt, normalizeGpt, defaultComfy, normalizeComfy} from './image-engines.js';
 import {escapeHTML, isPlaceholderRole} from './protocol.js';
-import {xenoDrawTagsFor} from './xeno.js';
+import {xenoDrawTagsFor, getEntity, resolveWear, effectiveEntityView} from './xeno.js';
 import {normalizeComic, comicGuide, hasComicPage, compileComicPage} from './comic.js';
 
 const xenoDrawingRule = settings => settings.xeno?.enabled
@@ -456,7 +456,8 @@ export function genderOf(appearance) {
  */
 export function castList(settings, only = null) {
   const wanted = Array.isArray(only) ? new Set(only.map(n => String(n).trim())) : null;
-  const roles = settings.routes.filter(r => !isPlaceholderRole(r.name) && (!wanted || wanted.has(r.name)));
+  const visible = new Map(drawable(settings).map(route => [route.name, route]));
+  const roles = settings.routes.filter(r => !isPlaceholderRole(r.name) && (!wanted || wanted.has(r.name))).map(route => visible.get(route.name) || route);
   if (!roles.length) return wanted ? '（这段剧情里还没有登记的角色）' : '（还没有登记的角色）';
   return roles.map(r => !r.appearance?.trim() ? `${r.name}（还没有外貌）` : genderOf(r.appearance) ? `${r.name}（${genderOf(r.appearance)}）` : r.name).join('；');
 }
@@ -877,7 +878,17 @@ export function peopleCount(prompt) {
   for (const m of String(prompt).matchAll(/(?:^|[,\s(])(\d+)\+?\s*(?:girls?|boys?|others?)\b/gi)) n += Number(m[1]);
   return n;
 }
-const drawable = settings => settings.routes.filter(r => r.appearance?.trim() && !isPlaceholderRole(r.name));
+const drawable = settings => settings.routes.map(route => {
+  if (!settings.xeno?.enabled) return route;
+  const entity = getEntity(settings.xeno, route.name);
+  if (!entity) return route;
+  const wear = resolveWear(settings.xeno, entity);
+  if (!wear.body) return route;
+  const view = effectiveEntityView(settings.xeno, entity, {forDrawing: true});
+  const appearance = [xenoDrawTagsFor(settings.xeno, route.name), !wear.body.item.drawPrompt ? view.appearance : '',
+    !wear.head?.item.drawPrompt ? view.headAppearance : '', view.bodyBuild].filter(Boolean).join(', ');
+  return {...route, appearance};
+}).filter(route => route.appearance?.trim() && !isPlaceholderRole(route.name));
 /**
  * Roles whose appearance goes into an older one-line picture tag. Names in the tag come first; when the tag names
  * nobody we know, the roles mentioned in the story just before the tag are used, up to the number of people.
