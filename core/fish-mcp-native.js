@@ -137,6 +137,34 @@ export class FishNativeMCP {
     catch { throw unknown('官方已返回结果，但结构化内容无法读取'); }
     return {isError: false, content, ...(structuredContent !== undefined ? {structuredContent} : {})};
   }
+  /** TT 2.4.0: file_staging_commands.rs + tauri.conf.json ($APPCACHE assets).
+   * Download outside WebView CORS using TT's outbound proxy; remove the file after reading.
+   */
+  async withAudio(url, read, signal) {
+    const core = this.host.__TAURI__?.core;
+    const bridge = this.host.__TAURITAVERN__?.invoke;
+    const invoke = typeof bridge?.safeInvoke === 'function' ? bridge.safeInvoke.bind(bridge) : core?.invoke?.bind(core);
+    if (!invoke || typeof core?.convertFileSrc !== 'function') {
+      throw this.error('当前 TT 缺少原生音频下载接口，请更新 TT。', 'HOST_AUDIO_REQUIRED');
+    }
+    signal?.throwIfAborted();
+    let path;
+    try {
+      // No OAuth header goes to the audio host. Await uncancellable native IPC
+      // even after abort so its eventual temporary file can still be removed.
+      const staged = await invoke('stage_file_from_url', {url});
+      path = staged?.file_path;
+      if (typeof path !== 'string' || !path) throw Error('宿主没有返回临时音频文件');
+      signal?.throwIfAborted();
+      return await read(core.convertFileSrc(path), staged.mime_type || '');
+    } catch (error) {
+      signal?.throwIfAborted();
+      const detail = this.clean(error?.message || error, {}).replace(/https?:\/\/[^\s"'<>]+/gi, '[下载地址]');
+      throw this.error('TT 原生音频下载或读取失败：' + detail, 'HOST_AUDIO_DOWNLOAD');
+    } finally {
+      if (path) await invoke('stage_file_discard', {filePath: path}).catch(() => {});
+    }
+  }
   async disconnect() {
     this.disconnecting = true;
     await this.connecting?.catch(() => {});

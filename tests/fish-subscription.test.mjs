@@ -178,7 +178,7 @@ test('Downloaded links survive a new client after failure; multi-clip results ar
   assert.equal(first.calls('text_to_speech').length, 1); assert.equal(second.calls('text_to_speech').length, 0);
 });
 
-function managerFixture(call) {
+function managerFixture(call, stage) {
   const exa = {id: 'exa', displayName: 'Exa Search', endpoint: 'https://mcp.exa.ai/mcp', headers: {}, state: 'paused', toolPermissions: {}, protocolVersion: 'auto'};
   const rows = new Map([['exa', structuredClone(exa)]]), calls = [], updates = []; let created = 0;
   const get = id => {const row = rows.get(id); if (!row) throw Error('missing registration'); return row;};
@@ -194,7 +194,16 @@ function managerFixture(call) {
     async setPermission(input) {const row = get(input.registrationId); row.toolPermissions[input.nativeName] = input.permission; return structuredClone(row);},
     async testCall(input) {calls.push({...structuredClone(input), server: structuredClone(get(input.registrationId))}); return call ? call(input) : {outcome: 'known_response', response: {kind: 'tool_result', isError: false, textBlocks: [], diagnostics: [], structuredJson: JSON.stringify(input.nativeName === 'get_credit_balance' ? {remaining_credits: 12, team: 'Fixture'} : {audio_url: 'https://audio.example/native.mp3'})}};}
   }};
-  return {host: {__TAURITAVERN__: {api: {mcp: api}}}, api, rows, calls, updates, exa, created: () => created};
+  const transfers = [], path = 'C:\\Cache\\tauritavern-staging\\remote\\fixture.bin';
+  const core = {
+    async invoke(command, args) {
+      transfers.push({command, args: structuredClone(args)});
+      if (command === 'stage_file_from_url') return stage ? stage(args) : {file_path: path, mime_type: 'audio/mpeg'};
+      if (command !== 'stage_file_discard') throw Error('unexpected native command');
+    },
+    convertFileSrc(value) {assert.equal(value, path); return 'http://asset.localhost/fixture.bin';}
+  };
+  return {host: {__TAURITAVERN__: {api: {mcp: api}}, __TAURI__: {core}}, api, rows, calls, updates, transfers, path, exa, created: () => created};
 }
 
 test('Existing TT MCP Manager registers Fish once, executes natively, and pauses/clears authorization on disconnect', async t => {
@@ -207,13 +216,58 @@ test('Existing TT MCP Manager registers Fish once, executes natively, and pauses
   assert.equal(manager.calls[0].server.headers.Authorization, 'Bearer oauth-access');
   assert.equal(manager.calls[0].server.headers.Origin, undefined);
   assert.equal(manager.calls[0].server.endpoint, FISH_MCP);
-  assert.equal(f.requests.length, 1); assert.equal(f.requests[0].url, 'https://audio.example/native.mp3');
+  assert.equal(f.requests.length, 1); assert.equal(f.requests[0].url, 'http://asset.localhost/fixture.bin');
   assert.equal(f.requests[0].headers, undefined);
+  assert.equal(audio.type, 'audio/mpeg');
+  assert.deepEqual(manager.transfers, [
+    {command: 'stage_file_from_url', args: {url: 'https://audio.example/native.mp3'}},
+    {command: 'stage_file_discard', args: {filePath: manager.path}}
+  ]);
   const balance = await f.client.balance(); assert.equal(balance.kind, 'subscription'); assert.equal(balance.left, 12);
   await f.client.native.disconnect();
   assert.equal(manager.rows.get('fish-1').state, 'paused');
   assert.equal(manager.rows.get('fish-1').headers.Authorization, undefined);
   assert.deepEqual(manager.rows.get('exa'), manager.exa);
+});
+
+test('Native download failure retries saved links after reload without another paid call', async t => {
+  const manager = managerFixture(), journal = new RecordStore();
+  const first = speechFixture({host: manager.host, journal, download: () => {throw TypeError('Failed to fetch local audio');}});
+  t.after(() => first.client.close());
+  await first.client.native.connect();
+  await assert.rejects(first.client.synthesize(first.request()), /已生成.*TT 原生音频下载或读取失败/);
+  assert.equal(manager.transfers.at(-1).command, 'stage_file_discard');
+  const second = speechFixture({host: manager.host, journal}); t.after(() => second.client.close());
+  second.oauth.record.nativeRegistrationId = first.oauth.record.nativeRegistrationId;
+  const audio = await second.client.synthesize(second.request());
+  assert.equal(audio.size, 3); assert.equal(manager.calls.length, 1);
+  assert.equal(manager.transfers.filter(r => r.command === 'stage_file_from_url').length, 2);
+  assert.equal(manager.transfers.filter(r => r.command === 'stage_file_discard').length, 2);
+  assert.equal(second.requests.every(r => r.url === 'http://asset.localhost/fixture.bin'), true);
+});
+
+test('Stopping during native staging removes the eventual file without reading or regenerating', async t => {
+  let complete, started;
+  const waiting = new Promise(resolve => {started = resolve;});
+  const manager = managerFixture(undefined, () => {started(); return new Promise(resolve => {complete = resolve;});});
+  const f = speechFixture({host: manager.host}); t.after(() => f.client.close());
+  await f.client.native.connect();
+  const abort = new AbortController(), playing = f.client.synthesize(f.request(), abort.signal);
+  const rejected = assert.rejects(playing, error => error.name === 'AbortError');
+  await waiting; abort.abort(); complete({file_path: manager.path, mime_type: 'audio/mpeg'});
+  await rejected;
+  assert.equal(f.requests.length, 0); assert.equal(manager.calls.length, 1);
+  assert.equal(manager.transfers.at(-1).command, 'stage_file_discard');
+  assert.equal((await f.client.jobs()).values().next().value.links.length, 1);
+});
+
+test('Native staging failure preserves links, redacts signed URLs, and never uses browser CDN fetch', async t => {
+  const manager = managerFixture(undefined, () => {throw Error('download failed https://audio.example/a?signature=private');});
+  const f = speechFixture({host: manager.host}); t.after(() => f.client.close());
+  await f.client.native.connect();
+  for (let i = 0; i < 2; i++) await assert.rejects(f.client.synthesize(f.request()), error => /已生成.*TT 原生音频下载/.test(error.message) && !error.message.includes('private'));
+  assert.equal(manager.calls.length, 1); assert.equal(f.requests.length, 0);
+  assert.equal(manager.transfers.length, 2);
 });
 
 test('An old TauriTavern fails before sending instead of falling back to browser MCP', async t => {

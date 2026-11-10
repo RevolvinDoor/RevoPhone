@@ -254,7 +254,7 @@ export class FishMCP {
         this.protocol = result.protocolVersion; this.tools = tools; this.account = account; return;
       }
       if (!this.protocol) {
-        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.2.5'}}, {signal, initialize: true});
+        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.2.6'}}, {signal, initialize: true});
         if (account !== this.oauth.record?.account) throw fail('登录账户已变化，请重新读取工具');
         if (!['2025-11-25', '2025-06-18', '2025-03-26'].includes(result.protocolVersion) || !result.capabilities?.tools) throw fail('服务端协商的 MCP 版本或工具能力不受支持');
         this.protocol = result.protocolVersion;
@@ -389,17 +389,24 @@ export class FishMCP {
       const clips = [];
       for (const url of links) {
         signal?.throwIfAborted();
-        const r = await this.fetcher(url, {credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'follow',
-          signal: AbortSignal.any([this.controller.signal, ...(signal ? [signal] : []), AbortSignal.timeout(60000)])});
-        if (!r.ok) throw fail('音频下载失败（HTTP ' + r.status + '）');
-        const bytes = await readAudio(r);
-        clips.push(new Blob([bytes], {type: r.headers.get('content-type') || 'application/octet-stream'}));
+        clips.push(await this.downloadAudio(url, signal));
       }
       return clips.length === 1 ? clips[0] : await this.mergeAudio(clips, signal);
     } catch (error) {
       if (signal?.aborted) throw error;
       throw fail('语音已生成，但下载或解码失败。再次播放会重试已保存的链接，不重复生成。' + (error.message ? ' ' + error.message : ''));
     }
+  }
+  async downloadAudio(url, signal) {
+    const combined = AbortSignal.any([this.controller.signal, ...(signal ? [signal] : []), AbortSignal.timeout(60000)]);
+    const read = async (source, mimeType = '') => {
+      combined.throwIfAborted();
+      const r = await this.fetcher(source, {credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'follow', signal: combined});
+      if (!r.ok) throw fail('音频下载失败（HTTP ' + r.status + '）');
+      const bytes = await readAudio(r);
+      return new Blob([bytes], {type: mimeType || r.headers.get('content-type') || 'application/octet-stream'});
+    };
+    return this.native ? this.native.withAudio(url, read, combined) : read(url);
   }
   close() { this.controller.abort(); this.reset(); this.oauth.close(); this.writingJobs?.finally(() => this.journal.close()).catch(() => {}); if (!this.writingJobs) this.journal.close(); }
 }
