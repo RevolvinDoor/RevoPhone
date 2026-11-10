@@ -27,7 +27,7 @@ import { WALLET_LIMITS, PREMIUM, DECOR_KINDS, SHOP_GIFTS, LEDGER_KINDS, premiumO
 import { gptModels, DRAW_ENGINES, DRAW_ENGINE_NAMES, GPT_IMAGE_MODELS, GPT_QUALITIES, normalizeGpt, gptBase, gptSize, gptPrompt, gptGenerate, normalizeComfy, comfyUrl, checkWorkflow, workflowPlaceholders, COMFY_LIMITS, comfySize, comfyPrompt, comfyValues, fillWorkflow, comfyGenerate, comfyCatalog, comfyLoras, comfyClips, defaultWorkflow, tavernWorkflows, tavernWorkflow, orientationOf, DEFAULT_COMFY_WORKFLOW, COMFY_PARAM_KEYS, applyComfyWorkflow } from './image-engines.js';
 import {activeLoraWorkflow, normalizeDisabledLoras, inspectLoras, editLoras, pickLoraSource} from './comfy-loras.js';
 import { normalizeSettings, validateSettings, modelRules, freshState } from './state.js';
-import { normalizeRoute, switchRouteEngine, removeRoute, withRoles, findRoute, cleanAliases, cardRoutes, roleTypeOf, routeForCard, isValidRoleName } from './routes.js';
+import { normalizeRoute, switchRouteEngine, removeRoute, withRoles, findRoute, cleanAliases, cardRoutes, roleTypeOf, routeForCard, routeCard, isValidRoleName } from './routes.js';
 import { DEFAULT_PROMPT, DEFAULT_FORMAT, promptPlan, validatePreset, parseDialogue, isPlaceholderRole, knownFormats } from './protocol.js';
 import { normalizeMarks, withMarks } from './voice-fx.js';
 import { TTSParameters, FISH_API, tauriTavern } from './parameters.js';
@@ -57,7 +57,7 @@ import {
     xenoEquipItem, xenoUpdateMountOption, xenoUnequipSlot, xenoUseConsumable
 } from './xeno.js';
 import {
-    getChatStoreJson, setChatStoreJson,
+    getChatStoreJson,
     getExtStoreJson, setExtStoreJson, deleteExtStoreJson, listExtStoreKeys
 } from '../host-tt.js';
 
@@ -192,6 +192,11 @@ export class TTSBackend {
         this.activeChatKey = '';
         this.xenoSessions = new Map();
         this.xenoFloors = new Map();
+        this.xenoChatRecords = new Map();
+        this.xenoChatStores = new Map();
+        this.xenoChatWrites = new Map();
+        this.deletedXenoChats = new Set();
+        this.xenoSaveWarnings = new Set();
         this.stripAndCaptureXenoImages(this.settings.xeno, { persist: false, legacyQueue: this.pendingLegacyXenoImages });
         this.player = new DialoguePlayer({
             settings: () => this.cardState(), providers, cache: this.cache, ...(sink ? { sink } : {}), unknown, speech,
@@ -762,70 +767,151 @@ export class TTSBackend {
     }
     async persistActiveChatXeno(chatKey = this.activeChatKey, { writeTtMeta = true } = {}) {
         const key = String(chatKey || '').trim();
-        if (!key || this.closed) return;
-        const session = extractXenoSession(this.settings.xeno);
-        const floors = this.pruneChatFloors(this.getChatFloors(key));
-        this.xenoSessions.set(key, session);
-        const payload = { chatKey: key, session, floors, updatedAt: Date.now() };
-        await this.apps.put([{ id: `xeno-chat:${key}`, kind: 'xeno-chat', ...payload, at: payload.updatedAt }]).catch(() => {});
-        if (writeTtMeta && key === this.activeChatKey) {
-            await setChatStoreJson('xeno-state', payload).catch(() => {});
-        }
+        if (!key || this.closed || this.deletedXenoChats?.has(key)) return;
+        this.xenoChatRecords ||= new Map();
+        this.xenoChatWrites ||= new Map();
+        const previous = this.xenoChatRecords.get(key);
+        if (key !== this.activeChatKey && !previous) return;
+        const payload = key === this.activeChatKey ? {
+            version: 2, sessionId: previous?.sessionId || crypto.randomUUID(), chatKey: key,
+            ref: this.xenoChatStores?.get(key)?.ref || previous?.ref || null,
+            session: extractXenoSession(this.settings.xeno),
+            roles: this.routesHere().filter(route => routeCard(route) === this.cardKey()),
+            floors: clone(this.pruneChatFloors(this.getChatFloors(key))), updatedAt: Date.now()
+        } : clone(previous);
+        this.xenoSessions.set(key, payload.session);
+        this.xenoChatRecords.set(key, payload);
+        const store = writeTtMeta ? this.xenoChatStores?.get(key) : null;
+        const pending = (this.xenoChatWrites.get(key) || Promise.resolve()).catch(() => {}).then(async () => {
+            if (this.closed || this.deletedXenoChats?.has(key)) return;
+            const local = await this.apps.put([{id: `xeno-chat:${key}`, kind: 'xeno-chat', ...payload, at: payload.updatedAt}]).then(() => true, () => false);
+            if (this.closed || this.deletedXenoChats?.has(key)) return;
+            const remote = store ? await store.write(payload).catch(() => false) : false;
+            if ((!local || store && !remote) && !this.deletedXenoChats?.has(key)) {
+                this.xenoSaveWarnings ||= new Set();
+                if (!this.xenoSaveWarnings.has(key)) {
+                    this.xenoSaveWarnings.add(key);
+                    this.notify(local ? '异构状态已保存在本机，但写入聊天文件失败，请稍后重试' : remote ? '异构状态已保存到聊天文件，但本机副本保存失败' : '异构状态未能保存，请检查存储空间或权限');
+                }
+            } else this.xenoSaveWarnings?.delete(key);
+        });
+        this.xenoChatWrites.set(key, pending);
+        return pending;
     }
     /** Switches active chat session for Xeno so starting a new chat or changing chats never leaks state. */
-    async switchChatXeno(chatKey, { hasHistory = false } = {}) {
+    switchChatXeno(chatKey, options = {}) {
         const nextKey = String(chatKey || '').trim();
-        if (!nextKey || this.closed) return;
-        const prevKey = this.activeChatKey;
-        this.activeChatKey = nextKey;
-        if (prevKey && prevKey !== nextKey) {
-            // Do not write prevKey into SillyTavern's chatMetadata because chatMetadata already belongs to nextKey on CHAT_CHANGED
-            await this.persistActiveChatXeno(prevKey, { writeTtMeta: false }).catch(() => {});
-        }
-        const cardKey = this.cardKey();
+        if (!nextKey || this.closed) return Promise.resolve(null);
+        const epoch = (this.xenoChatEpoch || 0) + 1;
+        this.xenoChatEpoch = epoch;
+        const outgoing = this.activeChatKey && this.activeChatKey !== nextKey ? this.persistActiveChatXeno() : Promise.resolve();
+        const pending = (this.xenoChatNavigation || Promise.resolve()).catch(() => {}).then(async () => {
+            await outgoing;
+            if (this.closed || epoch !== this.xenoChatEpoch) return null;
+            return this.loadChatXeno(nextKey, options, epoch);
+        });
+        this.xenoChatNavigation = pending;
+        return pending;
+    }
+    async loadChatXeno(nextKey, {hasHistory = false, space = null, userName = '', narratorName = '', storage = null} = {}, epoch = this.xenoChatEpoch) {
+        this.xenoChatRecords ||= new Map();
+        this.xenoChatStores ||= new Map();
+        if (storage) this.xenoChatStores.set(nextKey, storage);
+        if (nextKey === this.activeChatKey && this.xenoChatRecords.has(nextKey)) return {fresh: false};
+        const cardKey = space?.key || this.cardKey();
         let record = null;
         try {
             const [ttRec, idbRec] = await Promise.all([
-                getChatStoreJson('xeno-state').catch(() => null),
+                storage?.read().catch(() => null),
                 this.apps.get(`xeno-chat:${nextKey}`).catch(() => null)
             ]);
-            const validTt = ttRec?.session && ttRec.chatKey === nextKey && (!ttRec.session.cardKey || !cardKey || ttRec.session.cardKey === cardKey) ? ttRec : null;
+            const validTt = ttRec?.session && (!ttRec.session.cardKey || !cardKey || ttRec.session.cardKey === cardKey) ? ttRec : null;
             const validIdb = idbRec?.session && (!idbRec.session.cardKey || !cardKey || idbRec.session.cardKey === cardKey) ? idbRec : null;
             if (validTt && validIdb) {
-                record = (Number(validTt.updatedAt) || 0) >= (Number(validIdb.updatedAt) || 0) ? validTt : validIdb;
+                record = validTt.sessionId === validIdb.sessionId && Number(validIdb.updatedAt) > Number(validTt.updatedAt) ? validIdb : validTt;
             } else {
                 record = validTt || validIdb;
             }
         } catch {}
-
-        if (!record && this.xenoSessions.has(nextKey)) {
-            const memSession = this.xenoSessions.get(nextKey);
-            if (memSession && (!memSession.cardKey || !cardKey || memSession.cardKey === cardKey)) {
-                record = { session: memSession, floors: this.getChatFloors(nextKey) };
-            }
+        if (!record || record.version !== 2) {
+            const legacy = storage ? await storage.readLegacy().catch(() => null) : await getChatStoreJson('xeno-state').catch(() => null);
+            if (legacy?.session && legacy.chatKey === nextKey && (!legacy.session.cardKey || !cardKey || legacy.session.cardKey === cardKey)
+                && (!record || Number(legacy.updatedAt) > Number(record.updatedAt))) record = legacy;
         }
-
-        let sessionToApply = record?.session || null;
         if (!record) {
-            // If upgrading from a previous version and opening an ongoing chat before any xeno-chat records exist,
-            // adopt the existing session only if it belongs to this same character card.
+            record = this.xenoChatRecords.get(nextKey) || null;
+        }
+        if (!record && this.xenoSessions.has(nextKey)) {
+            const session = this.xenoSessions.get(nextKey);
+            if (session && (!session.cardKey || !cardKey || session.cardKey === cardKey)) record = {session, floors: this.getChatFloors(nextKey)};
+        }
+        if (!record && hasHistory) {
             const existingRecords = await this.apps.list('xeno-chat').catch(() => []);
             const sameCardOnUpgrade = !this.settings.xeno?.cardKey || !cardKey || this.settings.xeno.cardKey === cardKey;
-            if (hasHistory && existingRecords.length === 0 && sameCardOnUpgrade && (this.settings.xeno?.protagonist?.name || this.settings.xeno?.targets?.length)) {
-                sessionToApply = extractXenoSession(this.settings.xeno);
-            } else {
-                sessionToApply = null;
+            if (existingRecords.length === 0 && sameCardOnUpgrade && (this.settings.xeno?.protagonist?.name || this.settings.xeno?.targets?.length)) {
+                record = {session: extractXenoSession(this.settings.xeno), roles: this.routesHere()};
             }
         }
-
+        if (this.closed || epoch !== this.xenoChatEpoch || this.deletedXenoChats?.has(nextKey)) return null;
+        const sessionToApply = record?.session || null;
+        this.activeChatKey = nextKey;
+        if (space) this.setSpace(space, {syncRoles: false});
         this.xenoFloors.set(nextKey, record?.floors && typeof record.floors === 'object' ? clone(record.floors) : {});
         this.xenoSessions.set(nextKey, sessionToApply);
-
+        if (record) this.xenoChatRecords.set(nextKey, clone(record));
         const next = this.getState();
+        const currentRoles = cardRoutes(next.routes, cardKey).filter(route => routeCard(route) === cardKey);
+        const names = new Set([sessionToApply?.protagonist?.name, ...(sessionToApply?.targets || []).map(target => target.name), narratorName].filter(Boolean));
+        const roles = Array.isArray(record?.roles) ? record.roles.filter(route => routeForCard(route, cardKey) && routeCard(route) === cardKey).map(normalizeRoute)
+            : record ? currentRoles.filter(route => names.has(route.name) || roleTypeOf(route) === 'narrator')
+                : currentRoles.filter(route => [userName, narratorName].includes(route.name)).map(route => normalizeRoute({...route, appearance: '', persona: ''}));
+        if (record && !Array.isArray(record.roles)) {
+            for (const entity of [sessionToApply?.protagonist, ...(sessionToApply?.targets || [])]) {
+                if (!isValidRoleName(entity?.name)) continue;
+                const roleType = entity === sessionToApply.protagonist ? 'protagonist' : 'normal';
+                const existing = roles.find(route => route.name === entity.name);
+                if (existing) existing.roleType = roleType;
+                else roles.push(normalizeRoute({id: crypto.randomUUID(), name: entity.name, card: cardKey,
+                    roleType, engine: 'fish', voice: '', model: '', appearance: entity.appearance || '', persona: entity.identity || ''}));
+            }
+        }
+        next.routes = [...next.routes.filter(route => !routeForCard(route, cardKey) || routeCard(route) !== cardKey), ...roles];
+        next.xeno.cardProtagonists = {...next.xeno.cardProtagonists};
+        delete next.xeno.cardProtagonists[cardKey];
         next.xeno = syncXenoWithRoutes(mergeXenoSession(next.xeno, sessionToApply, cardKey), cardRoutes(next.routes, cardKey), cardKey);
         this.save(next);
-        await this.persistActiveChatXeno(nextKey).catch(() => {});
+        this.roleInitContext = {key: cardKey, userName, narratorName};
+        if (!record) this.initializeCardRoles(userName, narratorName, {force: true});
+        await this.persistActiveChatXeno(nextKey);
         this.emit('xeno', { xeno: clone(this.cardState().xeno) });
+        return {fresh: !record};
+    }
+    async deleteChatXenoFile(fileName, {cardKey = this.cardKey(), group = false} = {}) {
+        const name = String(fileName || '').replace(/\.jsonl$/i, '');
+        if (!name) return;
+        this.deletedXenoChats ||= new Set();
+        this.xenoChatRecords ||= new Map();
+        const matches = record => record?.session?.cardKey === cardKey && (record.ref
+            ? group ? record.ref.kind === 'group' && record.ref.chatId === name : record.ref.kind === 'character' && record.ref.fileName === name
+            : group ? record.chatKey === `tt:group:${name}` || record.chatKey === `${cardKey}|${name}`
+                : record.chatKey?.endsWith(`:${name}`) || record.chatKey === `${cardKey}|${name}`);
+        for (const [key, record] of this.xenoChatRecords) if (matches(record)) this.deletedXenoChats.add(key);
+        const records = await this.apps.list('xeno-chat');
+        const keys = new Set(records.filter(matches).map(record => record.chatKey));
+        for (const [key, record] of this.xenoChatRecords) if (matches(record)) keys.add(key);
+        for (const key of keys) {
+            this.deletedXenoChats.add(key);
+            await this.xenoChatWrites?.get(key)?.catch(() => {});
+            await this.apps.remove(`xeno-chat:${key}`);
+            this.xenoChatRecords.delete(key);
+            this.xenoChatStores?.delete(key);
+            this.xenoChatWrites?.delete(key);
+            this.xenoSessions.delete(key);
+            this.xenoFloors.delete(key);
+            const images = await this.apps.list('xeno-image');
+            const imageKeys = new Set([...images.map(image => image.key), ...(this.xenoImages?.keys() || [])]);
+            for (const imageKey of imageKeys) if (imageKey?.startsWith(`portrait:${key}:`)) await this.persistXenoImage(imageKey, '');
+        }
     }
     /** Snapshots the pre-floor Xeno session right before a reply is generated or applied. */
     snapshotXenoBeforeFloor(floorId) {
@@ -2331,16 +2417,16 @@ export class TTSBackend {
     }
     // ---------- 分区 ----------
     /** The card open in the tavern now: {key, name, members}. With 分区 on, the phone shows that card's own things. */
-    setSpace(space) {
+    setSpace(space, {syncRoles = true} = {}) {
         const next = { key: String(space?.key || '').slice(0, 300), name: String(space?.name || '').slice(0, 80), members: (Array.isArray(space?.members) ? space.members : []).map(String).filter(Boolean).slice(0, 30) };
         if (next.key === this.space.key && next.name === this.space.name && next.members.join('\n') === this.space.members.join('\n')) return;
         const prevKey = this.space.key;
         this.space = next;
-        if (next.key && next.key !== prevKey) {
+        if (syncRoles && next.key && next.key !== prevKey) {
             this.settings.xeno = syncXenoWithRoutes(this.settings.xeno, cardRoutes(this.settings.routes, next.key), next.key);
         }
         // The card's own characters belong to it (so they do not show up in other cards as roles no story has met).
-        if (next.key && next.members.length) this.tagRoles(next.members, next.key);
+        if (syncRoles && next.key && next.members.length) this.tagRoles(next.members, next.key);
         this.emit('space', { space: clone(next) });
         this.emit('settings', { state: this.cardState() });
         this.emit('xeno', { xeno: clone(this.cardState().xeno) });
@@ -2357,12 +2443,12 @@ export class TTSBackend {
     /** Who the picture rules name: the open card's people and the given speakers (null: everyone). */
     drawCast(speakers = []) { return drawCast(this.cardState(), this.space, speakers); }
     /** The roles that speak in a card's story belong to that card's contacts. Saved only when something changed. */
-    initializeCardRoles(userName = '', narratorName = '') {
+    initializeCardRoles(userName = '', narratorName = '', {force = false} = {}) {
         const key = this.cardKey();
         this.roleInitContext = {key, userName, narratorName};
         if (!key || this.settings.general.autoRoleInit === false
             || !isValidRoleName(userName) || !isValidRoleName(narratorName) || userName === narratorName
-            || Object.hasOwn(this.settings.roleInitializations || {}, key)) return false;
+            || !force && Object.hasOwn(this.settings.roleInitializations || {}, key)) return false;
         const next = this.getState();
         for (const [name, roleType] of [[narratorName, 'narrator'], [userName, 'protagonist']]) {
             let route = next.routes.find(row => row.name === name && (row.card || '') === key);
@@ -2405,6 +2491,7 @@ export class TTSBackend {
             next.xeno = syncXenoWithRoutes(next.xeno, cardRoutes(next.routes, key), key);
             this.save(next);
             this.emit('xeno', { xeno: clone(this.cardState().xeno) });
+            this.persistActiveChatXeno().catch(() => {});
         }
         return changed;
     }

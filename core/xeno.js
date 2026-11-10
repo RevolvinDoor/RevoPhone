@@ -6,7 +6,7 @@ import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS, XENO_PROMPT_DEFAULTS, XENO_TRIGGER_
 import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {encodeBoundVoiceRef, parseBoundVoiceRef} from './xeno-voice.js';
 import {lineEffect} from './voice-fx.js';
-import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, itemVoiceRef, extensionEnabled, extensionMode} from './xeno-wear.js';
+import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, wearDrawingAppearance, itemVoiceRef, extensionEnabled, extensionMode} from './xeno-wear.js';
 export {wearLayers, resolveWear, itemOccupant, itemVoiceRef};
 export {XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset};
 
@@ -556,6 +556,11 @@ export function normalizeXenoPreset(raw) {
     const scope = ['story', 'task', 'mall'].includes(e.scope) ? e.scope : (builtin?.scope || 'story');
     const triggerMode = ['auto', 'always'].includes(e.triggerMode) ? e.triggerMode : (builtin?.triggerMode || 'always');
     let entryText = typeof e.text === 'string' ? e.text.slice(0, 20000) : (builtin?.text || '');
+    if (id === 'fleshRing' && builtin?.text) {
+      const oldSwitchRule = '    开关规则: 前方延展与后方延展是两个独立开关，可以同时开启；关闭其中一项保留另一项，静息关闭两项。头部覆盖和下体独立外观另行开关，不改动延展方向或其他穿戴层。\n';
+      const withoutSwitchRule = builtin.text.replace(/^[ \t]*开关规则:.*\r?\n/m, '');
+      if (entryText === withoutSwitchRule || entryText === builtin.text.replace(/^[ \t]*开关规则:.*\r?\n/m, oldSwitchRule)) entryText = builtin.text;
+    }
     if (id === 'autoSync' && entryText.includes('1. 当本轮剧情中有【新登场的女性/扶她重要角色】首次亮相') && builtin?.text) {
       entryText = builtin.text;
     }
@@ -1103,16 +1108,18 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
   let appearance = e.appearance;
   let bodyBuild = e.bodyBuild;
   let physiology = e.physiology;
+  const hasOrgan = Boolean(wear.organ || ['男', '扶她'].includes(e.gender));
 
   if (wear.body) {
     const outer = wear.body.item;
-    gender = outer.gender || gender;
+    gender = outer.gender === '扶她' && !hasOrgan ? '女' : outer.gender || gender;
     appearance = outer.appearance || appearance;
     bodyBuild = outer.bodyBuild || bodyBuild;
     physiology = outer.physiology || physiology;
   }
-  if (wear.organ && gender === '女') gender = '扶她';
-  if (wear.head?.itemId !== wear.body?.itemId && wear.layers.length) {
+  if (hasOrgan && gender === '女') gender = '扶她';
+  if (forDrawing) appearance = wearDrawingAppearance(xeno, e);
+  else if (wear.head?.itemId !== wear.body?.itemId && wear.layers.length) {
     appearance = `身体：${appearance}；头部来源：${wear.headSource}；头部外观：${wear.headAppearance}`;
   }
   if (e.predatorTail !== 'none') {
@@ -1223,6 +1230,7 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
     organAppearance: wear.organAppearance,
     organSource: wear.organSource,
     bodySource: wear.bodySource,
+    extensionText: wear.extensionText,
     layerText: wear.layerText,
     // 8 detail fields
     originalBody: e.originalBody,
@@ -2233,6 +2241,7 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
     `- [详情] 本体托管状态：${pView.hostingState}`,
     `- [详情] 声带与音色：${pView.voiceStateText}`,
     `- [详情] 皮躯/肉躯挂载：${pView.livingMountText}`,
+    ...(pView.extensionText ? [`- [详情] 有效延展设定：${pView.extensionText}`] : []),
     `- [详情] 四槽位着装：${pView.outfitText}`,
     `- [详情] 体内收纳：${pView.voreText}`,
     `- [详情] 认知状态：${pView.cognitionText}`
@@ -2252,6 +2261,7 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
         `  - [详情] 原始肉体：${tv.originalBody} ｜ 当前肉体：${tv.currentBody} ｜ 变更原因：${tv.changeReason} ｜ 托管/意识：${tv.hostingState}`,
         `  - [详情] 声带与音色：${tv.voiceStateText}`,
         `  - [详情] 皮躯/肉躯挂载：${tv.livingMountText}`,
+        ...(tv.extensionText ? [`  - [详情] 有效延展设定：${tv.extensionText}`] : []),
         `  - [详情] 四槽位着装：${tv.outfitText}`,
         `  - [详情] 体内收纳：${tv.voreText}`,
         `  - [详情] 认知状态：${tv.cognitionText}`
@@ -2295,6 +2305,7 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
     if (item?.rawDesign) designBlocks.push(`【当前穿戴单品设定：${item.name}】\n${item.rawDesign}`);
   }
   if (wornSkinIds.size || wornRingIds.size) activeRuleBlocks.push('【叠层外观判定】穿戴顺序由内到外。外层身体形态独立，不叠加内层体型；头部从外往内取仍覆面的有效层，音色跟随该头部。收起头部只露出下一层头部。独立部位外观按状态栏单独字段。下方完整设计用于记录各层来源，已被覆盖的内层外观不得混入最终形态或绘图。');
+  if (wornRingIds.size) activeRuleBlocks.push('【肉躯开关与实际外观】前后延展独立且可同时开启。仅前方开启时提供独立部位外观，仅后方开启时提供身体覆盖；头部需后方开启且本层覆面，独立部位需前方开启且本层部位启用。关闭方向保留覆盖开关设置，但该方向的外观即时失效，改取内层或本体。正文与绘图以状态栏的有效来源为准。');
 
   if (state.pendingActionNote) {
     statusLines.push('', `⚡【本轮强制执行指令】\n${state.pendingActionNote}\n请在本次正文回复中直接体现上述状态变化与身体/意识反应！`);

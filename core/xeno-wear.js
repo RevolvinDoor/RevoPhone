@@ -1,6 +1,7 @@
 const text = (value, limit = 120) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const kinds = ['skin_suit', 'flesh_ring'];
 const last = (list, predicate) => list.slice().reverse().find(predicate);
+const facial = /(?:hair|eyes?|eyebrows?|eyelashes?|face|facial|head|ears?|horns?|bangs|braid|ponytail|pigtails|beard|lipstick|lips|makeup|mouth|teeth|fangs|头发|发色|瞳|眼睛|脸|面容|面貌|耳朵|[黑白红蓝绿金银紫粉棕灰长短]发)/i;
 
 export function extensionEnabled(mode, direction) {
   return mode === direction || mode === 'both';
@@ -76,7 +77,7 @@ export function resolveWear(xeno, entity) {
   const body = last(layers, covering) || null;
   const head = last(layers, layer => covering(layer) && layer.faceMode === 'full') || null;
   const organ = last(layers, layer => layer.organOut && (
-    layer.kind === 'flesh_ring' ? layer.extendMode !== 'idle'
+    layer.kind === 'flesh_ring' ? extensionEnabled(layer.extendMode, 'forward')
       : layer.item.gender === '扶她' || Boolean(layer.item.forwardExtension)
   )) || null;
   const headVoice = head ? text(itemVoiceRef(xeno, head.item, head), 4000) : '';
@@ -87,13 +88,16 @@ export function resolveWear(xeno, entity) {
     headAppearance: head?.item.appearance || entity?.appearance || '',
     organAppearance: organ ? (organ.item.forwardExtension || organ.item.physiology || organ.item.summary || organ.item.name)
       : ['男', '扶她'].includes(entity?.gender) ? '本体外观（未单独记录）' : '',
+    extensionText: [
+      body?.kind === 'flesh_ring' && body.item.backwardExtension ? `后方（${label(body)}）：${body.item.backwardExtension}` : '',
+      organ?.kind === 'flesh_ring' && organ.item.forwardExtension ? `前方（${label(organ)}）：${organ.item.forwardExtension}` : ''
+    ].filter(Boolean).join(' ｜ '),
     layerText: layers.length ? layers.map(layer => `${layer.index + 1}. ${layer.item.name}［${layer.kind === 'skin_suit' ? '皮躯' : '肉躯 · ' + ({idle: '静息', forward: '前方延展', backward: '后方延展', both: '前后同时延展'}[layer.extendMode])} · ${layer.faceMode === 'full' ? '覆面' : '头部收起'} · 独立部位${layer.organOut ? '启用' : '收起'}］`).join(' → ') : '未穿戴'
   };
 }
 
 export function wearDrawingTags(xeno, entity) {
   const view = resolveWear(xeno, entity);
-  const facial = /(?:hair|eyes?|eyebrows?|eyelashes?|face|facial|head|ears?|horns?|bangs|braid|ponytail|pigtails|beard|lipstick|lips|makeup|mouth|teeth|fangs|头发|发色|瞳|眼睛|脸|面容|面貌|耳朵)/i;
   const organTag = /(?:futanari|penis|erection|testicles|scrotum|genital|阴茎|肉棒|玉囊)/i;
   const parts = value => String(value || '').split(',').map(part => part.trim()).filter(Boolean);
   const result = [];
@@ -104,4 +108,13 @@ export function wearDrawingTags(xeno, entity) {
   if (view.body && !view.head) result.push(...parts(entity.appearance).filter(part => facial.test(part)));
   if (view.organ && view.organ.itemId !== view.body?.itemId) result.push(...parts(view.organ.item.drawPrompt).filter(part => organTag.test(part)));
   return [...new Set(result)].join(', ');
+}
+
+export function wearDrawingAppearance(xeno, entity) {
+  const view = resolveWear(xeno, entity);
+  if (!view.body || view.body.itemId === view.head?.itemId) return view.body?.item.appearance || entity.appearance || '';
+  const parts = value => String(value || '').split(/[,，;；。\n]+/).map(part => part.trim()).filter(Boolean);
+  const body = parts(view.body.item.appearance || entity.appearance).filter(part => !facial.test(part));
+  const head = parts(view.headAppearance).filter(part => facial.test(part));
+  return [...body, ...head].join(', ');
 }

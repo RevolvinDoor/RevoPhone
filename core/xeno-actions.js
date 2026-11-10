@@ -60,6 +60,7 @@ export function wardrobeActionPlan(xeno, {input = '', chat = [], balance = 0} = 
     '必须输出可执行操作，只有外观描述、库存说明或 xeno_update 不会完成穿戴。例如正文“你穿上了银发皮躯。”，随后输出 <xeno_action>[{"action":"equip","target":"主角","itemId":"清单里的实际ID","evidence":"你穿上了银发皮躯。"}]</xeno_action>；不要照抄示例ID。',
     'remove 可省 itemId，改用 slot:"outermost" 或 "all"。set 必须指定已穿戴层的 itemId。肉躯前后延展是独立开关：patch 用 fleshForwardEnabled:boolean、fleshBackwardEnabled:boolean，可同时为 true，只修改实际改变的项；兼容 fleshExtendMode:"idle"/"forward"/"backward"/"both"（绝对设置，idle 关闭两项）。',
     '头部覆盖开启／关闭对应 skinFaceMode 或 fleshFaceMode:"full"/"neck"；下体覆盖／独立部位启用或收起对应皮躯 skinOrganOut:boolean、肉躯 organOut:boolean。覆盖开关不改变延展方向。未指定装备名或层数时只操作该角色最外层对应类型的已穿戴装备，不能修改库存或其他角色的装备。',
+    '肉躯前方开启且 organOut 为 true 时才提供独立部位外观；后方开启才覆盖身体，且 fleshFaceMode 为 full 时才覆盖头部。关闭方向不清除对应覆盖开关，但该方向的外观、头部音色和绘图来源立即停止生效，回到内层或本体。',
     '例：正文“你开启肉躯的前方延展，并收起它的头部。”，输出两项 set，itemId 使用该肉躯的实际ID，patch 分别为 {"fleshForwardEnabled":true} 和 {"fleshFaceMode":"neck"}，evidence 各引用对应正文；保留原有后方延展和下体状态。正文扣上、戴好、安装肉躯也是 equip；同轮先安装再设置，依实际顺序分别输出。',
     '购买后穿戴用一条 purchase 即可，不要再重复 equip；mode 可用 full/neck/idle/forward/backward/both。只要谈及物品，务必先依据库存判断能否执行，再写正文。',
     `当前主角：${xeno.protagonist?.name || '主角'}；目标名单：${(xeno.targets || []).map(target => target.name).join('、') || '无'}；可用余额：${balance}；商城免费：${xeno.freeShop ? '是（仍须确认购买）' : '否'}。`,

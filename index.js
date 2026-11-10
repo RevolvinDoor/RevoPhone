@@ -31,7 +31,7 @@ import { TIER_NAMES } from './core/novelai.js';
 import { xenoPromptPlan, stripXenoUpdate, applyXenoUpdateFromText, resolveLineRoute } from './core/xeno.js';
 import {wardrobeActionPlan} from './core/xeno-actions.js';
 import { createXenoHost } from './host-xeno.js';
-import { getActiveChatKey, findLastChatMessage } from './host-tt.js';
+import { getActiveChatKey, findLastChatMessage, captureXenoChatStorage } from './host-tt.js';
 const base=new URL('.',import.meta.url),marker=globalThis.crypto?.randomUUID?.()||'unavailable';
 let stopDiagnostics=null;
 let active=false,hooked=false,settings,cache,player,panel,frame,observer,renderTimer,floating,lineRaf,lineMedia,playbackMessage,selectedMessage,backend,enabling;
@@ -106,7 +106,29 @@ function spokenBy(name){const out=[];for(const m of (context()?.chat||[]).slice(
 // Speakers in the current card's story lines are added to the current card's roles.
 function tagSpeakers(messages){if(!active)return;const key=openSpace().key,names=new Set();if(!key)return;for(const m of messages){if(!m||m.is_user||m.is_system)continue;const text=String(m.mes||'');for(const line of parsed(text)?.lines||[])if(line.role)names.add(line.role);}try{backend.tagRoles([...names],key,context()?.name1||'');}catch{}}
 /** A chat was opened: the phone follows the card, and the card's story speakers become its contacts. */
-function spaceChanged(){if(!active||!backend)return;memoryHost?.refreshStory();try{const sp=openSpace();backend.setSpace(sp);backend.initializeCardRoles(context()?.name1||'',sp.members.includes(context()?.name2)?context().name2:sp.members[0]||'');tagSpeakers((context()?.chat||[]).slice(-200));const chatLen=(context()?.chat||[]).filter(m=>m&&!m.is_system).length;backend.switchChatXeno(getActiveChatKey(context,sp.key),{hasHistory:chatLen>1}).then(()=>{try{xenoHost?.syncCardProtagonist?.(context());inject();}catch{}}).catch(()=>{try{xenoHost?.syncCardProtagonist?.(context());inject();}catch{}});inject();}catch{}}
+async function spaceChanged(){
+ if(!active||!backend)return;
+ memoryHost?.refreshStory();
+ const sp=openSpace(),ctx=context(),key=getActiveChatKey(context,sp.key);
+ if(!key)return;
+ try{
+  const loaded=await backend.switchChatXeno(key,{
+   hasHistory:(ctx?.chat||[]).filter(m=>m&&!m.is_system).length>1,space:sp,
+   userName:ctx?.name1||'',narratorName:sp.members.includes(ctx?.name2)?ctx.name2:sp.members[0]||'',
+   storage:captureXenoChatStorage(context,sp.key)
+  });
+  if(!loaded||!active||key!==getActiveChatKey(context,openSpace().key))return;
+  if(!loaded.fresh)tagSpeakers((context()?.chat||[]).slice(-200));
+  xenoHost?.syncCardProtagonist?.(context());
+  await backend.persistActiveChatXeno();
+  inject();
+ }catch(error){notice(`切换异构聊天状态失败：${error.message}`);}
+}
+async function xenoChatDeleted(fileName,group=false){
+ if(!active||!backend)return;
+ try{await backend.deleteChatXenoFile(fileName,{cardKey:openSpace().key,group});}
+ catch(error){notice(`聊天已删除，但清理异构存档失败：${error.message}`);}
+}
 function tavernAvatars(){const ctx=context(),thumb=(type,file)=>typeof ctx?.getThumbnailUrl==='function'?ctx.getThumbnailUrl(type,file):`/thumbnail?type=${type}&file=${encodeURIComponent(file)}`,characters={};
  for(const c of ctx?.characters||[])if(c?.name&&c.avatar&&c.avatar!=='none'&&!characters[c.name])characters[c.name]=thumb('avatar',c.avatar);
  const persona=personas?.user_avatar;return {me:persona?thumb('persona',persona):'',characters};}
@@ -497,6 +519,7 @@ if(!ctx?.setExtensionPrompt||!ctx.generateRaw||!(ctx.messageFormatter?.addHook||
  const subscribe=(name,fn)=>{if(!name)return;ctx.eventSource.on(name,fn);listeners.push([ctx.eventSource,name,fn]);};subscribe(ctx.eventTypes.GENERATION_AFTER_COMMANDS,async(type,options,dryRun)=>{try{await memoryHost?.storyReady();}catch{}if(!dryRun&&!['quiet','impersonate'].includes(type)){try{const chat=context()?.chat||[],inPlace=['regenerate','swipe','continue'].includes(type)&&!chat.at(-1)?.is_user,pending=!options?.automatic_trigger&&!inPlace&&document.querySelector('#send_textarea')?.value;backend.snapshotXenoBeforeFloor(inPlace?chat.length-1:chat.length+(pending?1:0));}catch{}}inject(type,options,dryRun);});
  // Each new story reply counts toward automatic 朋友圈 posts (off unless the user turns it on) and syncs <xeno_update>.
  subscribe(ctx.eventTypes.MESSAGE_RECEIVED,id=>{const floorId=id??(context()?.chat||[]).length-1,msg=context()?.chat?.[floorId];try{if(msg&&!msg.is_user&&!msg.is_system)backend.applyXenoFloorReply(floorId,msg.swipe_id??0,msg.mes||'',{protagonistName:context()?.name1||'',...backend.xenoStoryContext(context()?.chat||[],floorId)});}catch(error){notice(error.message);}chats?.storyReplied(floorId).catch(()=>{});soundHost?.received(floorId);tagSpeakers((context()?.chat||[]).slice(-1));prepareReply(floorId,voiceAhead((context()?.chat||[]).slice(-1)));momentsHost?.storyReplied();callHost?.storyReplied();});subscribe(ctx.eventTypes.CHAT_CHANGED,spaceChanged);spaceChanged();subscribe(ctx.eventTypes.CHAT_CHANGED,()=>soundHost?.chatChanged());soundHost.chatChanged();subscribe(ctx.eventTypes.MESSAGE_SWIPED,id=>{const fid=id??(context()?.chat||[]).length-1,m=context()?.chat?.[fid],chat=context()?.chat||[];try{if(m&&!m.is_user&&!m.is_system)backend.rollbackXenoOnSwipe(fid,m.swipe_id??0,m.mes||'',{protagonistName:context()?.name1||'',chat,...backend.xenoStoryContext(chat,fid)});if(Number(fid)===0)xenoHost?.syncCardProtagonist?.(context(),{forceOpening:true});}catch(error){notice(error.message);}});subscribe(ctx.eventTypes.MESSAGE_EDITED,id=>{const fid=id??(context()?.chat||[]).length-1,m=context()?.chat?.[fid],chat=context()?.chat||[];try{if(m&&!m.is_user&&!m.is_system)backend.rollbackXenoOnEdit(fid,m.swipe_id??0,m.mes||'',{protagonistName:context()?.name1||'',chat,...backend.xenoStoryContext(chat,fid)});}catch(error){notice(error.message);}});subscribe(ctx.eventTypes.MESSAGE_DELETED,()=>{try{backend.rollbackXenoOnDelete((context()?.chat||[]).length);}catch(error){notice(error.message);}});for(const event of ['MESSAGE_SWIPED','MESSAGE_EDITED','MESSAGE_DELETED'])subscribe(ctx.eventTypes[event],id=>soundHost?.messageChanged(event==='MESSAGE_DELETED'?undefined:id));
+ for(const [event,group] of [['CHAT_DELETED',false],['GROUP_CHAT_DELETED',true]])if(ctx.eventTypes[event])subscribe(ctx.eventTypes[event],fileName=>xenoChatDeleted(fileName,group));
  for(const event of ['CHAT_CHANGED','MESSAGE_SWIPED','MESSAGE_EDITED','MESSAGE_DELETED'])subscribe(ctx.eventTypes[event],()=>{storyTools?.close();player.stop('消息已变化');preparing?.abort();scheduleRender();});for(const event of ['CHARACTER_MESSAGE_RENDERED','MESSAGE_RECEIVED'])subscribe(ctx.eventTypes[event],scheduleRender);subscribe(ctx.eventTypes.CHARACTER_MESSAGE_RENDERED,id=>{soundHost?.rendered(id);pictures?.autoPictures(Number(id)).catch(e=>notice(e.message));});
  storyTools=createStoryTools({hidden:()=>settings.general.hideStoryWaves===true,entry:()=>settings.general.storyTools!==false,message:currentMessage,valid:unchanged,notice,
  wave:(button,snap)=>{const owner=button.closest('[data-sttts-token]');return owner?.dataset.stttsToken===marker?messageLines(snap)[Number(owner.dataset.stttsLine)]:null;},

@@ -83,6 +83,52 @@ export function getActiveChatKey(context, fallbackSpaceKey = '') {
   return `${space}|${chatId || 'default'}`;
 }
 
+export function captureXenoChatStorage(context, fallbackSpaceKey = '') {
+  const ctx = typeof context === 'function' ? context() : context;
+  const chatKey = getActiveChatKey(context, fallbackSpaceKey);
+  const win = globalThis.window || globalThis;
+  let handle = null;
+  try { handle = win?.__TAURITAVERN__?.api?.chat?.current?.handle?.() || null; } catch {}
+  const namespace = 'revophone-xeno';
+  const metadata = ctx?.chatMetadata;
+  const current = () => getActiveChatKey(context, fallbackSpaceKey) === chatKey;
+  let checkedLegacy = false;
+  return {
+    ref: handle?.ref || null,
+    async read() {
+      if (handle?.metadata?.get) {
+        try {
+          const saved = await handle.metadata.get();
+          if (saved?.extensions?.[namespace]) return saved.extensions[namespace];
+        } catch {}
+      }
+      return metadata?.extensions?.[namespace] || null;
+    },
+    async readLegacy() {
+      const value = await getChatStoreJson('xeno-state', {handle});
+      checkedLegacy = Boolean(value);
+      return value;
+    },
+    async write(value) {
+      if (metadata && current()) {
+        metadata.extensions ??= {};
+        metadata.extensions[namespace] = value;
+      }
+      if (handle?.metadata?.setExtension) {
+        await handle.metadata.setExtension({namespace, value});
+      } else {
+        if (!metadata || !current() || typeof ctx?.saveMetadata !== 'function') return false;
+        await ctx.saveMetadata();
+      }
+      if (handle && checkedLegacy) {
+        const removed = await deleteChatStoreJson('xeno-state', {handle});
+        if (removed) checkedLegacy = false;
+      }
+      return true;
+    }
+  };
+}
+
 /**
  * Uses TauriTavern's Rust-backed `locate.findLastMessage()` when available,
  * falling back to a bounded reverse scan of `context().chat`.
@@ -209,8 +255,8 @@ export async function searchStoryMessages(context, {
 }
 
 /** Per-chat JSON store (`handle.store.*`) in TauriTavern. */
-export async function getChatStoreJson(key, {namespace = TT_NAMESPACE} = {}) {
-  const handle = await getTTChatHandle();
+export async function getChatStoreJson(key, {namespace = TT_NAMESPACE, handle = undefined} = {}) {
+  if (handle === undefined) handle = await getTTChatHandle();
   if (!handle?.store?.getJson) return null;
   try {
     const safeKey = toSafeStoreKey(key);
@@ -235,8 +281,8 @@ export async function setChatStoreJson(key, value, {namespace = TT_NAMESPACE} = 
   }
 }
 
-export async function deleteChatStoreJson(key, {namespace = TT_NAMESPACE} = {}) {
-  const handle = await getTTChatHandle();
+export async function deleteChatStoreJson(key, {namespace = TT_NAMESPACE, handle = undefined} = {}) {
+  if (handle === undefined) handle = await getTTChatHandle();
   if (!handle?.store?.deleteJson) return false;
   try {
     await handle.store.deleteJson({namespace, key: toSafeStoreKey(key)});

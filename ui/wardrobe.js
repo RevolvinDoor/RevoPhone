@@ -63,6 +63,7 @@ export function wardrobeApp(ctx) {
         </div>
         <p class="xeno-hint">当前显性外貌：<b>${esc(view.gender || '未定')}</b> ｜ 🎙️ 声带音色：<b>${esc(view.voiceStateText)}</b></p>
         <p class="xeno-hint">身体来源：${esc(view.bodySource)}<br>头部：${esc(view.headSource)} · ${esc(view.headAppearance || '未记录')}<br>肉棒外观：${esc(view.organAppearance || '未显露')} · 来源：${esc(view.organSource)}</p>
+        ${view.extensionText ? `<p class="xeno-hint">有效延展设定：${esc(view.extensionText)}</p>` : ''}
         <div class="xeno-row-controls">
           <span class="xeno-hint">穿戴层次从内到外排列；脱下内层会先脱去它外面的各层。</span>
           ${layers.length ? '<button type="button" class="xeno-mini-btn danger" data-action="unequip-slot" data-slot="outermost">脱最外层</button><button type="button" class="xeno-mini-btn danger" data-action="unequip-slot" data-slot="all">脱全部叠层</button>' : ''}
@@ -86,6 +87,7 @@ export function wardrobeApp(ctx) {
                 ${[['full','全脸覆面'],['neck','收起本层头部']].map(([mode,label]) => `<button type="button" class="xeno-mini-btn ${layer.faceMode === mode ? 'primary' : ''}" data-action="${isSkin ? 'skin-face' : 'ring-face'}" data-id="${id}" data-mode="${mode}">${label}</button>`).join('')}
                 <button type="button" class="xeno-mini-btn ${layer.organOut ? 'accent' : ''}" data-action="layer-organ" data-id="${id}">${layer.organOut ? '外露部位：启用' : '外露部位：收起'}</button>
               </div>
+              ${!isSkin ? '<p class="xeno-hint">头部覆盖需后方延展开启；外露部位需前方延展开启。关闭延展会保留覆盖设置，再次开启时恢复。</p>' : ''}
             </div>`;
           }).join('') : '<p class="xeno-hint">尚未穿戴皮躯或肉躯，可从下方库存叠加穿戴。</p>'}
           ${['outerwear', 'underwear', 'privacyCover', 'accessories'].map((slot, idx) => `
