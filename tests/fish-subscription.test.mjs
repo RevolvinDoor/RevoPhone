@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {FishOAuth, FISH_MCP} from '../core/fish-oauth.js';
-import {FishMCP, MCP_MODEL, rpcResponse, speechArguments} from '../core/fish-mcp.js';
+import {FishMCP, MCP_MODEL, rpcResponse, speechArguments, creditResult} from '../core/fish-mcp.js';
 import {Providers, buildRequest} from '../core/providers.js';
 import {TTSParameters} from '../core/parameters.js';
 import {requestHash} from '../core/cache.js';
@@ -108,6 +108,30 @@ test('Invalid refresh authorization is cleared and never falls back to an API ke
   await f.store.write({...tokens, clientId: 'client', account: 'a', expiresAt: 1}); await f.oauth.open();
   await assert.rejects(f.oauth.token(), /invalid_grant/);
   assert.equal(f.oauth.configured, false); assert.equal(f.store.value, null);
+});
+
+// Sanitized shape from the user's authenticated get_credit_balance result.
+const packageCredits = {api_credit_usd: '0.257780', package_balance: 178128,
+  package_extra_balance: 1000, package_cycle_ends_at: '2026-11-30T11:52:12+00:00',
+  team_name: 'Fixture Team', plan: 'plus', tts_max_text_bytes_per_call: 15000};
+test('Fish account credits read package fields from structured or text results without using API USD or text limits', () => {
+  for (const result of [
+    {structuredContent: packageCredits, content: [{type: 'text', text: JSON.stringify(packageCredits)}]},
+    {content: [{type: 'text', text: JSON.stringify(packageCredits)}]},
+    {structuredContent: {status: 'ok'}, content: [{type: 'text', text: JSON.stringify({...packageCredits, package_balance: '178,128'})}]}
+  ]) {
+    const b = creditResult(result);
+    assert.equal(b.left, 178128); assert.equal(b.extra, 1000);
+    assert.equal(b.team, 'Fixture Team'); assert.equal(b.plan, 'plus');
+    assert.equal(b.resetAt, Date.parse(packageCredits.package_cycle_ends_at));
+  }
+  const zero = creditResult({structuredContent: {...packageCredits, package_balance: 0, package_extra_balance: '0'}});
+  assert.equal(zero.left, 0); assert.equal(zero.extra, 0);
+  for (const value of [null, '', ' ', false, 'unknown']) {
+    const b = creditResult({structuredContent: {...packageCredits, package_balance: value}});
+    assert.equal(b.left, null); assert.match(b.summary, /package_balance/);
+  }
+  assert.equal(creditResult({structuredContent: {api_credit_usd: '25', tts_max_text_bytes_per_call: 15000}}).left, null);
 });
 
 // These schemas model protocol behavior; they are fixtures, not a claim about Fish's authenticated schema.
@@ -394,7 +418,7 @@ test('Engine UI switches only Fish access, shows OAuth controls and credits, and
   const backend = new TTSBackend({settings: freshState(), providers, indexedDB: null}); t.after(() => backend.close());
   const api = {...backend.api()}, listeners = new Map(); let html = '';
   // Keep this UI test local: no real endpoint and no host instance is opened.
-  api.voiceBalance = async () => ({kind: 'subscription', summary: 'Fixture Team: 12345 credits'});
+  api.voiceBalance = async () => creditResult({structuredContent: packageCredits});
   const doc = {activeElement: null, addEventListener() {}, createElement: () => root};
   const root = {dataset: {}, ownerDocument: doc, scrollTop: 0, contains: () => true, querySelectorAll: () => [], querySelector: () => null,
     addEventListener(n, fn) {if (!listeners.has(n)) listeners.set(n, []); listeners.get(n).push(fn);},
@@ -405,7 +429,11 @@ test('Engine UI switches only Fish access, shows OAuth controls and credits, and
   for (const fn of listeners.get('change') || []) fn({target});
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(backend.settings.connections.fish.access, 'subscription'); assert.equal(backend.settings.connections.fish.model, MCP_MODEL);
-  assert.match(html, /重新授权|断开连接/); assert.match(html, /12345 credits/);
+  assert.match(html, /重新授权|断开连接/); assert.match(html, /剩余订阅积分<\/span><strong>178,128/);
+  assert.match(html, /额外积分<\/span><strong>1,000/); assert.match(html, /本期结束/);
+  assert.match(html, /团队<\/span><small>Fixture Team/);
+  view.back();
+  assert.match(html, /178,128 积分/); assert.doesNotMatch(html, /网页订阅积分|积分未识别/);
   assert.doesNotMatch(html, /data-field="key"|免费额度|API 余额<\/span>/);
   assert.equal(api.keyStatus('fish'), true);
   assert.doesNotMatch(JSON.stringify(api.getState()), /oauth-access|test-refresh-token/);

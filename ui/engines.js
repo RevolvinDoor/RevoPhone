@@ -39,7 +39,7 @@ export function enginesApp(ctx) {
   const balanceText = id => {
     const b = balances.get(id)?.value;
     if (!b) return '—';
-    return b.kind === 'subscription' ? (typeof b.left === 'number' ? number(b.left) + ' 积分' : '网页订阅积分') : b.kind === 'characters' ? number(b.left) : '$' + b.credit.toFixed(2);
+    return b.kind === 'subscription' ? (typeof b.left === 'number' ? number(b.left) + ' 积分' : '积分未识别') : b.kind === 'characters' ? number(b.left) : '$' + b.credit.toFixed(2);
   };
   async function loadBalance(id, refresh = false) {
     const request = (balanceLoads.get(id) || 0) + 1; balanceLoads.set(id, request);
@@ -360,7 +360,7 @@ export function enginesApp(ctx) {
         <div class="setting-row"><span>剩余额度</span><strong>${number(b.left)}</strong></div>
         <div class="setting-row"><span>下次重置</span><small>${b.resetAt ? new Date(b.resetAt).toLocaleString('zh-CN', {hour12: false}) : '—'}</small></div>`;
     } else if (b?.kind === 'subscription') {
-      rows = `${typeof b.left === 'number' ? `<div class="setting-row"><span>剩余订阅积分</span><strong>${number(b.left)}</strong></div>` : ''}${b.team ? `<div class="setting-row"><span>团队</span><small>${esc(b.team)}</small></div>` : ''}${b.plan ? `<div class="setting-row"><span>套餐</span><small>${esc(b.plan)}</small></div>` : ''}<details ${typeof b.left === 'number' ? '' : 'open'}><summary>账户额度详情</summary><pre class="code" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(b.summary)}</pre></details>`;
+      rows = `${typeof b.left === 'number' ? `<div class="setting-row"><span>剩余订阅积分</span><strong>${number(b.left)}</strong></div>` : '<p class="hint">未识别到积分数字，请查看下方账户额度详情。</p>'}${typeof b.extra === 'number' ? `<div class="setting-row"><span>额外积分</span><strong>${number(b.extra)}</strong></div>` : ''}${b.team ? `<div class="setting-row"><span>团队</span><small>${esc(b.team)}</small></div>` : ''}${b.plan ? `<div class="setting-row"><span>套餐</span><small>${esc(b.plan)}</small></div>` : ''}${b.resetAt !== null && Number.isFinite(b.resetAt) ? `<div class="setting-row"><span>本期结束</span><small>${new Date(b.resetAt).toLocaleString('zh-CN', {hour12: false})}</small></div>` : ''}<details ${typeof b.left === 'number' ? '' : 'open'}><summary>账户额度详情</summary><pre class="code" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(b.summary)}</pre></details>`;
     } else if (b?.kind === 'credit') {
       rows = `<div class="setting-row"><span>API 余额</span><strong>$${b.credit.toFixed(2)}</strong></div>
         <div class="setting-row"><span>免费额度</span><small>${b.free ? '还有' : '没有或已用完'}</small></div>`;

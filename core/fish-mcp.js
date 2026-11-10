@@ -101,11 +101,19 @@ export function audioLinks(result) {
 export function creditResult(result) {
   const parts = resultData(result), summary = parts.map(p => typeof p === 'string' ? p : JSON.stringify(p, null, 2)).join('\n');
   if (!summary.trim()) throw fail('额度工具没有返回账户信息');
-  const data = parts.find(object) || {}, balance = data.remaining_credits ?? data.credits_remaining ?? data.credit_balance ?? data.balance;
+  const keys = ['package_balance', 'remaining_credits', 'credits_remaining', 'credit_balance', 'balance'];
+  const data = parts.find(p => object(p) && keys.some(key => Object.hasOwn(p, key))) || parts.find(object) || {};
+  const amount = value => {
+    if (typeof value === 'string' && /^[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(value.trim())) value = Number(value.replaceAll(',', ''));
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  };
+  const balance = keys.map(key => amount(data[key])).find(value => value !== null) ?? null;
+  const ends = typeof data.package_cycle_ends_at === 'string' ? Date.parse(data.package_cycle_ends_at) : NaN;
   const label = value => typeof value === 'string' ? value : typeof value?.name === 'string' ? value.name : '';
   // Preserve the server's own account, plan and limits rather than inventing a USD-to-credit conversion.
-  return {engine: 'fish', kind: 'subscription', left: typeof balance === 'number' && Number.isFinite(balance) ? balance : null,
-    team: label(data.team), plan: label(data.plan), summary: summary.slice(0, 10000)};
+  return {engine: 'fish', kind: 'subscription', left: balance, extra: amount(data.package_extra_balance),
+    resetAt: Number.isFinite(ends) ? ends : null,
+    team: label(data.team_name) || label(data.team), plan: label(data.plan), summary: summary.slice(0, 10000)};
 }
 
 /** A bounded JSON/SSE reader. A POST's response is consumed only until its matching JSON-RPC reply. */
@@ -254,7 +262,7 @@ export class FishMCP {
         this.protocol = result.protocolVersion; this.tools = tools; this.account = account; return;
       }
       if (!this.protocol) {
-        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.2.6'}}, {signal, initialize: true});
+        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.2.7'}}, {signal, initialize: true});
         if (account !== this.oauth.record?.account) throw fail('登录账户已变化，请重新读取工具');
         if (!['2025-11-25', '2025-06-18', '2025-03-26'].includes(result.protocolVersion) || !result.capabilities?.tools) throw fail('服务端协商的 MCP 版本或工具能力不受支持');
         this.protocol = result.protocolVersion;
