@@ -3044,11 +3044,24 @@ export class TTSBackend {
             updateGeneral: patch => this.updateGeneral(patch), saveNarration: patch => this.saveNarration(patch), saveRoute: route => this.saveRoute(route), saveVoicePool: list => this.saveVoicePool(clone(list)), deleteRoute: id => this.deleteRoute(id),
             switchRouteEngine, cleanAliases, validRoleName: name => typeof name === 'string' && !!name.trim() && !isPlaceholderRole(name),
             saveConnection: (engine, patch) => this.saveConnection(engine, patch),
-            fishStatus: () => ({...this.providers.fish.oauth.status(), nativeRequired: !!this.providers.fish.native, nativeAvailable: !!this.providers.fish.native?.available}),
+            fishStatus: () => ({...this.providers.fish.oauth.status(), nativeRequired: !!this.providers.fish.native, nativeAvailable: !!this.providers.fish.native?.available, nativeRegistered: !!this.providers.fish.native?.registered}),
+            fishConnectHost: async () => {
+                this.assertOpen();
+                if (!this.providers.fish.native) throw Error('当前宿主不需要接入 TT MCP');
+                const result = await this.providers.fish.native.connect();
+                this.providers.fish.reset(); this.balances.delete('fish');
+                this.emit('balance', {engine: 'fish', stale: true}); return result;
+            },
             savedKeyCount: () => [...this.keyStore.load().values()].filter(Boolean).length,
             fishLogin: () => { this.assertOpen(); return this.providers.fish.oauth.beginLogin(); },
             fishFinishLogin: url => { this.assertOpen(); return this.providers.fish.oauth.finishLogin(url); },
-            fishDisconnect: async () => { this.player.stop('Fish 账户已断开'); await this.providers.fish.oauth.disconnect(); this.providers.fish.reset(); },
+            fishDisconnect: async () => {
+                this.player.stop('Fish 账户已断开'); let failure;
+                try { await this.providers.fish.native?.disconnect(); }
+                catch (error) { failure = this.providers.fish.native.clean(error.message, {headers: {}}); }
+                await this.providers.fish.oauth.disconnect(); this.providers.fish.reset();
+                if (failure) throw Error('本地授权已断开，但 TT Fish 服务未能清理，请在 TT MCP 管理器中手动暂停并清除授权：' + failure);
+            },
             fishInformation: refresh => this.providers.fish.information(refresh),
             fishClearUnknown: () => this.providers.fish.clearUnknown(),
             savePreset: preset => this.savePreset(preset), deletePreset: id => this.deletePreset(id), selectPreset: id => this.selectPreset(id),

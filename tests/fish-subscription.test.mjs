@@ -65,10 +65,11 @@ test('Concurrent token refresh rotates once; disconnect during refresh cannot re
   const gate = deferred(), started = deferred(); let count = 0;
   const f = loginFixture({token: async () => { count++; started.resolve(); await gate.promise; return json({...tokens, access_token: 'rotated'}); }});
   t.after(() => f.oauth.close());
-  await f.store.write({...tokens, clientId: 'test-client', account: 'a', expiresAt: 1}); await f.oauth.open();
+  await f.store.write({...tokens, clientId: 'test-client', account: 'a', expiresAt: 1, nativeRegistrationId: 'existing-fish'}); await f.oauth.open();
   const one = f.oauth.token(), two = f.oauth.token();
   await started.promise; assert.equal(count, 1);
   gate.resolve(); assert.deepEqual(await Promise.all([one, two]), ['rotated', 'rotated']);
+  assert.equal(f.store.value.nativeRegistrationId, 'existing-fish');
   f.store.value.expiresAt = 1; f.oauth.record.expiresAt = 1;
   const again = f.oauth.token(), disconnect = f.oauth.disconnect();
   await assert.rejects(again, {name: 'AbortError'}); await disconnect;
@@ -114,7 +115,8 @@ const speech = {name: 'text_to_speech', inputSchema: {type: 'object', properties
   text: {type: 'string'}, voice_id: {type: 'string'}, model: {type: 'string', enum: ['s2.1-pro']},
   format: {type: 'string', enum: ['mp3', 'wav']}}, required: ['text', 'voice_id']}};
 function speechFixture({journal = new RecordStore(), download, paid, mergeAudio, host} = {}) {
-  const requests = [], oauth = {scope: 'test', record: {account: 'account-a'}, configured: true,
+  const store = new RecordStore(); store.value = {account: 'account-a'};
+  const requests = [], oauth = {scope: 'test', record: {account: 'account-a'}, store, configured: true,
     token: async () => 'oauth-access', close() {}};
   const client = new FishMCP(oauth, {journal, mergeAudio, host, async fetcher(url, init = {}) {
     requests.push({url, ...init});
@@ -176,25 +178,42 @@ test('Downloaded links survive a new client after failure; multi-clip results ar
   assert.equal(first.calls('text_to_speech').length, 1); assert.equal(second.calls('text_to_speech').length, 0);
 });
 
-test('TauriTavern uses native MCP with transient authorization and keeps browser fetch for audio only', async t => {
-  const native = [], host = {__TAURITAVERN__: {api: {mcp: {remote: {
-    version: 1,
-    async discover(connection) {native.push({connection}); return {protocolVersion: '2025-11-25', tools: [{...speech, nativeName: speech.name}]};},
-    async call(input) {
-      native.push(input);
-      return {outcome: 'known_response', response: {kind: 'tool_result', isError: false, textBlocks: [], diagnostics: [],
-        structuredJson: JSON.stringify({audio_url: 'https://audio.example/native.mp3'})}};
-    }
-  }}}}};
-  const f = speechFixture({host}); t.after(() => f.client.close());
+function managerFixture(call) {
+  const exa = {id: 'exa', displayName: 'Exa Search', endpoint: 'https://mcp.exa.ai/mcp', headers: {}, state: 'paused', toolPermissions: {}, protocolVersion: 'auto'};
+  const rows = new Map([['exa', structuredClone(exa)]]), calls = [], updates = []; let created = 0;
+  const get = id => {const row = rows.get(id); if (!row) throw Error('missing registration'); return row;};
+  const api = {servers: {
+    async list() {return {servers: structuredClone([...rows.values()]), storageIssues: []};},
+    async create(input) {const row = {id: 'fish-' + ++created, state: 'paused', toolPermissions: {}, ...structuredClone(input)}; rows.set(row.id, row); return structuredClone(row);},
+    async update(input) {updates.push(structuredClone(input)); const row = get(input.registrationId); Object.assign(row, {displayName: input.displayName, endpoint: input.endpoint, headers: structuredClone(input.headers), protocolVersion: input.protocolVersion}); return structuredClone(row);},
+    async remove(input) {rows.delete(input.registrationId);},
+    async setState(input) {const row = get(input.registrationId); row.state = input.state; return structuredClone(row);},
+    async discover(input) {const row = get(input.registrationId); if (row.state !== 'active') throw Error('paused'); return {protocolVersion: '2025-11-25', tools: [speech, {name: 'get_credit_balance', inputSchema: {type: 'object', properties: {}}}, {name: 'search_voices', inputSchema: {type: 'object', properties: {}}}].map(tool => ({...tool, nativeName: tool.name, permission: row.toolPermissions[tool.name] || 'off'}))};},
+    async refresh(input) {return this.discover(input);}
+  }, tools: {
+    async setPermission(input) {const row = get(input.registrationId); row.toolPermissions[input.nativeName] = input.permission; return structuredClone(row);},
+    async testCall(input) {calls.push({...structuredClone(input), server: structuredClone(get(input.registrationId))}); return call ? call(input) : {outcome: 'known_response', response: {kind: 'tool_result', isError: false, textBlocks: [], diagnostics: [], structuredJson: JSON.stringify(input.nativeName === 'get_credit_balance' ? {remaining_credits: 12, team: 'Fixture'} : {audio_url: 'https://audio.example/native.mp3'})}};}
+  }};
+  return {host: {__TAURITAVERN__: {api: {mcp: api}}}, api, rows, calls, updates, exa, created: () => created};
+}
+
+test('Existing TT MCP Manager registers Fish once, executes natively, and pauses/clears authorization on disconnect', async t => {
+  const manager = managerFixture(), f = speechFixture({host: manager.host}); t.after(() => f.client.close());
+  await f.client.native.connect(); await f.client.native.connect();
+  assert.equal(manager.created(), 1);
   const audio = await f.client.synthesize(f.request());
-  assert.equal(audio.size, 3); assert.equal(native.length, 2);
-  assert.equal(native[1].nativeName, 'text_to_speech');
-  assert.equal(native[1].connection.headers.Authorization, 'Bearer oauth-access');
-  assert.equal(native[1].connection.headers.Origin, undefined);
-  assert.equal(native[1].connection.endpoint, FISH_MCP);
+  assert.equal(audio.size, 3); assert.equal(manager.calls.length, 1);
+  assert.equal(manager.calls[0].nativeName, 'text_to_speech');
+  assert.equal(manager.calls[0].server.headers.Authorization, 'Bearer oauth-access');
+  assert.equal(manager.calls[0].server.headers.Origin, undefined);
+  assert.equal(manager.calls[0].server.endpoint, FISH_MCP);
   assert.equal(f.requests.length, 1); assert.equal(f.requests[0].url, 'https://audio.example/native.mp3');
   assert.equal(f.requests[0].headers, undefined);
+  const balance = await f.client.balance(); assert.equal(balance.kind, 'subscription'); assert.equal(balance.left, 12);
+  await f.client.native.disconnect();
+  assert.equal(manager.rows.get('fish-1').state, 'paused');
+  assert.equal(manager.rows.get('fish-1').headers.Authorization, undefined);
+  assert.deepEqual(manager.rows.get('exa'), manager.exa);
 });
 
 test('An old TauriTavern fails before sending instead of falling back to browser MCP', async t => {
@@ -204,14 +223,27 @@ test('An old TauriTavern fails before sending instead of falling back to browser
 });
 
 test('Native unknown outcomes keep the paid journal blocked and are never retried', async t => {
-  let called = 0;
-  const f = speechFixture({host: {__TAURITAVERN__: {api: {mcp: {remote: {version: 1,
-    async discover() {return {protocolVersion: '2025-11-25', tools: [{...speech, nativeName: speech.name}]};},
-    async call() {called++; return {outcome: 'outcome_unknown', code: 'mcp.call_timeout', message: 'result unknown'};}
-  }}}}}}); t.after(() => f.client.close());
+  const manager = managerFixture(() => ({outcome: 'outcome_unknown', code: 'mcp.call_timeout', message: 'result unknown'}));
+  const f = speechFixture({host: manager.host}); t.after(() => f.client.close());
+  await f.client.native.connect();
   await assert.rejects(f.client.synthesize(f.request()), error => error.code === 'FISH_OUTCOME_UNKNOWN');
   await assert.rejects(f.client.synthesize(f.request()), /上次的生成结果未知/);
-  assert.equal(called, 1); assert.equal(f.requests.length, 0);
+  assert.equal(manager.calls.length, 1); assert.equal(f.requests.length, 0);
+});
+
+test('RevoPhone respects TT tool Off, paused services, and endpoint edits before native testCall', async t => {
+  const manager = managerFixture(), f = speechFixture({host: manager.host}); t.after(() => f.client.close());
+  await f.client.native.connect();
+  await manager.api.tools.setPermission({registrationId: 'fish-1', nativeName: 'text_to_speech', permission: 'off'});
+  await assert.rejects(f.client.synthesize(f.request()), error => error.code === 'HOST_MCP_TOOL_OFF');
+  assert.equal(manager.calls.length, 0);
+  await manager.api.servers.setState({registrationId: 'fish-1', state: 'paused'});
+  await assert.rejects(f.client.synthesize(f.request()), error => error.code === 'HOST_MCP_PAUSED');
+  assert.equal(manager.rows.get('fish-1').state, 'paused');
+  const edited = manager.rows.get('fish-1'); edited.state = 'active'; edited.endpoint = 'https://other.example/mcp';
+  const updates = manager.updates.length;
+  await assert.rejects(f.client.information(true), error => error.code === 'HOST_MCP_ENDPOINT_CHANGED');
+  assert.equal(manager.updates.length, updates); assert.equal(manager.calls.length, 0);
 });
 
 test('Initialization 403 retains the official reason and stage without leaking OAuth credentials or retrying', async t => {

@@ -44,6 +44,8 @@ export function enginesApp(ctx) {
   async function loadBalance(id, refresh = false) {
     const request = (balanceLoads.get(id) || 0) + 1; balanceLoads.set(id, request);
     if (!PRICED.includes(id) || !api.keyStatus(id)) return;
+    const fish = id === 'fish' ? api.fishStatus?.() : null;
+    if (fish?.nativeRequired && !fish.nativeRegistered) { balances.delete(id); return; }
     const entry = balances.get(id) || {};
     balances.set(id, {...entry, loading: true});
     try { const value = await api.voiceBalance(id, refresh); if (balanceLoads.get(id) !== request) return; balances.set(id, {value, error: '', loading: false}); }
@@ -346,7 +348,8 @@ export function enginesApp(ctx) {
     if (!PRICED.includes(engine)) return '';
     const saved = api.keyStatus(engine), entry = balances.get(engine) || {}, b = entry.value;
     const mcp = engine === 'fish' && fishSubscription(api.getState().connections.fish);
-    const state = !saved ? (mcp ? '连接账户后可以查看' : '填写密钥后可以查看') : entry.loading && !b ? '读取中' : entry.error && !b ? '读取失败' : '';
+    const fishStatus = mcp ? api.fishStatus() : null;
+    const state = !saved ? (mcp ? '连接账户后可以查看' : '填写密钥后可以查看') : fishStatus?.nativeRequired && !fishStatus.nativeRegistered ? '先接入 TT 自带 MCP 后查看' : entry.loading && !b ? '读取中' : entry.error && !b ? '读取失败' : '';
     let rows;
     if (b?.kind === 'characters') {
       const ratio = b.limit ? Math.min(1, b.used / b.limit) : 0;
@@ -369,15 +372,16 @@ export function enginesApp(ctx) {
   function fishAccount() {
     const s = api.fishStatus();
     return `<p class="hint">${s.configured ? '已保存 Fish OAuth 授权。' : '尚未连接 Fish 账户。'}使用登录时选定团队的网页积分；此方式不使用中转，也不会在失败后改扣 API 余额。</p>
-      ${s.nativeRequired ? `<p class="${s.nativeAvailable ? 'hint' : 'error-copy hint'}">${s.nativeAvailable ? 'MCP 请求由 TauriTavern 原生客户端发送。' : '当前宿主缺少原生 MCP 扩展调用接口。需要安装包含配套补丁的 TauriTavern，仅更新 RevoPhone 不够。'}</p>` : ''}
+      ${s.nativeRequired ? `<p class="${s.nativeAvailable ? 'hint' : 'error-copy hint'}">${s.nativeAvailable ? s.nativeRegistered ? '已关联 TT 自带 MCP；服务启停与工具权限以 TT 管理器为准。' : '登录后点击“接入 TT 自带 MCP”，使用 TT 现有管理器发送请求，无需重编译 TT。' : '当前 TT 没有可调用的 MCP 管理器接口，请更新 TT。'}</p>` : ''}
       <div class="actions">${btn('fish-login', s.preparing ? '正在准备授权…' : s.configured ? '重新授权／切换团队' : '连接 Fish 账户', 'secondary', s.pending || s.preparing ? 'disabled' : '')}
       ${s.configured || s.pending ? btn('fish-disconnect', '断开连接', 'text-button', s.preparing ? 'disabled' : '') : ''}
       ${s.configured ? btn('fish-information', '刷新工具信息', 'chip-button') + btn('fish-clear-unknown', '清除未知生成记录', 'text-button') : ''}</div>
+      ${s.configured && s.nativeRequired && s.nativeAvailable ? `<div class="actions">${btn('fish-connect-host', s.nativeRegistered ? '重新接入 TT 自带 MCP' : '接入 TT 自带 MCP', 'secondary')}</div>` : ''}
       ${s.pending ? `<p class="hint">请在 Fish 页面完成登录。未自动打开时，可<a href="${esc(s.authorizationUrl)}" target="_blank" rel="noopener noreferrer">打开授权页面</a>。${s.redirectUri?.startsWith('http://127.0.0.1:') ? '授权后会跳到本机地址；这里没有启动网页服务，浏览器显示“无法访问”是正常的。请直接复制地址栏中包含 code 和 state 的完整地址，粘贴到下方完成登录。' : '若回调页打不开或结果未传回，复制地址栏的完整回调地址到下方。'}登录十分钟后失效。</p>
       ${field('登录回调地址', textArea('fish-callback', '', 'rows="2" autocomplete="off" spellcheck="false" placeholder="粘贴登录完成后地址栏中的完整地址"'))}
       ${btn('fish-finish-login', '完成登录', 'secondary')}` : ''}
       ${s.error ? `<p class="error-copy hint">${esc(s.error)}</p>` : ''}
-      <p class="hint">授权只保存在当前酒馆地址的本地浏览器，不写入角色卡或普通备份。断开连接会清除此处授权；需要撤销账户侧权限时请到 Fish 官网管理。</p>`;
+      <p class="hint">RevoPhone 授权保存在当前酒馆地址的本地浏览器，不写入角色卡或插件普通备份。${s.nativeRequired ? '接入后 TT 也会保存授权请求头，并可能随 TT 数据备份保存；此处断开时会暂停关联的 Fish 服务并清除授权头。' : '断开连接会清除此处授权。'}需要撤销账户侧权限时请到 Fish 官网管理。</p>`;
   }
 
   function renderDetail() {
@@ -758,6 +762,9 @@ export function enginesApp(ctx) {
         await v.busy(el, async () => { await api.fishFinishLogin(url); await loadBalance('fish', true); }); break;
       }
       case 'fish-disconnect': await v.busy(el, async () => { await api.fishDisconnect(); balances.delete('fish'); render(); }); break;
+      case 'fish-connect-host': if (await ctx.confirm('接入 TT 自带 MCP？', '将 Fish 官方服务（https://api.fish.audio/mcp）加入并启用在 TT 管理器中，同步当前登录授权，允许读取积分、查询音色和生成语音。TT 会保存授权头；这些已允许的工具也可能供 TT 聊天模型调用。你可以随时在 TT 管理器中暂停或调整工具权限。')) {
+        await v.busy(el, async () => { await api.fishConnectHost(); await loadBalance('fish', true); });
+      } break;
       case 'fish-information': await v.busy(el, async () => {
         const info = await api.fishInformation(true); render();
         ctx.dialog('Fish 官方 MCP 工具信息', `<p class="hint">以下为本次登录后从官方服务读取的工具定义；不会生成语音或扣生成积分。</p><pre class="code" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(JSON.stringify(info, null, 2))}</pre>`);

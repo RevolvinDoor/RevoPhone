@@ -244,7 +244,7 @@ export class FishMCP {
     if (this.tools) return;
     if (!this.starting) this.starting = (async () => {
       if (this.native) {
-        const result = await this.native.discover(signal);
+        const result = await this.native.discover(signal, refresh);
         if (account !== this.oauth.record?.account) throw fail('登录账户已变化，请重新读取工具');
         const tools = new Map();
         for (const tool of result.tools) {
@@ -254,7 +254,7 @@ export class FishMCP {
         this.protocol = result.protocolVersion; this.tools = tools; this.account = account; return;
       }
       if (!this.protocol) {
-        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.2.4'}}, {signal, initialize: true});
+        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.2.5'}}, {signal, initialize: true});
         if (account !== this.oauth.record?.account) throw fail('登录账户已变化，请重新读取工具');
         if (!['2025-11-25', '2025-06-18', '2025-03-26'].includes(result.protocolVersion) || !result.capabilities?.tools) throw fail('服务端协商的 MCP 版本或工具能力不受支持');
         this.protocol = result.protocolVersion;

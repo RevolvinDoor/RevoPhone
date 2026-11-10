@@ -161,7 +161,8 @@ export class FishOAuth {
       const tokens = await this.request(meta.token_endpoint, {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: new URLSearchParams({grant_type: 'authorization_code', code, code_verifier: p.verifier,
           client_id: p.clientId, redirect_uri: p.redirectUri, resource: FISH_MCP}).toString()});
-      const record = this.tokenRecord(tokens, {clientId: p.clientId, account: random()});
+      const record = this.tokenRecord(tokens, {clientId: p.clientId, account: random(),
+        ...(this.record?.nativeRegistrationId ? {nativeRegistrationId: this.record.nativeRegistrationId} : {})});
       if (this.closed || p.epoch !== this.epoch) throw abort();
       await this.store.write(record);
       if (this.closed || p.epoch !== this.epoch) { await this.store.write(null); throw abort(); }
@@ -207,10 +208,10 @@ export class FishOAuth {
         const record = this.tokenRecord(tokens, saved);
         await this.store.change(current => {
           if (this.closed || epoch !== this.epoch || current?.account !== saved.account || current?.refresh_token !== saved.refresh_token) throw abort();
-          return record;
+          return {...current, access_token: record.access_token, refresh_token: record.refresh_token, expiresAt: record.expiresAt};
         });
         if (this.closed || epoch !== this.epoch) throw abort();
-        this.record = record; this.changed(); return record.access_token;
+        this.record = await this.store.read(); this.changed(); return record.access_token;
       };
       const job = this.locks?.request ? this.locks.request('revophone-fish:' + this.scope, refresh) : refresh();
       this.refreshing = job.finally(() => { this.refreshing = null; });
