@@ -189,7 +189,7 @@ export function presetsApp(ctx) {
   // The editor keeps to what is changed most (name, format, the rules); the rest folds away, each rule is one row that
   // opens in a sheet, and what is rare (发送预览, 恢复成默认内容, 删除预设) sits in the 「⋯」 of the title.
   const ruleHelp = (e, draw, chat, xeno) => xeno
-    ? (e.scope === 'mall' ? '商城点击「AI 进货」时发送给模型的提示词。可直接修改身高、罩杯、扶她尺寸比例尺或 XML 设计栏位要求；改乱了可点下方「恢复这一条」。'
+    ? (e.scope === 'mall' ? '商城点击「AI 进货」时使用当前已保存且处于「使用中」的异构预设；保存到其他预设不会切换当前预设。比例尺统一由「商城进货 · 比例尺规范」控制，关闭或清空后不补回默认值；每次只发送选中分类的工作台与一个姿势。商城「查看本次请求」可核对实际内容。请保留所选分类的 XML 输出标签；改乱了可恢复这一条。'
       : e.scope === 'task' ? '点击「洞察推荐」或「从剧情同步」时发送给模型的提取提示词。请保留输出标签（如 <insight> 或 <xeno_sync>）及竖线分隔列顺序，以便自动解析。'
       : e.id === 'autoSync' ? '附在实时状态栏末尾，指示正文模型在角色新登场、换装或身体变化时输出 <xeno_update> 同步块。'
       : '注入正文的异构设定与玩法规则，可自由修改文案、增删细节或改为常驻注入。点击下方「恢复这一条」可随时还原默认内容。')

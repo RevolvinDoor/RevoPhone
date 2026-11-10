@@ -57,6 +57,7 @@ import {
     xenoResetProtagonist, xenoApplyBodyMod, xenoApplyCognitionMod,
     xenoStockItem, xenoRegisterItem, xenoEquipItem, xenoUpdateMountOption, xenoUnequipSlot, xenoUseConsumable
 } from './xeno.js';
+import {buildMallRestockRequest, formatMallRestockRequest} from './xeno-restock.js';
 import {
     getChatStoreJson,
     getExtStoreJson, setExtStoreJson, deleteExtStoreJson, listExtStoreKeys
@@ -1313,14 +1314,17 @@ export class TTSBackend {
             ...wardrobeActionPlan(xeno, {...triggerContext, balance: state.chat?.wallet?.balance || 0})];
         const p = preset ? normalizeXenoPreset(preset) : activeXenoPreset(xeno);
         const getEntry = id => (p.entries || []).find(e => e.id === id);
+        const mallCategory = ['skin_suit', 'flesh_ring', 'apparel', 'consumable'].includes(triggerContext.mallCategory) ? triggerContext.mallCategory : 'skin_suit';
+        const mallTitle = {skin_suit: '皮躯', flesh_ring: '肉躯', apparel: '服饰', consumable: '道具'}[mallCategory];
+        const mallRequest = buildMallRestockRequest({...xeno, presets: [p], activePreset: p.id}, {
+            category: mallCategory, slot: mallCategory === 'apparel' ? 'outerwear' : mallCategory,
+            text: '（本次进货要求；商城「查看本次请求」会显示当前实际输入）'
+        });
         const scenes = [
             ['━━ 正文注入预览（当前状态实际发送内容） ━━', blocks.map(b => `【${b.key} · 深度 ${b.depth}】\n${b.text}`).join('\n\n') || '（当前没有启用的正文注入内容）'],
             ['━━ 洞察推荐扫描（点击扫描评估报告时发送） ━━', getEntry('insightPrompt')?.text || ''],
             ['━━ 从剧情同步状态栏（点击从剧情同步时发送） ━━', getEntry('syncPrompt')?.text || ''],
-            ['━━ 商城进货工作台（前置对话 + 破限头 + 比例尺 + 姿势预设 + 皮躯/肉躯/服饰打版） ━━', ['restockPreUser', 'restockPreAssistant', 'restockSysHeader', 'scaleRule', 'mallPosePrompt', 'mallPoseStand', 'mallPoseSolo', 'skinWorkbench', 'ringWorkbench', 'apparelWorkbench'].map(k => {
-                const e = getEntry(k);
-                return e && e.enabled !== false ? e.text : '';
-            }).filter(Boolean).join('\n\n')]
+            [`━━ 商城进货示例 · ${mallTitle}（仅发送本次分类；使用当前预设草稿） ━━`, formatMallRestockRequest(mallRequest)]
         ];
         return scenes.map(([title, body]) => `${title}\n\n${body}`).join('\n\n');
     }

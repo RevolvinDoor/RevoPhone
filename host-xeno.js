@@ -6,8 +6,9 @@
 import {storyLines} from './core/moments.js';
 import {activeChatPreset, cleanTagged} from './core/chat.js';
 import {cardRoutes, findRoute, roleTypeOf} from './core/routes.js';
-import {ensureTarget, normalizeCatalogItem, GENDERS, xenoPromptEntryText, xenoMallPosePromptText, XENO_PROMPT_DEFAULTS, extractCardProtagonistProfile, applyXenoUpdateFromText} from './core/xeno.js';
+import {ensureTarget, normalizeCatalogItem, GENDERS, xenoPromptEntryText, extractCardProtagonistProfile, applyXenoUpdateFromText} from './core/xeno.js';
 import {searchStoryMessages} from './host-tt.js';
+import {buildMallRestockRequest} from './core/xeno-restock.js';
 import {worldInfoFor, loreOptions} from './host-lore.js';
 
 export function createXenoHost({context, settings, backend, notice = () => {}}) {
@@ -292,120 +293,13 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
   function mallRestock({category = 'apparel', slot = 'outerwear', text = '', imageData = '', gender: requestedGender = ''} = {}) {
     return run('restock', async ctx => {
       const cur = backend.cardState()?.xeno;
-      const preUser = xenoPromptEntryText(cur, 'restockPreUser');
-      const preAssistant = xenoPromptEntryText(cur, 'restockPreAssistant');
-      const sysHeader = xenoPromptEntryText(cur, 'restockSysHeader') || XENO_PROMPT_DEFAULTS.restockSysHeader;
-      const WORKBENCH_SCALE_RULE = xenoPromptEntryText(cur, 'scaleRule') || XENO_PROMPT_DEFAULTS.scaleRule;
-      const WORKBENCH_POSE_PROMPT = xenoMallPosePromptText(cur);
-      const WORKBENCH_SKIN_SUIT_RULE = xenoPromptEntryText(cur, 'skinWorkbench') || XENO_PROMPT_DEFAULTS.skinWorkbench;
-      const WORKBENCH_FLESH_RING_RULE = xenoPromptEntryText(cur, 'ringWorkbench') || XENO_PROMPT_DEFAULTS.ringWorkbench;
-      const WORKBENCH_APPAREL_RULE = xenoPromptEntryText(cur, 'apparelWorkbench') || XENO_PROMPT_DEFAULTS.apparelWorkbench;
-
-      const xmlTag = category === 'skin_suit' ? 'skin_suit_design' : category === 'flesh_ring' ? 'flesh_ring_design' : 'apparel_design';
-      const workbenchRule = category === 'skin_suit'
-        ? WORKBENCH_SKIN_SUIT_RULE
-        : category === 'flesh_ring'
-          ? WORKBENCH_FLESH_RING_RULE
-          : WORKBENCH_APPAREL_RULE;
-      const catTitle = category === 'skin_suit' ? '活体皮躯' : category === 'flesh_ring' ? '活体肉躯' : category === 'consumable' ? '异构生物道具' : '高定特殊服饰';
-      const metadataRule = '【装备结构与能力字段】在设计块中另列 [身体类型]：女/男/扶她/未设定；[下体处理]：replace 或 preserve；[下体类型]：auto/female/male/dual/none/custom；[下体设定]：结构与覆盖方式；[特殊能力]：能力说明；[能力生效条件]：触发、代价及限制。'
-        + '以上字段按输入要求，优先于模板中的固定性别假设。女性装备不添加男性部位，前方延展按该件结构重构，不固定为男性结构。可用 [生理构造] 记录生理特征。未要求特殊能力时留空，不擅自添加。'
-        + (GENDERS.includes(requestedGender) ? `本次指定身体类型为「${requestedGender}」，设计正文、结构字段及绘图提示词必须一致。` : '身体类型根据明确输入或参考设定；无法确定时写未设定，不统一默认为扶她。');
-
-      const sysPrompt = [
-        sysHeader,
-        WORKBENCH_SCALE_RULE,
-        workbenchRule,
-        metadataRule,
-        WORKBENCH_POSE_PROMPT ? `【商品图固定姿势与构图 Tag 要求】：在生成 [生图提示词 (Prompt)] 时，请包含或优先适配以下构图与姿势 Tag：${WORKBENCH_POSE_PROMPT}` : '',
-        '请额外在设计块外层附上简要上架元数据（价格：数字 200~3500；简称：4~8字），或直接严格输出上述 XML 设计块。'
-      ].filter(Boolean).join('\n\n');
-
-      const cleanInput = text.trim();
-      const userText = imageData
-        ? (cleanInput
-          ? `【设计工作台输入】：${cleanInput}\n【目标分类】：${catTitle}（槽位：${slot}）\n请仔细观察所附参考图中的人物外貌、身材或服装剪裁款式，结合上述文字要求将其100%还原转化为工作台设定档案。\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`
-          : `【设计工作台输入】：请仔细观察所附参考图中的人物外貌、身材或服装剪裁款式，将其100%逆向还原转化为【${catTitle}】（槽位：${slot}）的工作台设定档案。\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`)
-        : (cleanInput
-          ? `【设计工作台输入】：${cleanInput}\n【目标分类】：${catTitle}（槽位：${slot}）\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`
-          : `【设计工作台输入】：请自由发挥创意，设计一件极具魅力与反差感的全新【${catTitle}】（槽位：${slot}）。\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`);
-
-      const preMessages = [
-        ...(preUser ? [{role: 'user', content: preUser}] : []),
-        ...(preAssistant ? [{role: 'assistant', content: preAssistant}] : [])
-      ];
-      const messages = [
-        ...preMessages,
-        {role: 'system', content: sysPrompt},
-        {
-          role: 'user',
-          content: imageData
-            ? [
-                {type: 'text', text: userText},
-                {type: 'image_url', image_url: {url: imageData}}
-              ]
-            : userText
-        }
-      ];
-
-      const isRefusalOrEmpty = str => {
-        const s = String(str || '').trim();
-        if (!s || s.length < 25) return true;
-        if (new RegExp(`<${xmlTag}[\\s\\S]*?>`, 'i').test(s)) return false;
-        return /(?:I cannot|I'm sorry|I am unable|as an AI|cannot fulfill|explicit|NSFW|无法满足|抱歉.*无法|不能生成|违反.*政策)/i.test(s);
-      };
-
-      let raw = '';
-      try {
-        raw = await generateRestockText(ctx, messages, !!imageData);
-      } catch (err) {
-        if (imageData) {
-          const fallbackText = cleanInput
-            ? `【设计工作台输入】：${cleanInput}\n【目标分类】：${catTitle}（槽位：${slot}）\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`
-            : `【设计工作台输入】：请自由发挥创意，设计一件极具魅力与反差感的全新【${catTitle}】（槽位：${slot}）。\n请严格按照 <${xmlTag} name="..."> 格式输出设定档案：`;
-          const fallbackPrompt = [
-            ...preMessages,
-            {role: 'system', content: sysPrompt},
-            {role: 'user', content: fallbackText}
-          ];
-          raw = await generateRestockText(ctx, fallbackPrompt, false);
-        } else {
-          throw err;
-        }
-      }
-
-      // 若模型因敏感词限制拒绝或未返回有效内容，自动切换为安全高定美学工作台提示词重试
-      if (isRefusalOrEmpty(raw)) {
-        const safeSysPrompt = [
-          sysHeader,
-          metadataRule,
-          `<${xmlTag} name="单品名称">`,
-          category === 'skin_suit'
-            ? '[外观视觉还原]：(发色、发型、瞳色、五官神态与整体气质)\n[体态参数]：(身高与整体体态)\n[生理构造]：(符合指定身体类型的结构设定)\n[穿戴接口与机能]：(穿戴接口及音色同步机能)\n[生图提示词 (Prompt)]：(符合身体类型的英文 Tag)'
-            : category === 'flesh_ring'
-              ? '[静息环体外观]：(未激活时的精致环状材质、色泽、纹路与穿戴位置)\n[前方延展·器官重构]：(向前重构的生理结构与尺寸特征)\n[后方延展·躯体重构]：(向后蔓延包裹全身后重构出的发色、瞳色、面容、胸臀体态与外层仿生衣物)\n[生图提示词 (Prompt)]：(提取后方延展完全体形态的英文 Danbooru tag 串)'
-              : '[款式与定位]：(服装风格、适用场景与核心视觉冲击点)\n[材质与色彩]：(主面料、薄纱、皮革/金属配件的质感、反光与贴肤度)\n[剪裁与暴露结构]：(从上到下详细拆解领口、胸线、腰腹、臀侧、裙摆/裤装的剪裁细节与镂空/开叉设计)\n[穿戴互动与机关]：(穿脱方式、隐藏暗扣与对身体曲线的修饰效果)\n[生图提示词 (Prompt)]：(仅针对该套服装与穿搭效果输出精准的英文 Danbooru 服装 tag 串)',
-          `</${xmlTag}>`
-        ].join('\n');
-        const safeMessages = [
-          ...preMessages,
-          {role: 'system', content: safeSysPrompt},
-          {
-            role: 'user',
-            content: imageData
-              ? [
-                  {type: 'text', text: userText},
-                  {type: 'image_url', image_url: {url: imageData}}
-                ]
-              : userText
-          }
-        ];
-        try {
-          raw = await generateRestockText(ctx, safeMessages, !!imageData);
-        } catch {}
-      }
-
+      const {messages, xmlTag} = buildMallRestockRequest(cur, {category, slot, text, imageData, gender: requestedGender});
+      const raw = await generateRestockText(ctx, messages);
       const cleaned = cleanTagged(raw);
+      const completedDesign = cleaned.match(new RegExp(`<${xmlTag}\\b[^>]*>([\\s\\S]*?)<\\/${xmlTag}\\s*>`, 'i'));
+      if (!completedDesign?.[1]?.trim()) {
+        throw Error(`进货未返回完整的 <${xmlTag}> 设计档案，未上架任何商品。请查看「日志」中的文字模型请求与回复；未切换备用进货模板重试。`);
+      }
       const body = cleaned.match(/<restock_item>([\s\S]*?)<\/restock_item>/i)?.[1] || cleaned;
       const pick = label => body.match(new RegExp(`(?:^|\\n)\\s*${label}\\s*[:：]\\s*([^\\n]+)`))?.[1]?.trim() || '';
       const pickSection = label => {
@@ -413,7 +307,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
         return body.match(new RegExp(`\\[${escaped}\\]\\s*[:：]?\\s*([\\s\\S]*?)(?=\\n\\s*\\[|\\n\\s*<\\/${xmlTag}>|$)`, 'i'))?.[1]?.trim() || '';
       };
       const xmlAttrName = body.match(new RegExp(`<${xmlTag}\\s+[^>]*name=["']([^"']+)["']`, 'i'))?.[1]?.trim() || '';
-      const designMatch = body.match(new RegExp(`<${xmlTag}[\\s\\S]*?<\\/${xmlTag}>`, 'i'))?.[0] || body.trim();
+      const designMatch = completedDesign[0];
 
       const rawName = xmlAttrName || pick('名称') || (text.trim() ? text.trim().slice(0, 16) : '异构高定新货');
       const name = rawName.startsWith('【') ? rawName : `【${rawName.replace(/^[【\[]|[】\]]$/g, '')}】`;

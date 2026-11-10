@@ -632,12 +632,8 @@ export function activeMallPoseEntryId(xeno) {
 }
 
 export function xenoMallPosePromptText(xeno) {
-  const parts = [];
-  for (const {id} of MALL_POSE_ENTRIES) {
-    const text = xenoPromptEntryText(xeno, id).trim();
-    if (text) parts.push(text);
-  }
-  return parts.join(', ');
+  const id = activeMallPoseEntryId(xeno);
+  return id ? xenoPromptEntryText(xeno, id).trim() : '';
 }
 
 /** Extracts per-chat session state (excluding global mall/wardrobe catalog & global preferences) for chat isolation & floor snapshots. */

@@ -11,6 +11,7 @@ import {getEntity, formatVoiceRoleLabel, activeXenoPreset, xenoPromptEntryText, 
 import {blobToDataUrl, generateItemPreview, openVoicePoolPickerDialog, openItemVoiceListPicker} from './xeno-media.js';
 import {saveFile} from '../download.js';
 import {openItemEditor} from './xeno-item-editor.js';
+import {buildMallRestockRequest, formatMallRestockRequest} from '../core/xeno-restock.js';
 
 export const MALL_ITEMS_FILE = 'revophone-mall-items';
 
@@ -105,6 +106,16 @@ export function mallApp(ctx) {
       if (clean && !activeMallPoseEntryId(xeno)) entry.enabled = true;
     }
     api.saveXenoPreset(preset);
+  }
+
+  function restockInput() {
+    return {
+      category: restockCategory,
+      slot: restockCategory === 'apparel' ? restockSlot : restockCategory,
+      text: v.root.querySelector('#mall-restock-text')?.value || '',
+      gender: ['skin_suit', 'flesh_ring'].includes(restockCategory) ? restockGender : '',
+      imageData: restockImage
+    };
   }
 
   function serializeMallItems(items) {
@@ -245,6 +256,7 @@ export function mallApp(ctx) {
             <strong>商城进货工坊（图文同步上新）</strong>
           </div>
           <div class="xeno-status-actions">
+            <button type="button" class="xeno-mini-btn" data-action="preview-restock">查看本次请求</button>
             <button type="button" class="xeno-mini-btn" data-action="open-mall-batch" title="无图批量导出/导入商品 JSON">📦 批量导入/导出</button>
             <button type="button" class="xeno-mini-btn" data-action="toggle-restock">收起</button>
           </div>
@@ -254,6 +266,7 @@ export function mallApp(ctx) {
             <button type="button" class="xeno-btn secondary full" data-action="manual-restock">✎ 手动录入商品（不调用模型）</button>
           </div>
           <p class="xeno-hint">已有完整设定可直接手动录入并定价；需要 AI 帮忙设计时，使用下方进货工坊。</p>
+          <p class="xeno-hint">当前使用预设：${esc(preset.name)} · 比例尺${xenoPromptEntryText(xeno, 'scaleRule').trim() ? '已启用' : '已关闭或清空'}。修改比例尺后请保存并使用对应的「异构」预设。</p>
           <div class="xeno-grid-2">
             <label class="xeno-field-inline">
               <span>进货大类</span>
@@ -472,6 +485,15 @@ export function mallApp(ctx) {
     if (act === 'go-wardrobe') { ctx.open('wardrobe'); return; }
     if (act === 'go-xeno') { ctx.open('xeno'); return; }
     if (act === 'open-mall-batch') { openBatchManageSheet(); return; }
+    if (act === 'preview-restock') {
+      const draft = structuredClone(xeno), preset = activeXenoPreset(draft);
+      const poseId = activeMallPoseEntryId(draft), pose = preset.entries.find(entry => entry.id === poseId);
+      const poseInput = v.root.querySelector('#mall-pose-prompt-input');
+      if (pose && poseInput) pose.text = poseInput.value.trim();
+      const request = buildMallRestockRequest(draft, restockInput());
+      ctx.dialog(`本次进货请求 · ${preset.name}`, `<p class="xeno-hint">使用当前已保存的异构预设及此处输入；只包含选中分类和当前姿势。此预览不调用模型，也不保存表单。实际请求和回复可在「日志」查看。</p><textarea class="xeno-textarea" rows="22" readonly aria-label="本次进货请求">${esc(formatMallRestockRequest(request))}</textarea>`);
+      return;
+    }
     if (act === 'manual-restock') {
       restockText = v.root.querySelector('#mall-restock-text')?.value || '';
       openItemEditor(ctx, {destination: 'mall', category: restockCategory, slot: restockSlot, gender: restockGender,
@@ -540,7 +562,8 @@ export function mallApp(ctx) {
     }
     if (act === 'run-restock') {
       if (restocking || api.xenoBusy?.('restock')) return;
-      restockText = v.root.querySelector('#mall-restock-text')?.value || '';
+      const input = restockInput();
+      restockText = input.text;
       const poseInput = v.root.querySelector('#mall-pose-prompt-input');
       const activePoseId = activeMallPoseEntryId(xeno);
       if (poseInput && activePoseId && poseInput.value.trim() !== xenoPromptEntryText(xeno, activePoseId).trim()) {
@@ -551,13 +574,7 @@ export function mallApp(ctx) {
       await v.busy(el, async () => {
         let created = null;
         try {
-          created = await api.mallRestock({
-            category: restockCategory,
-            slot: restockCategory === 'apparel' ? restockSlot : restockCategory,
-            text: restockText,
-            gender: ['skin_suit', 'flesh_ring'].includes(restockCategory) ? restockGender : '',
-            imageData: restockImage
-          });
+          created = await api.mallRestock(input);
         } finally {
           restocking = false;
           v.refresh();
