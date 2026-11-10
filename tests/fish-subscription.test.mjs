@@ -176,6 +176,23 @@ test('Downloaded links survive a new client after failure; multi-clip results ar
   assert.equal(first.calls('text_to_speech').length, 1); assert.equal(second.calls('text_to_speech').length, 0);
 });
 
+test('Initialization 403 retains the official reason and stage without leaking OAuth credentials or retrying', async t => {
+  const f = speechFixture(); t.after(() => f.client.close()); let attempts = 0;
+  f.oauth.record.refresh_token = 'private-refresh';
+  f.client.fetcher = async () => {
+    attempts++;
+    return json({jsonrpc: '2.0', error: {code: -32000, message: 'Invalid Origin header: http://tauri.localhost; Bearer oauth-access; refresh_token=private-refresh'}}, 403);
+  };
+  await assert.rejects(f.client.information(), error => {
+    assert.equal(error.status, 403); assert.equal(error.mcpMethod, 'initialize');
+    assert.match(error.message, /初始化.*HTTP 403.*initialize/);
+    assert.match(error.serverMessage, /Invalid Origin header: http:\/\/tauri.localhost/);
+    assert.doesNotMatch(JSON.stringify(error) + error.message, /oauth-access|private-refresh/);
+    return true;
+  });
+  assert.equal(attempts, 1); assert.equal(f.calls('text_to_speech').length, 0);
+});
+
 test('Unknown paid outcome stays blocked across client recreation until explicit clearing', async t => {
   const journal = new RecordStore(), first = speechFixture({journal, paid: () => {throw Error('connection lost');}});
   t.after(() => first.client.close());

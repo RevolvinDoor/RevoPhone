@@ -139,16 +139,58 @@ export async function rpcResponse(response, id, signal) {
     }
   } finally { await reader.cancel().catch(() => {}); }
 }
-async function boundedText(response, limit) {
+async function boundedText(response, limit, truncate = false) {
   const reader = response.body?.getReader();
-  if (!reader) { const text = await response.text(); if (new TextEncoder().encode(text).length > limit) throw fail('响应过大'); return text; }
+  if (!reader) { const text = await response.text(); if (truncate) return text.slice(0, limit); if (new TextEncoder().encode(text).length > limit) throw fail('响应过大'); return text; }
   const chunks = []; let size = 0;
   try {
-    while (true) { const {done, value} = await reader.read(); if (done) break; size += value.length; if (size > limit) throw fail('响应过大'); chunks.push(value); }
+    while (true) {
+      const {done, value} = await reader.read(); if (done) break;
+      if (!truncate && size + value.length > limit) throw fail('响应过大');
+      const part = truncate ? value.subarray(0, limit - size) : value;
+      chunks.push(part); size += part.length;
+      if (truncate && size >= limit) break;
+    }
   } finally { await reader.cancel().catch(() => {}); }
   const bytes = new Uint8Array(size); let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
   return new TextDecoder().decode(bytes);
+}
+
+async function refusedRequest(response, method, params, secrets) {
+  const clean = value => {
+    let text = String(value);
+    for (const secret of secrets.filter(s => typeof s === 'string' && s.length >= 4)) {
+      text = text.split(secret).join('[已隐藏]').split(encodeURIComponent(secret)).join('[已隐藏]');
+    }
+    return text.replace(/\bBearer\s+[^\s"',;<>]+/gi, 'Bearer [已隐藏]')
+      .replace(/((?:access_token|refresh_token|client_secret|code_verifier)\s*[=:]\s*)[^\s"',;&<>]+/gi, '$1[已隐藏]')
+      .replace(/\s+/g, ' ').trim().slice(0, 600);
+  };
+  let detail = '';
+  try {
+    const body = await boundedText(response, 8192, true);
+    try {
+      const data = JSON.parse(body), messages = [];
+      const collect = (value, depth = 0) => {
+        if (depth > 3) return;
+        if (typeof value === 'string' || typeof value === 'number') messages.push(String(value));
+        else if (Array.isArray(value)) value.slice(0, 5).forEach(v => collect(v, depth + 1));
+        else if (object(value)) for (const key of ['error', 'code', 'error_description', 'message', 'detail', 'reason']) {
+          if (Object.hasOwn(value, key)) collect(value[key], depth + 1);
+        }
+      };
+      collect(data); detail = clean([...new Set(messages)].join('；'));
+    } catch {
+      detail = clean(body.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]*>/g, ' '));
+    }
+  } catch { /* A failed error-body read must retain the HTTP status and request stage. */ }
+  const authenticate = clean(response.headers.get('www-authenticate') || '');
+  const stage = {initialize: '初始化', 'notifications/initialized': '初始化确认', 'tools/list': '读取工具列表', 'tools/call': '调用工具'}[method] || 'MCP 请求';
+  const step = method + (method === 'tools/call' && params?.name ? ' · ' + params.name : '');
+  return Object.assign(fail(`${stage}被拒（HTTP ${response.status}，${step}）${detail ? '：' + detail : '；Fish 未返回可读取的错误说明'}${authenticate ? '；授权要求：' + authenticate : ''}`),
+    {known: response.status < 500, status: response.status, mcpMethod: method,
+      ...(params?.name ? {tool: params.name} : {}), serverMessage: detail, ...(authenticate ? {authenticate} : {})});
 }
 
 /** Keep protocol/authentication out of generic API-key rotation and generic proxy rewriting. */
@@ -175,8 +217,7 @@ export class FishMCP {
         body: JSON.stringify({jsonrpc: '2.0', ...(notify ? {} : {id}), method, ...(params === undefined ? {} : {params})}), signal: combined});
       if (!r.ok) {
         if (r.status === 401 || r.status === 404) { this.session = ''; this.protocol = ''; this.tools = null; }
-        await r.body?.cancel().catch(() => {});
-        throw Object.assign(fail(`MCP 请求被拒（HTTP ${r.status}）${r.status === 401 ? '，请重新连接 Fish 账户' : ''}`), {known: r.status < 500});
+        throw await refusedRequest(r, method, params, [token, this.oauth.record?.refresh_token]);
       }
       if (initialize) this.session = r.headers.get('Mcp-Session-Id') || '';
       if (notify) { await r.body?.cancel().catch(() => {}); return; }
@@ -201,7 +242,7 @@ export class FishMCP {
     if (this.tools) return;
     if (!this.starting) this.starting = (async () => {
       if (!this.protocol) {
-        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.2.2'}}, {signal, initialize: true});
+        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.2.3'}}, {signal, initialize: true});
         if (account !== this.oauth.record?.account) throw fail('登录账户已变化，请重新读取工具');
         if (!['2025-11-25', '2025-06-18', '2025-03-26'].includes(result.protocolVersion) || !result.capabilities?.tools) throw fail('服务端协商的 MCP 版本或工具能力不受支持');
         this.protocol = result.protocolVersion;
