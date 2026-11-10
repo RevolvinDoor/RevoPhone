@@ -369,8 +369,8 @@ export function enginesApp(ctx) {
   function fishAccount() {
     const s = api.fishStatus();
     return `<p class="hint">${s.configured ? '已保存 Fish OAuth 授权。' : '尚未连接 Fish 账户。'}使用登录时选定团队的网页积分；此方式不使用中转，也不会在失败后改扣 API 余额。</p>
-      <div class="actions">${btn('fish-login', s.configured ? '重新授权／切换团队' : '连接 Fish 账户', 'secondary', s.pending ? 'disabled' : '')}
-      ${s.configured || s.pending ? btn('fish-disconnect', '断开连接', 'text-button') : ''}
+      <div class="actions">${btn('fish-login', s.preparing ? '正在准备授权…' : s.configured ? '重新授权／切换团队' : '连接 Fish 账户', 'secondary', s.pending || s.preparing ? 'disabled' : '')}
+      ${s.configured || s.pending ? btn('fish-disconnect', '断开连接', 'text-button', s.preparing ? 'disabled' : '') : ''}
       ${s.configured ? btn('fish-information', '刷新工具信息', 'chip-button') + btn('fish-clear-unknown', '清除未知生成记录', 'text-button') : ''}</div>
       ${s.pending ? `<p class="hint">请在 Fish 页面完成登录。弹窗未打开时，可<a href="${esc(s.authorizationUrl)}" target="_blank" rel="noopener noreferrer">打开授权页面</a>。若回调页打不开或结果未传回，复制地址栏的完整回调地址到下方。登录十分钟后失效。</p>
       ${field('登录回调地址', textArea('fish-callback', '', 'rows="2" autocomplete="off" spellcheck="false" placeholder="粘贴登录完成后地址栏中的完整地址"'))}

@@ -75,6 +75,23 @@ test('Concurrent token refresh rotates once; disconnect during refresh cannot re
   assert.equal(f.oauth.configured, false); assert.equal(f.store.value, null);
 });
 
+test('TauriTavern opens the prepared authorization URL externally without creating a blank popup', async t => {
+  const f = loginFixture(), opened = [], gate = deferred(); t.after(() => f.oauth.close());
+  f.oauth.win.__TAURITAVERN__ = {};
+  f.oauth.win.open = (...args) => {opened.push(args); if (args[0] === 'about:blank') throw Error('blank native window'); return null;};
+  const metadata = f.oauth.metadata.bind(f.oauth);
+  f.oauth.metadata = async () => {await gate.promise; return metadata();};
+  const login = f.oauth.beginLogin();
+  assert.equal(f.oauth.status().preparing, true); assert.equal(opened.length, 0);
+  await f.oauth.beginLogin(); // Repeated clicks while preparing must not create a second registration/window.
+  gate.resolve(); await login;
+  assert.equal(opened.length, 1);
+  assert.equal(new URL(opened[0][0]).origin, 'https://fish.audio');
+  assert.deepEqual(opened[0].slice(1), ['_blank', 'noopener']);
+  assert.equal(f.oauth.status().pending, true); assert.equal(f.oauth.status().preparing, false);
+  assert.equal(f.listeners.size, 0);
+});
+
 test('Invalid refresh authorization is cleared and never falls back to an API key', async t => {
   const f = loginFixture({token: () => json({error: 'invalid_grant'}, 400)}); t.after(() => f.oauth.close());
   await f.store.write({...tokens, clientId: 'client', account: 'a', expiresAt: 1}); await f.oauth.open();

@@ -64,7 +64,7 @@ export class FishOAuth {
   get configured() { return !!(this.record?.access_token || this.record?.refresh_token); }
   status() {
     return {configured: this.configured, expiresAt: this.record?.expiresAt || null,
-      pending: !!this.pending, authorizationUrl: this.pending?.url || '', redirectUri: this.pending?.redirectUri || '',
+      preparing: !!this.preparing, pending: !!this.pending, authorizationUrl: this.pending?.url || '', redirectUri: this.pending?.redirectUri || '',
       error: this.error || ''};
   }
   // Never send OAuth bodies through RequestLog: URL-encoded forms contain codes and refresh tokens.
@@ -98,11 +98,17 @@ export class FishOAuth {
   }
   async beginLogin() {
     if (this.closed) throw abort();
+    if (this.preparing) return this.status();
     this.cancelLogin();
     const epoch = ++this.epoch, redirectUri = this.redirectUri;
-    // Opening before the first await preserves the initiating click's browser permission.
-    const popup = this.win?.open('about:blank', 'revophone-fish-' + random().slice(0, 8), 'popup,width=540,height=760');
+    // TauriTavern hands ordinary HTTPS links to the system browser. A blank popup instead
+    // enters native new-window creation before there is an authorization page to display.
+    const external = !!(this.win?.__TAURITAVERN__ || this.win?.__TAURITAVERN_HOST__);
+    let popup = null;
+    this.preparing = true; this.error = ''; this.changed();
     try {
+      // Ordinary browsers still need a popup opened during the initiating click.
+      if (!external) popup = this.win?.open('about:blank', 'revophone-fish-' + random().slice(0, 8), 'popup,width=540,height=760');
       const meta = await this.metadata();
       const client = await this.request(meta.registration_endpoint, {method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({client_name: 'RevoPhone', redirect_uris: [redirectUri],
@@ -121,16 +127,16 @@ export class FishOAuth {
       const timer = setTimeout(() => { this.cancelLogin(); this.error = 'Fish 登录已超时，请重新连接'; this.changed(); }, 10 * 60 * 1000);
       this.pending = {epoch, verifier, state, redirectUri, clientId: client.client_id, popup, listener, timer, url: url.href};
       this.error = '';
-      this.win?.addEventListener('message', listener);
+      if (popup) this.win?.addEventListener('message', listener);
       if (popup) popup.location.replace(url.href);
-      // Mobile hosts return null from window.open. The UI also retains a normal external link.
+      // No size/position features: TauriTavern routes this to the system browser on desktop and mobile.
       else this.win?.open(url.href, '_blank', 'noopener');
-      this.changed(); return this.status();
+      this.preparing = false; return this.status();
     } catch (error) {
       try { popup?.close(); } catch {}
       this.error = error.name === 'AbortError' ? '' : error.message;
-      this.changed(); throw error;
-    }
+      throw error;
+    } finally { this.preparing = false; this.changed(); }
   }
   async finishLogin(value) {
     const p = this.pending;
