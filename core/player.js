@@ -209,7 +209,7 @@ export class DialoguePlayer {
  async lineKey(line) {
   const s = this.settings(), route = resolveLineRoute(s, line);
   if (!route) return null;
-  return requestHash(buildRequest(route.engine, s.connections[route.engine], { ...route, language: route.language || s.general.defaultLanguage }, line, this.providers.references));
+  return requestHash(buildRequest(route.engine, s.connections[route.engine], { ...route, language: route.language || s.general.defaultLanguage }, line, this.providers.references, this.providers.fish?.oauth.record?.account));
  }
  async lineState(line) {
   try {
@@ -273,7 +273,7 @@ export class DialoguePlayer {
  /** A line's audio: from the cache, or made and kept. found(fromCache, key) is told before any making starts. */
  async make(line, route, s, signal, found = () => {}, still = () => !signal.aborted) {
   const effective = { ...structuredClone(route), language: route.language || s.general.defaultLanguage, model: route.model || s.connections[route.engine].model };
-  let request = buildRequest(route.engine, s.connections[route.engine], effective, line, this.providers.references);
+  let request = buildRequest(route.engine, s.connections[route.engine], effective, line, this.providers.references, this.providers.fish?.oauth.record?.account);
   const key = await requestHash(request);
   if (!still()) return null;
   const cacheEpoch = this.cache.epoch;
@@ -294,7 +294,7 @@ export class DialoguePlayer {
      if (route.engine === 'fish' && TTSParameters.fishNative({ ...s.connections.fish, model: effective.model })) {
       await this.providers.fishCatalog?.();
       if (!still()) return null;
-      request = buildRequest(route.engine, s.connections[route.engine], effective, line, this.providers.references);
+      request = buildRequest(route.engine, s.connections[route.engine], effective, line, this.providers.references, this.providers.fish?.oauth.record?.account);
      }
      return this.providers.synthesize(request, signal);
     })(), entry = { job, signal };

@@ -1,5 +1,6 @@
 import {buildDoubaoRequest} from './doubao.js';
 import {proxyAddress} from './proxy-url.js';
+import {fishSubscription, MCP_MODEL} from './fish-mcp.js';
 'use strict';
 // Official TTS parameter snapshot: 2026-09-30 (Eleven v4 added 2026-09-28). See research/engine-parameters/README.md.
 
@@ -10,7 +11,7 @@ const t=(key,label,help='',type='text')=>({key,label,type,value:'',help});
 const rows=(key,label,columns,max,help='')=>({key,label,type:'rows',value:[],columns,max,help});
 const group=(id,title,fields)=>({id,title,fields});
 const refs=(key,label,id,version,optional=false)=>rows(key,label,[t(id,'词典 ID'),{...t(version,'版本 ID'),optional}],3,'最多三份，按添加顺序应用。');
-const fish={model:'s2.1-pro',models:['s2.1-pro','s2.1-pro-free','s2-pro','s1','drama-3'],source:'https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech',groups:[
+const fish={model:'s2.1-pro',models:['s2.1-pro','s2.1-pro-free','s2-pro','s1','drama-3',MCP_MODEL],source:'https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech',groups:[
  group('common','常用设置',[n('prosody.volume','音量 · dB',0,undefined,undefined,.5,'0 保持原音量；官网未规定上下限。'),b('prosody.normalize_loudness','统一响度',true,'S2 系列有效；s1 接收但不生效。预览模型尚待核验。'),n('top_p','采样多样性',.7,0,1,.05)]),
  group('audio','音频输出',[s('format','音频格式','mp3',['mp3','wav','pcm','opus']),s('sample_rate','采样率',44100,[8000,16000,24000,32000,44100,48000]),s('mp3_bitrate','MP3 码率 · kbps',128,[64,128,192]),s('opus_bitrate','Opus 码率 · bps',-1000,[[-1000,'自动'],24000,32000,48000,64000],'兼容接口文档称 Opus 码率自动选择；原生字段是否覆盖需实测，当前请求省略。')]),
  group('generation','更多生成参数',[s('latency','延迟模式','normal',[['normal','质量优先'],['balanced','均衡'],['low','低延迟']]),n('chunk_length','分段长度',300,100,300,1),n('min_chunk_length','最小分段长度',50,0,100,1),n('max_new_tokens','每段生成上限',1024,undefined,undefined,1,'官网未规定上下限。'),n('repetition_penalty','重复惩罚',1.2,undefined,undefined,.05),n('early_stop_threshold','提前结束阈值',1,0,1,.05),b('normalize','规范数字与文字读法',true),b('condition_on_previous_chunks','沿用前段声音上下文',true),t('features','功能标记','每行一个，例如 quality-guard；是否生效由 Fish 后端决定。','lines')]),
@@ -102,7 +103,7 @@ let fishCompat=new Set(['s2.1-pro','s2.1-pro-free','s2-pro','s1']);
 /** The compat endpoint's catalog as read (ids like fish-audio/s1); true when it changed what goes where. */
 export function setFishCompat(ids){const next=new Set((ids||[]).map(id=>String(id).replace(/^fish-audio\//,'')).filter(Boolean));if(!next.size)return false;const changed=catalogs.fish.models.some(m=>next.has(m)!==fishCompat.has(m));fishCompat=next;return changed;}
 /** Whether this connection's model is sent to Fish's own /v1/tts (an OpenAI-form relay takes every model its own way). */
-export const fishNative=c=>!fishOpenAI(c)&&!fishCompat.has(c?.model);
+export const fishNative=c=>!fishSubscription(c)&&!fishOpenAI(c)&&!fishCompat.has(c?.model);
 /** A /v1/tts request without a relay goes through the tavern's proxy: what to do when that is off. */
 export const FISH_PROXY_NOTE='这个模型现在只在 Fish 自己的接口上，网页不能直接调用，要借酒馆转发：在酒馆的 config.yaml 里把 enableCorsProxy 改成 true，然后重启酒馆。用中转的不用改。';
 /** TauriTavern (the tavern as a phone and desktop app, Rust instead of Node) has no /proxy/ yet, and gives extensions
@@ -117,7 +118,7 @@ export const fishBase=c=>typeof c?.relay==='string'&&(proxyAddress(c.relay)||/^h
 export const fishOpenAI=c=>!!(c?.relay&&c.relayApi==='openai');
 /** The speech address of an OpenAI-form relay. Its address is often written up to /v1 (as OpenAI services are): not twice. */
 export const openaiSpeech=base=>String(base).replace(/\/v1$/i,'')+'/v1/audio/speech';
-function normalize(key,c){if(key==='fish'){c.relay=typeof c.relay==='string'?c.relay.trim().replace(/\/+$/,''):'';c.relayApi=c.relayApi==='openai'?'openai':'fish';}for(const f of catalogs[key].groups.flatMap(g=>g.fields)){if(f.type==='select'){const opts=allowed(key,f,c);if(!opts.some(([v])=>v===c.params[f.key]))c.params[f.key]=opts.find(([v])=>v===f.value)?.[0]??opts[0]?.[0];}}if(key==='mini'&&c.params['voice_setting.latex_read'])c.params.language_boost='Chinese';}
+function normalize(key,c){if(key==='fish'){c.access=fishSubscription(c)?'subscription':'api';c.mcpArguments=typeof c.mcpArguments==='string'?c.mcpArguments:'{}';c.relay=typeof c.relay==='string'?c.relay.trim().replace(/\/+$/,''):'';c.relayApi=c.relayApi==='openai'?'openai':'fish';}for(const f of catalogs[key].groups.flatMap(g=>g.fields)){if(f.type==='select'){const opts=allowed(key,f,c);if(!opts.some(([v])=>v===c.params[f.key]))c.params[f.key]=opts.find(([v])=>v===f.value)?.[0]??opts[0]?.[0];}}if(key==='mini'&&c.params['voice_setting.latex_read'])c.params.language_boost='Chinese';}
 function activeParameters(key,c){const out={};for(const f of catalogs[key].groups.flatMap(g=>g.fields)){if(unavailable(key,f,c))continue;const v=c.params[f.key];if(v===''||v===undefined||Array.isArray(v)&&!v.length)continue;out[f.key]=structuredClone(v);}return out;}
 function setPath(target,key,value){const parts=key.split('.');let node=target;for(const part of parts.slice(0,-1))node=node[part]??=( {} );node[parts.at(-1)]=value;}
 /** Parses Fish Audio's per-line "语速,表现力" (e.g. "1,0.7") from the 情绪 field; null when not in that form. */

@@ -78,7 +78,7 @@ export function rolesApp(ctx) {
             : field(mimo === 'clone' ? '克隆样本' : r.engine === 'custom' ? '音色' : '音色 ID', input('voice', r.voice, 'text', `placeholder="${mimo === 'clone' ? '填克隆样本的名字，或从列表选择' : r.engine === 'custom' ? '「自己的接口」里音色的名字，或从列表选择' : '粘贴音色 ID 或从列表选择'}" autocomplete="off"`))}
         </div>
         <details data-group="role-model"><summary>模型和台词语言<small class="fold-note">${esc((r.model || '跟随引擎') + ' · ' + (r.language ? languageName(r.language) : '跟随默认'))}</small></summary><div class="fold-body">
-          ${field('模型', select('model', r.model || '', [['', '跟随引擎 · ' + c.model], ...schema.models.map(m => [m.id, m.id, !m.supported])]))}
+          ${field('模型', select('model', r.model || '', [['', '跟随引擎 · ' + c.model], ...schema.models.map(m => [m.id, m.title || m.id, !m.supported])]))}
           ${languageField('language', r.language || '', true, typedLanguages(api.getState()))}
         </div></details>
         <details data-group="role-persona"><summary>角色资料<small class="fold-note">${r.persona?.trim() ? r.persona.trim().length + ' 字' : '没写（读角色卡）'}</small></summary><div class="fold-body">${field('角色资料', textArea('persona', r.persona || '', 'rows="4" maxlength="4000" placeholder="例如：Hina，17 岁，学生会会长，嘴硬心软，和小春是青梅竹马"'), '聊天、论坛、朋友圈、查手机和电话写这个人时用的资料：身份、性格、说话方式、和谁是什么关系。\n\n酒馆里有这个人的角色卡时，不写也会读角色卡；写了就用这里的。没出场过、也没有角色卡的人（比如只在别的卡里出现的），在这里写几句，模型就不用凭空猜了。世界书照常按名字去找，最近的剧情也一直会带上。')}</div></details>

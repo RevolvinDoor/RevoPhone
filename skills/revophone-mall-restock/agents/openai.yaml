@@ -1,0 +1,4 @@
+interface:
+  display_name: "RevoPhone 批量进货"
+  short_description: "在 Codex 中批量设计 RevoPhone 商品并校验、导出可直接导入商城的 JSON"
+  default_prompt: "使用 $revophone-mall-restock 按我的设定批量制作商品，并生成可直接导入 RevoPhone 商城的 JSON 文件。"

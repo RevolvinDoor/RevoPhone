@@ -6,6 +6,8 @@ import { TTSParameters as P, FISH_PROXY_NOTE, FISH_NATIVE_REFS, FISH_API, FISH_T
 import { speakable } from './voice-fx.js';
 import { buildCustomRequest, customInit, readCustomAnswer, customVoices, readVoiceList } from './custom-voice.js';
 import { unpacked, audioKind } from './audio-bytes.js';
+import {fishSubscription, MCP_MODEL} from './fish-mcp.js';
+import {FISH_MCP} from './fish-oauth.js';
 const names={fish:'Fish Audio',mini:'MiniMax',eleven:'ElevenLabs',mimo:'小米 MiMo',doubao:'豆包语音',custom:'自己的接口'};
 export const miniBase=c=>'https://'+(c.region==='cn'?'api.minimaxi.com':c.region==='uw'?'api-uw.minimax.io':'api.minimax.io');
 const object=value=>Object.prototype.toString.call(value)==='[object Object]';
@@ -35,7 +37,18 @@ function checkedConnection(engine,connection,route,line,references){
  }
  return c;
 }
-export function buildRequest(engine,connection,route,line,references=new Map()){line=speakable(line);// 心声/电话 are played, not read: off the emotion before the engine sees it.
+export function buildRequest(engine,connection,route,line,references=new Map(),account=''){line=speakable(line);// 心声/电话 are played, not read: off the emotion before the engine sees it.
+ if(engine==='fish'&&fishSubscription(connection)){
+  const model=route.model||connection.model;
+  if(typeof line.text!=='string'||!line.text.trim())throw Error('朗读文本不能为空');
+  if(!route.voice?.trim())throw Error('请先选择角色音色');
+  if(!P.catalogs.fish.models.includes(model))throw Error('Fish 模型无效');
+  if(connection.params?.references?.length)throw Error('订阅积分方式不发送本地参考音频，请先在 API 方式中清空参考音频条目，使用角色音色 ID');
+  let args;try{args=JSON.parse(connection.mcpArguments||'{}');}catch{throw Error('MCP 附加参数不是有效 JSON');}
+  if(!object(args))throw Error('MCP 附加参数必须是 JSON 对象');
+  return {engine:'fish',transport:'mcp',url:FISH_MCP,account,body:{text:P.emotionTag('fish',model,line.emotion,line.text),voice:route.voice.trim(),model,prosody:P.fishProsody(line.emotion),arguments:args}};
+ }
+ if(engine==='fish'&&(route.model||connection.model)===MCP_MODEL)throw Error('官方 MCP 默认模型只能在“订阅积分”接入方式下使用');
  // 自己的接口: the user's templates (core/custom-voice.js).
  if(engine==='custom'){if(!object(connection)||!object(connection.params))throw Error('引擎设置格式无效，请重新保存引擎设置');return buildCustomRequest({...connection,params:{...P.defaults('custom'),...connection.params}},route,line);}
  const c=checkedConnection(engine,connection,route,line,references);
@@ -165,6 +178,7 @@ export class Providers{
   * we sent, that field is dropped and the request is sent once more; the model is remembered so later lines skip it.
   */
  async synthesize(request,signal){
+  if(request.engine==='fish'&&request.transport==='mcp'){if(!this.fish)throw Error('Fish 订阅积分接入尚未初始化');return this.fish.synthesize(request,signal);}
   if(request.engine==='custom')return this.speakCustom(request,signal);
   const model=request.body?.model_id,body={...request.body};
   for(const field of this.refused.get(model)||[])delete body[field];
@@ -250,6 +264,7 @@ export class Providers{
  /** What a voice list says about a voice besides its name (description, tags, gender and age, languages), for picking one. */
  static voiceInfo(engine,v){const list=x=>Array.isArray(x)?x.filter(y=>typeof y==='string'):[];const parts=engine==='fish'?[v.description,list(v.tags).join(' '),list(v.languages).join('/')]:engine==='mini'?[Array.isArray(v.description)?list(v.description).join('；'):v.description]:[Object.values(v.labels&&typeof v.labels==='object'?v.labels:{}).filter(x=>typeof x==='string').join(' '),v.description];return parts.filter(x=>typeof x==='string'&&x.trim()).map(x=>x.trim().replace(/\s+/g,' ')).join(' · ').slice(0,240);}
  async voices(engine,c,{search='',page=0,token=''}={}){
+  if(engine==='fish'&&fishSubscription(c)){if(!this.fish)throw Error('Fish 订阅积分接入尚未初始化');return this.fish.voices({search,page,token});}
   if(engine==='doubao'){const q=search.trim().toLowerCase(),saved=(c.params.voices||[]).filter(v=>v.id?.trim()).map(v=>({id:v.id.trim(),name:v.name.trim()||v.id.trim()})),all=[...saved,...(c.model==='seed-tts-2.0'?DOUBAO_VOICES:[])].filter((v,i,rows)=>rows.findIndex(x=>x.id===v.id)===i);return {voices:all.filter(v=>!q||(v.id+' '+v.name).toLowerCase().includes(q)),more:false,token:'',note:'本地音色列表；可直接粘贴控制台的音色 ID，这里不校验密钥或音色授权'};}
   if(engine==='custom')return this.customVoiceList({params:{...P.defaults('custom'),...c?.params}},search);
   if(engine==='fish'&&P.fishOpenAI(c))throw Error('这个中转（OpenAI 格式）没有音色列表：在角色的「音色」里直接填 Fish 的音色 ID（fish.audio 网站上音色页面地址里那串字母数字）');
@@ -262,6 +277,7 @@ export class Providers{
   * /v1/user/subscription (credits of the current period). Fish: {kind:'credit', credit, free} from /wallet/self/api-credit.
   */
  async balance(engine,c={}){
+  if(engine==='fish'&&fishSubscription(c)){if(!this.fish)throw Error('Fish 订阅积分接入尚未初始化');return this.fish.balance();}
   if(!['eleven','fish'].includes(engine))throw Error('这家引擎没有提供余额查询');
   const headers=this.headers(engine),key=this.currentKey(engine);
   if(engine==='eleven'){

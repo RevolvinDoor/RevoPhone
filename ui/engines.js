@@ -5,6 +5,7 @@ import {icon, spark} from './icons.js';
 import {swipeRow, mountSwipeList} from './swipe-list.js';
 import {fly} from './carry.js';
 import {CUSTOM_TEMPLATES, voicesFromFolder, shortLanguage, customHint} from '../core/custom-voice.js';
+import {fishSubscription, MCP_MODEL} from '../core/fish-mcp.js';
 
 export function enginesApp(ctx) {
   const {api} = ctx, v = createView(ctx, 'engines'), drafts = new Map();
@@ -33,18 +34,20 @@ export function enginesApp(ctx) {
   const IMAGE = ['nai', 'gpt', 'comfy'];
   // Voice balances shown on the ElevenLabs and Fish cards: engine -> {value, error, loading}.
   const balances = new Map(), PRICED = ['eleven', 'fish'];
+  const balanceLoads = new Map();
   const number = n => Number(n).toLocaleString('zh-CN');
   const balanceText = id => {
     const b = balances.get(id)?.value;
     if (!b) return '—';
-    return b.kind === 'characters' ? number(b.left) : '$' + b.credit.toFixed(2);
+    return b.kind === 'subscription' ? (typeof b.left === 'number' ? number(b.left) + ' 积分' : '网页订阅积分') : b.kind === 'characters' ? number(b.left) : '$' + b.credit.toFixed(2);
   };
   async function loadBalance(id, refresh = false) {
+    const request = (balanceLoads.get(id) || 0) + 1; balanceLoads.set(id, request);
     if (!PRICED.includes(id) || !api.keyStatus(id)) return;
     const entry = balances.get(id) || {};
     balances.set(id, {...entry, loading: true});
-    try { balances.set(id, {value: await api.voiceBalance(id, refresh), error: '', loading: false}); }
-    catch (error) { balances.set(id, {value: entry.value || null, error: error.message, loading: false}); }
+    try { const value = await api.voiceBalance(id, refresh); if (balanceLoads.get(id) !== request) return; balances.set(id, {value, error: '', loading: false}); }
+    catch (error) { if (balanceLoads.get(id) !== request) return; balances.set(id, {value: entry.value || null, error: error.message, loading: false}); }
     if (!v.disposed && (engine === null || engine === id)) render();
   }
   const draft = () => drafts.get(engine);
@@ -86,7 +89,7 @@ export function enginesApp(ctx) {
     const attrs = tag === 'button' ? `data-action="engine" data-engine="${id}" aria-label="${name}，${front ? '点一下打开' : '点一下抽到最前面'}"` : `data-engine="${id}"`;
     const dots = comfy ? '' : `•••• •••• •••• ${api.keyHint?.(id) || '••••'}`;
     const ownApi = id === 'custom' ? (api.getState().connections.custom.params.url || '').replace(/^https?:\/\//, '') : '';
-    const number = id === 'custom' ? (ownApi || '还没填接口地址 · 点卡片去填写') : vector ? (em.enabled ? (saved ? dots : '未绑定密钥 · 本地接口可以不填') : '没开 · 记忆用本地检索') : comfy ? d.comfy.url.replace(/^https?:\/\//, '') : llm ? (vertex ? 'Vertex · 使用酒馆保存的凭据' : custom ? (saved ? dots : '未绑定密钥 · 点卡片去填写') : '用酒馆当前连接的模型') : saved ? dots : '未绑定密钥 · 点卡片去填写';
+    const number = id === 'fish' && fishSubscription(api.getState().connections.fish) ? (saved ? '已连接 Fish 账户 · 订阅积分' : '订阅积分 · 点卡片连接账户') : id === 'custom' ? (ownApi || '还没填接口地址 · 点卡片去填写') : vector ? (em.enabled ? (saved ? dots : '未绑定密钥 · 本地接口可以不填') : '没开 · 记忆用本地检索') : comfy ? d.comfy.url.replace(/^https?:\/\//, '') : llm ? (vertex ? 'Vertex · 使用酒馆保存的凭据' : custom ? (saved ? dots : '未绑定密钥 · 点卡片去填写') : '用酒馆当前连接的模型') : saved ? dots : '未绑定密钥 · 点卡片去填写';
     return `<${tag} class="bank-card${tag === 'div' ? ' detail-card' : ''}" ${attrs}>${spark()}
       <span class="card-top"><span class="card-name">${name}</span><span class="card-kind">${IMAGE.includes(id) ? 'IMAGE' : llm ? 'TEXT' : vector ? 'VECTOR' : 'VOICE'}${icon('nfc')}</span></span>
       <span class="card-chip"></span>
@@ -342,7 +345,8 @@ export function enginesApp(ctx) {
   function balanceGroup() {
     if (!PRICED.includes(engine)) return '';
     const saved = api.keyStatus(engine), entry = balances.get(engine) || {}, b = entry.value;
-    const state = !saved ? '填写密钥后可以查看' : entry.loading && !b ? '读取中' : entry.error && !b ? '读取失败' : '';
+    const mcp = engine === 'fish' && fishSubscription(api.getState().connections.fish);
+    const state = !saved ? (mcp ? '连接账户后可以查看' : '填写密钥后可以查看') : entry.loading && !b ? '读取中' : entry.error && !b ? '读取失败' : '';
     let rows;
     if (b?.kind === 'characters') {
       const ratio = b.limit ? Math.min(1, b.used / b.limit) : 0;
@@ -352,18 +356,33 @@ export function enginesApp(ctx) {
         <div class="field balance-meter"><div class="meter-label"><span>本期已用</span><output>${number(b.used)} / ${number(b.limit)}</output></div><span class="meter-track" role="img" aria-label="已用 ${Math.round(ratio * 100)}%"><i style="width:${(ratio * 100).toFixed(1)}%"></i></span></div>
         <div class="setting-row"><span>剩余额度</span><strong>${number(b.left)}</strong></div>
         <div class="setting-row"><span>下次重置</span><small>${b.resetAt ? new Date(b.resetAt).toLocaleString('zh-CN', {hour12: false}) : '—'}</small></div>`;
+    } else if (b?.kind === 'subscription') {
+      rows = `${typeof b.left === 'number' ? `<div class="setting-row"><span>剩余订阅积分</span><strong>${number(b.left)}</strong></div>` : ''}${b.team ? `<div class="setting-row"><span>团队</span><small>${esc(b.team)}</small></div>` : ''}${b.plan ? `<div class="setting-row"><span>套餐</span><small>${esc(b.plan)}</small></div>` : ''}<details ${typeof b.left === 'number' ? '' : 'open'}><summary>账户额度详情</summary><pre class="code" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(b.summary)}</pre></details>`;
     } else if (b?.kind === 'credit') {
       rows = `<div class="setting-row"><span>API 余额</span><strong>$${b.credit.toFixed(2)}</strong></div>
         <div class="setting-row"><span>免费额度</span><small>${b.free ? '还有' : '没有或已用完'}</small></div>`;
     } else rows = `<div class="setting-row"><span>额度</span><small>${state || '—'}</small></div>`;
-    return groupTitle('额度', help(engine === 'eleven' ? '每生成一句新语音后自动重新读取。ElevenLabs 按字符扣积分，v3/v4 等模型的倍率以官网为准。' : '每生成一句新语音后自动重新读取。金额是 Fish Audio 后台的 API 余额。') + btn('refresh-balance', icon('refresh') + '刷新', 'chip-button', saved ? '' : 'disabled'))
+    return groupTitle(mcp ? '订阅积分' : '额度', help(mcp ? '官方 MCP 使用登录时选择的团队的网页额度，不使用开发者 API 美元余额。显示官方额度工具返回的信息。' : engine === 'eleven' ? '每生成一句新语音后自动重新读取。ElevenLabs 按字符扣积分，v3/v4 等模型的倍率以官网为准。' : '每生成一句新语音后自动重新读取。金额是 Fish Audio 后台的 API 余额。') + btn('refresh-balance', icon('refresh') + '刷新', 'chip-button', saved ? '' : 'disabled'))
       + `<div class="group${b?.kind === 'characters' ? ' pad' : ''}">${rows}</div>${entry.error ? `<p class="error-copy hint">${esc(entry.error)}</p>` : ''}`;
+  }
+
+  function fishAccount() {
+    const s = api.fishStatus();
+    return `<p class="hint">${s.configured ? '已保存 Fish OAuth 授权。' : '尚未连接 Fish 账户。'}使用登录时选定团队的网页积分；此方式不使用中转，也不会在失败后改扣 API 余额。</p>
+      <div class="actions">${btn('fish-login', s.configured ? '重新授权／切换团队' : '连接 Fish 账户', 'secondary', s.pending ? 'disabled' : '')}
+      ${s.configured || s.pending ? btn('fish-disconnect', '断开连接', 'text-button') : ''}
+      ${s.configured ? btn('fish-information', '刷新工具信息', 'chip-button') + btn('fish-clear-unknown', '清除未知生成记录', 'text-button') : ''}</div>
+      ${s.pending ? `<p class="hint">请在 Fish 页面完成登录。弹窗未打开时，可<a href="${esc(s.authorizationUrl)}" target="_blank" rel="noopener noreferrer">打开授权页面</a>。若回调页打不开或结果未传回，复制地址栏的完整回调地址到下方。登录十分钟后失效。</p>
+      ${field('登录回调地址', textArea('fish-callback', '', 'rows="2" autocomplete="off" spellcheck="false" placeholder="粘贴登录完成后地址栏中的完整地址"'))}
+      ${btn('fish-finish-login', '完成登录', 'secondary')}` : ''}
+      ${s.error ? `<p class="error-copy hint">${esc(s.error)}</p>` : ''}
+      <p class="hint">授权只保存在当前酒馆地址的本地浏览器，不写入角色卡或普通备份。断开连接会清除此处授权；需要撤销账户侧权限时请到 Fish 官网管理。</p>`;
   }
 
   function renderDetail() {
     const schema = api.engineSchema(engine, draft());
     drafts.set(engine, schema.connection);
-    const c = draft(), saved = api.keyStatus(engine), fish = engine === 'fish' ? api.getState().connections.fish : null;
+    const c = draft(), saved = api.keyStatus(engine), fish = engine === 'fish' ? api.getState().connections.fish : null, mcp = !!fish && fishSubscription(c);
     v.root.dataset.engine = engine;
     const tags = ['doubao', 'custom'].includes(engine) || engine === 'eleven' && !/^eleven_v[34]/.test(c.model) ? [] : engine === 'fish' && !['s1', 'drama-3'].includes(c.model) ? ['happy', 'whispers sweetly', 'slightly sad'] : schema.tags;
     const unsupported = schema.models.filter(m => !m.supported).map(m => m.id + '：' + m.reason).join('\n');
@@ -371,12 +390,16 @@ export function enginesApp(ctx) {
       + card(engine, 'div')
       + groupTitle('连接')
       + `<div class="group pad">
-          ${keyRows(engine)}
+          ${fish ? field('接入方式', select('fish-access', c.access || 'api', [['api', '开发者 API／中转'], ['subscription', '订阅积分（官方 MCP）']])) : ''}
+          ${mcp ? fishAccount() : keyRows(engine)}
+          ${mcp ? '' : `
           ${field(saved ? '再加一个密钥' : engine === 'custom' ? '密钥（不用密钥的接口可以不填）' : 'API Key', textArea('key', '', `rows="1" class="code key-paste" autocomplete="off" spellcheck="false" placeholder="${saved ? '粘贴新的密钥' : '粘贴密钥，多个就每行一个'}"`), '粘贴完点一下别处就保存了。可以保存多个账号的密钥，新加的排在后面，不用的可以单独删掉。先用排在前面的；某个密钥被拒（401、403）、额度用完（402）或请求太频繁（429）时，自动换下一个重试，这次打开页面里不再用它。想手动换，点那个密钥的「用这个」：马上改用它，并把它排到第一个，以后打开也先用它。\n\n密钥只保存在当前浏览器和酒馆地址，按账户分别保存。')}
-          ${schema.models.length > 1 ? field('默认模型', select('model', c.model, schema.models.map(m => [m.id, m.id, !m.supported])), unsupported || [schema.modelNote, '角色没有单独指定模型时使用这里的模型。'].filter(Boolean).join('\n\n')) : ''}
+          `}
+          ${schema.models.length > 1 ? field('默认模型', select('model', c.model, schema.models.map(m => [m.id, m.title || m.id, !m.supported])), [unsupported, schema.modelNote, '角色没有单独指定模型时使用这里的模型。'].filter(Boolean).join('\n\n')) : ''}
           ${engine === 'mini' ? field('服务区域', select('region', c.region, [['cn', '国内'], ['global', '国际'], ['uw', '国际 · 低延迟入口']])) : ''}
         </div>`
-      + (fish ? `<details data-group="fish-relay"><summary>中转<small class="fold-note">${fish.relay ? esc(fish.relay.replace(/^https?:\/\//, '')) : '直连 Fish Audio'}</small></summary><div class="fold-body">${fishRelay()}</div></details>` : '')
+      + (fish && !mcp ? `<details data-group="fish-relay"><summary>中转<small class="fold-note">${fish.relay ? esc(fish.relay.replace(/^https?:\/\//, '')) : '直连 Fish Audio'}</small></summary><div class="fold-body">${fishRelay()}</div></details>` : '')
+      + (mcp ? `<div class="group pad"><p class="hint">${esc(schema.tagNote)} 原 API 的采样率、词典、参考音频等参数不适用于此方式。</p>${field('MCP 附加参数（JSON，可留 {}）', textArea('mcpArguments', c.mcpArguments || '{}', 'rows="3" class="code" spellcheck="false"'), '仅填写“工具信息”中实际存在的其他字段，例如输出格式。文本、音色和模型由角色配置提供，不能在此覆盖。')}${c.params.references?.length ? `<p class="error-copy">原配置还有本地参考音频，订阅方式不能发送它们。</p>${btn('fish-clear-references', '清空参考音频条目，改用角色音色 ID', 'text-button')}` : ''}</div>` : '')
       + (engine === 'custom' ? customImport() + customTemplates() : '')
       + balanceGroup()
       + groupTitle(engine === 'custom' ? '接口和音色' : '参数')
@@ -469,7 +492,7 @@ export function enginesApp(ctx) {
     render();
     v.root.scrollTop = 0;
     // Fish: which models web pages may call now (drama-3 moves there once Fish adds it); drawn again when that changed.
-    if (id === 'fish') api.fishCatalog?.().then(changed => { if (changed && engine === 'fish') render(); }).catch(() => {});
+    if (id === 'fish' && !fishSubscription(api.getState().connections.fish)) api.fishCatalog?.().then(changed => { if (changed && engine === 'fish') render(); }).catch(() => {});
   }
   v.edit = edit;
   // The card in front of its pocket lifts out and becomes the card on top of its page, and goes back in (ui/carry.js).
@@ -499,6 +522,12 @@ export function enginesApp(ctx) {
   v.on('pointerdown', '[data-action=reveal-key]', (el, event) => event.preventDefault());
   v.on('change', '[data-field]', el => {
     if (el.dataset.field === 'key') { saveTypedKey(el); return; }
+    if (el.dataset.field === 'fish-callback') return;
+    if (el.dataset.field === 'fish-access') {
+      const c = draft(), access = el.value;
+      const saved = api.saveConnection('fish', {...c, access, model: access === 'subscription' ? MCP_MODEL : c.apiModel || 's2.1-pro'});
+      drafts.set('fish', saved); dirty = false; balances.delete('fish'); render(); loadBalance('fish', true); return;
+    }
     if (el.dataset.field === 'image-name') return;
     if (engine === 'embed') {
       const key = el.dataset.field.replace(/^embed-/, '');
@@ -554,11 +583,11 @@ export function enginesApp(ctx) {
       image && {key: 'image-connections', icon: 'swap', label: '连接', note: '新建、切换、改名、删除保存的几组连接'},
       engine === 'nai' && saved && {key: 'test-relay', icon: 'refresh', label: '测试连接', note: '发一个空请求试探出图接口，不出图、不扣 Anlas'},
       voice && !['custom','doubao'].includes(engine) && {key: 'read-voices', icon: 'refresh', label: '测试连接', note: '读一次音色列表，看密钥能不能用'},
-      engine === 'fish' && api.getState().connections.fish.relay && saved && {key: 'test-fish-relay', icon: 'refresh', label: '测试中转', note: '看中转转发了哪些接口，格式不对会自动切换'},
-      engine === 'fish' && {key: 'references', icon: 'wave', label: '管理参考音频'},
+      engine === 'fish' && !fishSubscription(draft()) && api.getState().connections.fish.relay && saved && {key: 'test-fish-relay', icon: 'refresh', label: '测试中转', note: '看中转转发了哪些接口，格式不对会自动切换'},
+      engine === 'fish' && !fishSubscription(draft()) && {key: 'references', icon: 'wave', label: '管理参考音频'},
       voice && {key: 'request-preview', icon: 'eye', label: '请求预览', note: '看看发给服务的请求长什么样'},
       engine === 'llm' && textDraft.presets.length > 1 && {key: 'text-delete', icon: 'trash', label: `删除「${textPreset().name}」这套接口`, danger: true},
-      saved && {key: 'clear-key', icon: 'trash', label: voice ? '清除全部密钥' : engine === 'llm' ? '清除这套接口的密钥' : '清除密钥', danger: true}]);
+      saved && !(engine === 'fish' && fishSubscription(draft())) && {key: 'clear-key', icon: 'trash', label: voice ? '清除全部密钥' : engine === 'llm' ? '清除这套接口的密钥' : '清除密钥', danger: true}]);
     if (picked) await act(picked, el);
   }
   const readValue = (el, f) => f.type === 'boolean' ? el.checked : f.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : f.type === 'select' ? f.options.find(([key]) => String(key) === el.value)?.[0] : el.value;
@@ -721,6 +750,23 @@ export function enginesApp(ctx) {
         if (typed.trim()) loadBalance(engine, true);
         break;
       }
+      case 'fish-login': await v.busy(el, async () => { await api.fishLogin(); if (!v.disposed) render(); }); break;
+      case 'fish-finish-login': {
+        const input = v.root.querySelector('[data-field=fish-callback]'), url = input?.value || '';
+        if (input) input.value = '';
+        await v.busy(el, async () => { await api.fishFinishLogin(url); await loadBalance('fish', true); }); break;
+      }
+      case 'fish-disconnect': await v.busy(el, async () => { await api.fishDisconnect(); balances.delete('fish'); render(); }); break;
+      case 'fish-information': await v.busy(el, async () => {
+        const info = await api.fishInformation(true); render();
+        ctx.dialog('Fish 官方 MCP 工具信息', `<p class="hint">以下为本次登录后从官方服务读取的工具定义；不会生成语音或扣生成积分。</p><pre class="code" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(JSON.stringify(info, null, 2))}</pre>`);
+      }); break;
+      case 'fish-clear-references': {
+        const c = draft(); c.params.references = []; api.saveConnection('fish', c); dirty = false; render(); break;
+      }
+      case 'fish-clear-unknown': if (await ctx.confirm('清除未知生成记录？', '请先核对 Fish 官网的生成历史。清除后再次播放这些台词会重新调用生成，可能再次扣积分；已成功生成的下载链接会保留。')) {
+        await v.busy(el, () => api.fishClearUnknown()); ctx.notify('已清除未知记录，再次播放会重新生成');
+      } break;
       case 'refresh-subscription': await v.busy(el, () => loadSubscription(true)); break;
       case 'test-fish-relay': await v.busy(el, async () => { const {r, switched} = await detectFish(); if (switched) render(); ctx.dialog('测试连接', fishProbeReport(r, switched)); }); break;
       case 'test-relay': await v.busy(el, async () => {
@@ -834,6 +880,7 @@ export function enginesApp(ctx) {
   render();
   v.onBalance = event => {
     if (!event.stale || !PRICED.includes(event.engine)) return;
+    if (event.engine === 'fish' && !api.keyStatus('fish')) { balanceLoads.set('fish', (balanceLoads.get('fish') || 0) + 1); balances.delete('fish'); render(); return; }
     if (engine === event.engine || (engine === null && balances.has(event.engine))) loadBalance(event.engine, true);
     else balances.delete(event.engine);
   };

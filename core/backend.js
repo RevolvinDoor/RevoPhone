@@ -35,6 +35,8 @@ import { TTSParameters, FISH_API, tauriTavern } from './parameters.js';
 import { KeyStore, keyTail, validateKey, parseTextKeys, joinTextKeys } from './keys.js';
 import { Providers, buildRequest } from './providers.js';
 import { AudioCache } from './cache.js';
+import {FishOAuth, FishTokenStore} from './fish-oauth.js';
+import {FishMCP, fishSubscription, MCP_MODEL} from './fish-mcp.js';
 import { installDrawSettings } from './backend-draw.js';
 import { createStorageBudget } from './storage-budget.js';
 import { DialoguePlayer } from './player.js';
@@ -132,6 +134,16 @@ export class TTSBackend {
         if (!this.providers.proxy) this.providers.proxy = (url, init, signal) => this.proxyFetch('/proxy/' + encodeURIComponent(url), { ...init, credentials: 'same-origin', redirect: 'error', signal });
         // Voice balances (ElevenLabs, Fish) read for the engine cards; a new audio marks them out of date.
         this.balances = new Map();
+        const fishChanged = () => {
+            if (this.closed) return;
+            const identity = this.providers.fish?.oauth.record?.account;
+            if (this.fishIdentity !== identity) { this.player?.stop('Fish 账户状态已变化'); this.fishIdentity = identity; }
+            this.balances.delete('fish');
+            this.emit('balance', {engine: 'fish', stale: true});
+        };
+        if (!providers.fish) providers.fish = new FishMCP(new FishOAuth({scope: this.settings.scope,
+            store: new FishTokenStore(this.settings.scope, indexedDB), changed: fishChanged}));
+        providers.fish.onSpend = () => providers.onSpend?.('fish');
         // Several Fish keys: when one gives way to the next, the balance shown belongs to the old key.
         providers.onKeySwitch = engine => { this.balances.delete(engine); this.emit('balance', { engine, stale: true, switched: true }); };
         providers.onSpend = engine => { const b = this.balances.get(engine); if (b) b.checkedAt = 0; this.emit('balance', { engine, stale: true }); };
@@ -142,6 +154,7 @@ export class TTSBackend {
         this.keyStore = keyStore || new KeyStore(this.settings.scope, { indexedDB, onError: message => this.notify(message) });
         this.novelai = novelai || new NovelAIClient();
         this.requestLog = new RequestLog({change: () => this.emit('logs', {}), secrets: () => [
+            this.providers.fish?.oauth.record?.access_token, this.providers.fish?.oauth.record?.refresh_token,
             ...this.keyStore.load().values(), ...(this.textKeys?.values() || []), this.gptKey, this.embedKey, this.novelai.key,
             ...(this.imageKeys?.nai?.values() || []), ...(this.imageKeys?.gpt?.values() || []),
             ...(this.providers.keys?.values() || [])].flatMap(x => typeof x === 'string' ? x.split('\n').filter(Boolean) : [])});
@@ -208,6 +221,7 @@ export class TTSBackend {
     }
     async initialize() {
         this.assertOpen();
+        try { await this.providers.fish.oauth.open(); } catch (error) { this.notify(error.message); }
         try { await this.keyStore.open?.(); for (const [engine, key] of this.keyStore.load()) { if (engine === 'nai' || engine === 'gpt') this.imageKeys[engine] = parseTextKeys(key); else if (engine === 'llm') this.textKeys = parseTextKeys(key); else if (engine === 'embed') this.embedKey = String(key).trim(); else this.providers.setKey(engine, key); } this.activateImageKeys(); }
         catch (error) { this.notify(error.message); }
         try {
@@ -442,13 +456,17 @@ export class TTSBackend {
             this.stripAndCaptureXenoImages(copy.xeno, { persist: true });
         } catch (error) { throw Error(message(error)); }
         const imageChanged = JSON.stringify([copy.draw.connections, copy.draw.engine]) !== JSON.stringify([this.settings.draw.connections, this.settings.draw.engine]);
+        const fishRouting = value => JSON.stringify([value.access, value.relay, value.relayApi]);
+        const fishChanged = fishRouting(copy.connections.fish) !== fishRouting(this.settings.connections.fish);
         if (imageChanged) this.assertImageIdle();
         // The host callback completes before the service acknowledges a new settings revision.
         this.persist(clone(copy));
         this.settings = copy;
+        if (fishChanged) { this.player.stop('Fish 接入方式已变化'); this.balances.delete('fish'); }
         if (imageChanged) this.activateImageKeys();
         this.revision++;
         this.emit('settings', { state: this.cardState() });
+        if (fishChanged) this.emit('balance', {engine: 'fish', stale: true});
         return this.getState();
     }
     /** 整篇朗读: on or off, the 旁白's voice (系统朗读 or the 旁白 role), the system voice and speed, the tags not read. */
@@ -534,6 +552,18 @@ export class TTSBackend {
         engineCheck(engine);
         if (!patch || typeof patch !== 'object' || Array.isArray(patch) || ('params' in patch && (!patch.params || typeof patch.params !== 'object' || Array.isArray(patch.params)))) throw Error('引擎设置格式无效');
         patch = clone(patch);
+        if (engine === 'fish') {
+            if ('access' in patch && !['api', 'subscription'].includes(patch.access)) throw Error('Fish 接入方式无效');
+            if ('mcpArguments' in patch) {
+                if (typeof patch.mcpArguments !== 'string' || patch.mcpArguments.length > 32000) throw Error('MCP 附加参数过长或格式无效');
+                let args; try { args = JSON.parse(patch.mcpArguments || '{}'); } catch { throw Error('MCP 附加参数不是有效 JSON'); }
+                if (!args || typeof args !== 'object' || Array.isArray(args)) throw Error('MCP 附加参数必须是 JSON 对象');
+            }
+            if ('access' in patch && patch.access !== this.settings.connections.fish.access) {
+                if (!patch.model) patch.model = patch.access === 'subscription' ? MCP_MODEL : (this.settings.connections.fish.apiModel || 's2.1-pro');
+                if (patch.access === 'subscription') patch.apiModel = this.settings.connections.fish.model;
+            }
+        }
         // Fish relay: an address checked like the NovelAI one ('' = straight to Fish). A new address: the balance is read again.
         if (engine === 'fish' && 'relay' in patch) { patch.relay = relayUrl(patch.relay, undefined, FISH_PATHS); if (patch.relay !== this.settings.connections.fish.relay) this.balances.delete('fish'); }
         else delete patch.relay;
@@ -655,7 +685,10 @@ export class TTSBackend {
         if (!this.keyStatus(engine)) return null;
         const cached = this.balances.get(engine);
         if (!refresh && cached && Date.now() - cached.checkedAt < 60 * 1000) return clone(cached.value);
+        const identity = () => JSON.stringify([this.settings.connections[engine], engine === 'fish' && fishSubscription(this.settings.connections.fish) ? this.providers.fish.oauth.record?.account : this.providers.currentKey(engine)]);
+        const before = identity();
         const value = await this.providers.balance(engine, this.settings.connections[engine]);
+        if (this.closed || identity() !== before) throw Error('语音账户或接入方式已变化，请重新刷新额度');
         this.balances.set(engine, { value, checkedAt: Date.now() });
         this.emit('balance', { engine, balance: clone(value) });
         return clone(value);
@@ -664,7 +697,7 @@ export class TTSBackend {
     keyHint(engine) { keyCheck(engine); if (engine === 'nai' || engine === 'gpt') return keyTail(this.imageKeys[engine].get(this.settings.draw.connections[engine].active)); if (engine === 'llm') return this.textKeyHint(this.settings.text.active); if (engine === 'embed') return this.embedKey ? keyTail(this.embedKey) || '••••' : ''; return keyTail(this.providers.currentKey(engine)); }
     /** For a voice engine with keys: how many, which one is in use (1-based) and how many were refused while this page is open. */
     keyPool(engine) { engineCheck(engine); return this.providers.keyPool(engine); }
-    keyStatus(engine) { keyCheck(engine); return engine === 'nai' ? this.novelai.configured : engine === 'gpt' ? !!this.gptKey : engine === 'llm' ? this.textKeys.has(this.settings.text.active) : engine === 'embed' ? !!this.embedKey : this.providers.keys.has(engine); }
+    keyStatus(engine) { keyCheck(engine); return engine === 'fish' && fishSubscription(this.settings.connections.fish) ? this.providers.fish.oauth.configured : engine === 'nai' ? this.novelai.configured : engine === 'gpt' ? !!this.gptKey : engine === 'llm' ? this.textKeys.has(this.settings.text.active) : engine === 'embed' ? !!this.embedKey : this.providers.keys.has(engine); }
 
     // ---------- 钱包 and 商城 ----------
     wallet() { return clone(this.settings.chat.wallet); }
@@ -2837,6 +2870,18 @@ export class TTSBackend {
         engineCheck(engine); modelCheck(engine, connection.model);
         const current = clone(connection); TTSParameters.normalize(engine, current);
         const catalog = clone(TTSParameters.catalogs[engine]);
+        if (engine === 'fish' && fishSubscription(current)) {
+            const props = this.providers.fish.tools?.get('text_to_speech')?.inputSchema?.properties || {};
+            const model = props.model || props.model_id;
+            return {engine, ...catalog, connection: current, groups: [], source: 'https://docs.fish.audio/overview/mcp',
+                models: catalog.models.map(id => ({id, title: id === MCP_MODEL ? '官方 MCP 默认模型' : id,
+                    supported: id === MCP_MODEL || !!model && (!model.enum || model.enum.includes(id)),
+                    reason: '须由登录后发现的官方工具确认支持'})),
+                modelNote: '默认模型由官方 MCP 决定；角色单独指定的模型须符合工具参数。参考音频和原 API 参数不发送。',
+                tags: TTSParameters.tags('fish', current.model), sounds: [], sourceDate: '2026-11-11',
+                tagNote: '正文演技标签原样发送。台词中的“语速,表现力”只有官方工具声明对应字段时才能控制；未开放的非默认值会在生成前报错。'};
+        }
+        if (engine === 'fish') catalog.models = catalog.models.filter(id => id !== MCP_MODEL);
         catalog.models = catalog.models.map(id => ({ id, supported: true, reason: '' }));
         // Models only on Fish's own /v1/tts: without a relay they go through the tavern's proxy, which must be on.
         const native = engine === 'fish' && TTSParameters.fishBase(current) === FISH_API ? catalog.models.filter(m => TTSParameters.fishNative({ ...current, model: m.id })).map(m => m.id) : [];
@@ -2999,6 +3044,13 @@ export class TTSBackend {
             updateGeneral: patch => this.updateGeneral(patch), saveNarration: patch => this.saveNarration(patch), saveRoute: route => this.saveRoute(route), saveVoicePool: list => this.saveVoicePool(clone(list)), deleteRoute: id => this.deleteRoute(id),
             switchRouteEngine, cleanAliases, validRoleName: name => typeof name === 'string' && !!name.trim() && !isPlaceholderRole(name),
             saveConnection: (engine, patch) => this.saveConnection(engine, patch),
+            fishStatus: () => this.providers.fish.oauth.status(),
+            savedKeyCount: () => [...this.keyStore.load().values()].filter(Boolean).length,
+            fishLogin: () => { this.assertOpen(); return this.providers.fish.oauth.beginLogin(); },
+            fishFinishLogin: url => { this.assertOpen(); return this.providers.fish.oauth.finishLogin(url); },
+            fishDisconnect: async () => { this.player.stop('Fish 账户已断开'); await this.providers.fish.oauth.disconnect(); this.providers.fish.reset(); },
+            fishInformation: refresh => this.providers.fish.information(refresh),
+            fishClearUnknown: () => this.providers.fish.clearUnknown(),
             savePreset: preset => this.savePreset(preset), deletePreset: id => this.deletePreset(id), selectPreset: id => this.selectPreset(id),
             validatePreset: preset => { try { validatePreset(preset); return ''; } catch (error) { return message(error); } },
             previewPrompt: preset => this.previewPrompt(preset), promptPlan: () => { const s = this.cardState(); return clone(promptPlan(s, modelRules(s))); }, parse: text => this.parse(text),
@@ -3119,6 +3171,7 @@ export class TTSBackend {
     async close() {
         if (this.closing) return this.closing;
         this.closed = true; this.prepared = null; this.listeners.clear(); this.providers.clear();
+        this.providers.fish?.close();
         this.chats.close();
         clearTimeout(this.syncTimer);
         this.moments.close();
