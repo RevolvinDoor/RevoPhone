@@ -1,0 +1,632 @@
+diff --git a/src/tauri/main/api/mcp.js b/src/tauri/main/api/mcp.js
+--- a/src/tauri/main/api/mcp.js
++++ b/src/tauri/main/api/mcp.js
+@@ -15,9 +15,48 @@ function registrationDto(input) {
+     return { registrationId: typeof input === 'string' ? input : input?.registrationId };
+ }
+ 
++/**
++ * Share cancellation and outcomes between Manager tests and extension-owned calls.
++ * @param {(command: string, args?: any) => Promise<any>} safeInvoke
++ * @param {Record<string, any>} input
++ * @param {{ signal?: AbortSignal }} options
++ * @param {{ start: string, call: string, cancel: string }} commands
++ * @param {string} idField
++ */
++async function invokeCall(safeInvoke, input, options, commands, idField) {
++    const signal = options?.signal;
++    if (signal?.aborted) return cancelledBeforeSend();
++    const id = globalThis.crypto.randomUUID();
++    const dto = structuredClone({ ...input, [idField]: id });
++    const cancel = () => {
++        void safeInvoke(commands.cancel, { dto: { [idField]: id } })
++            .catch(error => console.debug('Failed to stop MCP call:', error));
++    };
++    await safeInvoke(commands.start, { dto: { [idField]: id } });
++    if (signal?.aborted) { cancel(); return cancelledBeforeSend(); }
++    signal?.addEventListener('abort', cancel, { once: true });
++    try {
++        return await safeInvoke(commands.call, { dto });
++    } catch (error) {
++        cancel();
++        throw error;
++    } finally {
++        signal?.removeEventListener('abort', cancel);
++    }
++}
++
+ /** @param {{ safeInvoke: (command: string, args?: any) => Promise<any> }} deps */
+ function createMcpApi({ safeInvoke }) {
+     return {
++        remote: {
++            version: 1,
++            discover: async (input) => safeInvoke('discover_remote_mcp_tools', { dto: structuredClone(input) }),
++            call: async (input, options = {}) => invokeCall(safeInvoke, input, options, {
++                start: 'start_remote_mcp_tool_call',
++                call: 'call_remote_mcp_tool',
++                cancel: 'cancel_remote_mcp_tool_call',
++            }, 'executionCallId'),
++        },
+         servers: {
+             list: async () => safeInvoke('list_mcp_servers'),
+             create: async (input) => safeInvoke('create_mcp_server', { dto: input }),
+@@ -30,46 +69,11 @@ function createMcpApi({ safeInvoke }) {
+         tools: {
+             setPermission: async (input) => safeInvoke('set_mcp_tool_permission', { dto: input }),
+             setDescriptionOverride: async (input) => safeInvoke('set_mcp_tool_description_override', { dto: input }),
+-            testCall: async (input, options = {}) => {
+-                const signal = options?.signal;
+-                if (signal?.aborted) {
+-                    return cancelledBeforeSend();
+-                }
+-
+-                const callId = globalThis.crypto.randomUUID();
+-                // Bind the request at call time: the start acknowledgement below yields first.
+-                const dto = { ...input, callId };
+-                const cancel = () => {
+-                    void safeInvoke('cancel_mcp_test_call', { dto: { callId } })
+-                        .catch(error => console.debug('Failed to stop MCP test call:', error));
+-                };
+-
+-                // The acknowledgement closes the cancel-before-register race without
+-                // retaining cancellation tombstones in the backend.
+-                await safeInvoke('start_mcp_test_call', { dto: { callId } });
+-                if (signal?.aborted) {
+-                    cancel();
+-                    return cancelledBeforeSend();
+-                }
+-
+-                let abortHandler = null;
+-                if (signal) {
+-                    abortHandler = cancel;
+-                    signal.addEventListener('abort', abortHandler, { once: true });
+-                }
+-
+-                try {
+-                    return await safeInvoke('test_mcp_tool_call', { dto });
+-                } catch (error) {
+-                    // Also releases the start acknowledgement when the backend rejects the input.
+-                    cancel();
+-                    throw error;
+-                } finally {
+-                    if (signal && abortHandler) {
+-                        signal.removeEventListener('abort', abortHandler);
+-                    }
+-                }
+-            },
++            testCall: async (input, options = {}) => invokeCall(safeInvoke, input, options, {
++                start: 'start_mcp_test_call',
++                call: 'test_mcp_tool_call',
++                cancel: 'cancel_mcp_test_call',
++            }, 'callId'),
+         },
+     };
+ }
+diff --git a/src/types.d.ts b/src/types.d.ts
+--- a/src/types.d.ts
++++ b/src/types.d.ts
+@@ -972,6 +972,32 @@ type TauriTavernMcpTestCallOutcome =
+     | { outcome: 'outcome_unknown'; code: string; message: string };
+ 
+ type TauriTavernMcpApi = {
++    remote: {
++        version: 1;
++        discover: (connection: {
++            endpoint: string;
++            headers?: Record<string, string>;
++            protocolVersion?: TauriTavernMcpProtocolVersion;
++        }) => Promise<{
++            protocolVersion: string;
++            serverName?: string | null;
++            serverVersion?: string | null;
++            tools: Array<{
++                nativeName: string;
++                title: string | null;
++                description: string | null;
++                inputSchema: Record<string, unknown>;
++                outputSchema: Record<string, unknown> | null;
++                annotations: Record<string, unknown>;
++            }>;
++            diagnostics: Array<{ code: string; nativeName?: string | null; message: string }>;
++        }>;
++        call: (input: {
++            connection: { endpoint: string; headers?: Record<string, string>; protocolVersion?: TauriTavernMcpProtocolVersion };
++            nativeName: string;
++            argumentsJson: string;
++        }, options?: { signal?: AbortSignal }) => Promise<TauriTavernMcpTestCallOutcome>;
++    };
+     servers: {
+         list: () => Promise<{
+             servers: TauriTavernMcpServer[];
+diff --git a/src/tauri/main/kernel/invokes/tauri-commands.js b/src/tauri/main/kernel/invokes/tauri-commands.js
+--- a/src/tauri/main/kernel/invokes/tauri-commands.js
++++ b/src/tauri/main/kernel/invokes/tauri-commands.js
+@@ -18,6 +18,10 @@ export {};
+  *   | 'build_openai_logit_bias'
+  *   | 'bulk_merge_character_card_data'
+  *   | 'call_legacy_mcp_tool'
++ *   | 'discover_remote_mcp_tools'
++ *   | 'start_remote_mcp_tool_call'
++ *   | 'call_remote_mcp_tool'
++ *   | 'cancel_remote_mcp_tool_call'
+  *   | 'cancel_chat_completion_generation'
+  *   | 'close_chat_completion_stream'
+  *   | 'cancel_data_archive_job'
+diff --git a/src-tauri/crates/tt-application/src/dto/mcp_dto.rs b/src-tauri/crates/tt-application/src/dto/mcp_dto.rs
+--- a/src-tauri/crates/tt-application/src/dto/mcp_dto.rs
++++ b/src-tauri/crates/tt-application/src/dto/mcp_dto.rs
+@@ -80,6 +80,30 @@ pub struct McpExecutionCallIdDto {
+     pub execution_call_id: String,
+ }
+ 
++// Per-operation credentials are never written to a registration or persistent catalog.
++#[derive(Clone, Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct RemoteMcpConnectionDto {
++    pub endpoint: String,
++    #[serde(default)]
++    pub headers: BTreeMap<String, String>,
++    #[serde(default)]
++    pub protocol_version: McpProtocolVersionPreference,
++}
++
++#[derive(Clone, Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct CallRemoteMcpToolDto {
++    pub execution_call_id: String,
++    pub connection: RemoteMcpConnectionDto,
++    pub native_name: String,
++    pub arguments_json: String,
++}
++
++#[derive(Clone, Serialize)]
++#[serde(transparent)]
++pub struct RemoteMcpDiscoveryResultDto(pub tt_ports::mcp::McpDiscoveryResult);
++
+ #[derive(Debug, Clone, Deserialize)]
+ #[serde(rename_all = "camelCase", deny_unknown_fields)]
+ pub struct CallLegacyMcpToolDto {
+diff --git a/src-tauri/crates/tt-application/src/services/mcp_service.rs b/src-tauri/crates/tt-application/src/services/mcp_service.rs
+--- a/src-tauri/crates/tt-application/src/services/mcp_service.rs
++++ b/src-tauri/crates/tt-application/src/services/mcp_service.rs
+@@ -21,6 +21,7 @@ mod catalog;
+ mod legacy;
+ mod model_tools;
+ mod permitted_call;
++mod remote;
+ mod test_call;
+ 
+ #[cfg(test)]
+diff --git a/src-tauri/crates/tt-application/src/services/mcp_service/call.rs b/src-tauri/crates/tt-application/src/services/mcp_service/call.rs
+--- a/src-tauri/crates/tt-application/src/services/mcp_service/call.rs
++++ b/src-tauri/crates/tt-application/src/services/mcp_service/call.rs
+@@ -11,6 +11,17 @@ use crate::{
+ };
+ use tt_ports::mcp::{McpCallOutcome, McpKnownResponse};
+ 
++impl super::McpService {
++    pub async fn start_call(&self, call_id: &str) -> Result<(), ApplicationError> {
++        self.calls.start(call_id).await
++    }
++
++    pub async fn cancel_call(&self, call_id: &str) -> Result<(), ApplicationError> {
++        self.calls.cancel(call_id).await;
++        Ok(())
++    }
++}
++
+ pub(super) fn not_sent(code: impl Into<String>, message: impl Into<String>) -> McpCallOutcomeDto {
+     McpCallOutcomeDto::NotSent {
+         code: code.into(),
+@@ -18,6 +29,28 @@ pub(super) fn not_sent(code: impl Into<String>, message: impl Into<String>) -> M
+     }
+ }
+ 
++pub(super) fn parse_arguments(
++    arguments_json: &str,
++) -> Result<serde_json::Map<String, serde_json::Value>, McpCallOutcomeDto> {
++    if arguments_json.len() > super::MAX_ARGUMENTS_JSON_BYTES {
++        return Err(not_sent(
++            "mcp.call_arguments_size_limit",
++            format!("Arguments JSON exceeds {} bytes", super::MAX_ARGUMENTS_JSON_BYTES),
++        ));
++    }
++    match serde_json::from_str::<serde_json::Value>(arguments_json) {
++        Ok(serde_json::Value::Object(arguments)) => Ok(arguments),
++        Ok(_) => Err(not_sent(
++            "mcp.call_arguments_not_object",
++            "Arguments must be a JSON object",
++        )),
++        Err(error) => Err(not_sent(
++            "mcp.call_arguments_invalid_json",
++            format!("Arguments are not valid JSON: {error}"),
++        )),
++    }
++}
++
+ pub(super) fn map_call_outcome(outcome: McpCallOutcome) -> McpCallOutcomeDto {
+     match outcome {
+         McpCallOutcome::KnownResponse(response) => McpCallOutcomeDto::KnownResponse {
+diff --git a/src-tauri/crates/tt-application/src/services/mcp_service/test_call.rs b/src-tauri/crates/tt-application/src/services/mcp_service/test_call.rs
+--- a/src-tauri/crates/tt-application/src/services/mcp_service/test_call.rs
++++ b/src-tauri/crates/tt-application/src/services/mcp_service/test_call.rs
+@@ -4,8 +4,8 @@ use crate::{dto::mcp_dto::McpCallOutcomeDto, errors::ApplicationError};
+ use tt_domain::models::mcp::{McpRegistrationId, McpServerState, validate_native_tool_name};
+ 
+ use super::{
+-    MAX_ARGUMENTS_JSON_BYTES, McpService,
+-    call::{map_call_outcome, not_sent},
++    McpService,
++    call::{map_call_outcome, not_sent, parse_arguments},
+ };
+ 
+ impl McpService {
+@@ -29,15 +29,6 @@ impl McpService {
+         result
+     }
+ 
+-    pub async fn start_call(&self, call_id: &str) -> Result<(), ApplicationError> {
+-        self.calls.start(call_id).await
+-    }
+-
+-    pub async fn cancel_call(&self, call_id: &str) -> Result<(), ApplicationError> {
+-        self.calls.cancel(call_id).await;
+-        Ok(())
+-    }
+-
+     async fn test_call_inner(
+         &self,
+         registration_id: &str,
+@@ -59,26 +50,9 @@ impl McpService {
+         if let Err(error) = validate_native_tool_name(&native_name) {
+             return Ok(not_sent("mcp.call_tool_name_invalid", error.to_string()));
+         }
+-        if arguments_json.len() > MAX_ARGUMENTS_JSON_BYTES {
+-            return Ok(not_sent(
+-                "mcp.call_arguments_size_limit",
+-                format!("Arguments JSON exceeds {MAX_ARGUMENTS_JSON_BYTES} bytes"),
+-            ));
+-        }
+-        let arguments = match serde_json::from_str::<serde_json::Value>(&arguments_json) {
+-            Ok(serde_json::Value::Object(arguments)) => arguments,
+-            Ok(_) => {
+-                return Ok(not_sent(
+-                    "mcp.call_arguments_not_object",
+-                    "Arguments must be a JSON object",
+-                ));
+-            }
+-            Err(error) => {
+-                return Ok(not_sent(
+-                    "mcp.call_arguments_invalid_json",
+-                    format!("Arguments are not valid JSON: {error}"),
+-                ));
+-            }
++        let arguments = match parse_arguments(&arguments_json) {
++            Ok(arguments) => arguments,
++            Err(outcome) => return Ok(outcome),
+         };
+ 
+         let registration = match self.repository.load(&id).await {
+diff --git a/src-tauri/crates/tt-application/src/services/mcp_service/remote.rs b/src-tauri/crates/tt-application/src/services/mcp_service/remote.rs
+new file mode 100644
+--- /dev/null
++++ b/src-tauri/crates/tt-application/src/services/mcp_service/remote.rs
+@@ -0,0 +1,83 @@
++use crate::{
++    dto::mcp_dto::{
++        CallRemoteMcpToolDto, McpCallOutcomeDto, RemoteMcpConnectionDto,
++        RemoteMcpDiscoveryResultDto,
++    },
++    errors::ApplicationError,
++};
++use tt_domain::models::mcp::{McpEndpoint, McpRequestHeaders, validate_native_tool_name};
++
++use super::{
++    McpService,
++    call::{map_call_outcome, not_sent, parse_arguments},
++};
++
++impl McpService {
++    /// An extension-owned connection uses the shared gateway without publishing model tools
++    /// or persisting OAuth headers in the Manager's registration files.
++    pub async fn discover_remote_tools(
++        &self,
++        connection: RemoteMcpConnectionDto,
++    ) -> Result<RemoteMcpDiscoveryResultDto, ApplicationError> {
++        let endpoint = McpEndpoint::parse(connection.endpoint)?;
++        let headers = McpRequestHeaders::from(connection.headers);
++        let result = self
++            .gateway
++            .discover_tools(&endpoint, &headers, connection.protocol_version)
++            .await?;
++        Ok(RemoteMcpDiscoveryResultDto(result))
++    }
++
++    pub async fn call_remote_tool(
++        &self,
++        dto: CallRemoteMcpToolDto,
++    ) -> Result<McpCallOutcomeDto, ApplicationError> {
++        let CallRemoteMcpToolDto {
++            execution_call_id,
++            connection,
++            native_name,
++            arguments_json,
++        } = dto;
++        let Some(cancel) = self.calls.get(&execution_call_id).await else {
++            return Ok(not_sent(
++                "mcp.call_not_started",
++                "The remote tool call was not prepared or was cancelled before it started",
++            ));
++        };
++        let result = async {
++            if cancel.is_cancelled() {
++                return Ok(not_sent(
++                    "mcp.call_cancelled_before_send",
++                    "The tool request was cancelled before it started",
++                ));
++            }
++            if let Err(error) = validate_native_tool_name(&native_name) {
++                return Ok(not_sent("mcp.call_tool_name_invalid", error.to_string()));
++            }
++            let arguments = match parse_arguments(&arguments_json) {
++                Ok(arguments) => arguments,
++                Err(outcome) => return Ok(outcome),
++            };
++            let endpoint = match McpEndpoint::parse(&connection.endpoint) {
++                Ok(endpoint) => endpoint,
++                Err(error) => return Ok(not_sent("mcp.call_endpoint_invalid", error.to_string())),
++            };
++            let headers = McpRequestHeaders::from(connection.headers);
++            let outcome = self
++                .gateway
++                .call_tool(
++                    &endpoint,
++                    &headers,
++                    connection.protocol_version,
++                    &native_name,
++                    arguments,
++                    cancel,
++                )
++                .await?;
++            Ok(map_call_outcome(outcome))
++        }
++        .await;
++        self.calls.complete(&execution_call_id).await;
++        result
++    }
++}
+diff --git a/src-tauri/crates/tt-application/src/services/mcp_service/tests.rs b/src-tauri/crates/tt-application/src/services/mcp_service/tests.rs
+--- a/src-tauri/crates/tt-application/src/services/mcp_service/tests.rs
++++ b/src-tauri/crates/tt-application/src/services/mcp_service/tests.rs
+@@ -144,6 +144,34 @@ struct FixedGateway {
+     fail_discovery: AtomicBool,
+ }
+ 
++#[tokio::test]
++async fn remote_calls_keep_credentials_transient_and_do_not_publish_registrations() {
++    use crate::dto::mcp_dto::{CallRemoteMcpToolDto, RemoteMcpConnectionDto};
++    let repository = Arc::new(MemoryRepository::default());
++    let gateway = Arc::new(FixedGateway::default());
++    let service = McpService::new(repository.clone(), gateway.clone());
++    let connection = RemoteMcpConnectionDto {
++        endpoint: "https://example.com/mcp".to_string(),
++        headers: BTreeMap::from([("Authorization".to_string(), "Bearer fixture".to_string())]),
++        protocol_version: McpProtocolVersionPreference::V2025_11_25,
++    };
++    let discovery = service.discover_remote_tools(connection.clone()).await.unwrap();
++    assert_eq!(discovery.0.tools.len(), 1);
++    service.start_call("remote-call").await.unwrap();
++    let outcome = service.call_remote_tool(CallRemoteMcpToolDto {
++        execution_call_id: "remote-call".to_string(),
++        connection,
++        native_name: "search".to_string(),
++        arguments_json: "{\"number\":9007199254740993}".to_string(),
++    }).await.unwrap();
++    assert!(matches!(outcome, McpCallOutcomeDto::KnownResponse { .. }));
++    assert_eq!(gateway.calls.lock().unwrap()[0].1["number"].as_u64(), Some(9_007_199_254_740_993));
++    assert_eq!(gateway.request_headers.lock().unwrap()[1]["Authorization"], "Bearer fixture");
++    assert!(repository.registrations.lock().unwrap().is_empty());
++    assert!(repository.catalogs.lock().unwrap().is_empty());
++    assert!(service.calls.get("remote-call").await.is_none());
++}
++
+ #[async_trait]
+ impl McpGateway for FixedGateway {
+     async fn discover_tools(
+diff --git a/src-tauri/crates/tauritavern/src/presentation/commands/mcp_commands.rs b/src-tauri/crates/tauritavern/src/presentation/commands/mcp_commands.rs
+--- a/src-tauri/crates/tauritavern/src/presentation/commands/mcp_commands.rs
++++ b/src-tauri/crates/tauritavern/src/presentation/commands/mcp_commands.rs
+@@ -10,12 +10,68 @@ use crate::{
+     },
+ };
+ use tt_application::dto::mcp_dto::{
+-    CallLegacyMcpToolDto, CreateMcpServerDto, ListLegacyMcpToolsResultDto, ListMcpServersResultDto,
++    CallLegacyMcpToolDto, CallRemoteMcpToolDto, CreateMcpServerDto, ListLegacyMcpToolsResultDto, ListMcpServersResultDto,
+     McpCallOutcomeDto, McpDiscoveryResultDto, McpExecutionCallIdDto, McpRegistrationIdDto,
+-    McpServerDto, McpTestCallIdDto, SetMcpServerStateDto, SetMcpToolDescriptionOverrideDto,
++    McpServerDto, McpTestCallIdDto, RemoteMcpConnectionDto, RemoteMcpDiscoveryResultDto, SetMcpServerStateDto, SetMcpToolDescriptionOverrideDto,
+     SetMcpToolPermissionDto, TestMcpToolCallDto, UpdateMcpServerDto,
+ };
+ 
++#[tauri::command]
++pub async fn discover_remote_mcp_tools(
++    dto: RemoteMcpConnectionDto,
++    app_state: State<'_, Arc<AppState>>,
++) -> Result<RemoteMcpDiscoveryResultDto, CommandError> {
++    log_command("discover_remote_mcp_tools");
++    app_state
++        .services
++        .mcp_service
++        .discover_remote_tools(dto)
++        .await
++        .map_err(map_command_error("Failed to discover remote MCP tools"))
++}
++
++#[tauri::command]
++pub async fn start_remote_mcp_tool_call(
++    dto: McpExecutionCallIdDto,
++    app_state: State<'_, Arc<AppState>>,
++) -> Result<(), CommandError> {
++    log_command("start_remote_mcp_tool_call");
++    app_state
++        .services
++        .mcp_service
++        .start_call(&dto.execution_call_id)
++        .await
++        .map_err(map_command_error("Failed to prepare remote MCP call"))
++}
++
++#[tauri::command]
++pub async fn call_remote_mcp_tool(
++    dto: CallRemoteMcpToolDto,
++    app_state: State<'_, Arc<AppState>>,
++) -> Result<McpCallOutcomeDto, CommandError> {
++    log_command("call_remote_mcp_tool");
++    app_state
++        .services
++        .mcp_service
++        .call_remote_tool(dto)
++        .await
++        .map_err(map_command_error("Failed to call remote MCP tool"))
++}
++
++#[tauri::command]
++pub async fn cancel_remote_mcp_tool_call(
++    dto: McpExecutionCallIdDto,
++    app_state: State<'_, Arc<AppState>>,
++) -> Result<(), CommandError> {
++    log_command("cancel_remote_mcp_tool_call");
++    app_state
++        .services
++        .mcp_service
++        .cancel_call(&dto.execution_call_id)
++        .await
++        .map_err(map_command_error("Failed to cancel remote MCP call"))
++}
++
+ #[tauri::command]
+ pub async fn list_mcp_servers(
+     app_state: State<'_, Arc<AppState>>,
+diff --git a/src-tauri/crates/tauritavern/src/presentation/commands/registry.rs b/src-tauri/crates/tauritavern/src/presentation/commands/registry.rs
+--- a/src-tauri/crates/tauritavern/src/presentation/commands/registry.rs
++++ b/src-tauri/crates/tauritavern/src/presentation/commands/registry.rs
+@@ -174,6 +174,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
+         super::llm_connection_commands::save_llm_connection,
+         super::llm_connection_commands::delete_llm_connection,
+         // MCP commands
++        super::mcp_commands::discover_remote_mcp_tools,
++        super::mcp_commands::start_remote_mcp_tool_call,
++        super::mcp_commands::call_remote_mcp_tool,
++        super::mcp_commands::cancel_remote_mcp_tool_call,
+         super::mcp_commands::list_mcp_servers,
+         super::mcp_commands::create_mcp_server,
+         super::mcp_commands::update_mcp_server,
+diff --git a/tests/mcp-api-contract.test.mjs b/tests/mcp-api-contract.test.mjs
+--- a/tests/mcp-api-contract.test.mjs
++++ b/tests/mcp-api-contract.test.mjs
+@@ -127,3 +127,29 @@ test('api.mcp cancels after start acknowledgement without dispatching tools/call
+     ]);
+     assert.equal(calls[0].args.dto.callId, calls[1].args.dto.callId);
+ });
++
++test('api.mcp remote snapshots transient headers and preserves the native outcome when cancelled', async () => {
++    const calls = [];
++    let resolveStart;
++    let resolveCall;
++    const started = new Promise(resolve => { resolveStart = resolve; });
++    const called = new Promise(resolve => { resolveCall = resolve; });
++    const { mcp } = await installHarness(async (command, args) => {
++        calls.push({ command, args });
++        if (command === 'start_remote_mcp_tool_call') return started;
++        if (command === 'call_remote_mcp_tool') return called;
++    });
++    const input = { connection: { endpoint: 'https://example.com/mcp', headers: { Authorization: 'Bearer initial' } }, nativeName: 'speak', argumentsJson: '{}' };
++    const controller = new AbortController();
++    const pending = mcp.remote.call(input, { signal: controller.signal });
++    input.connection.headers.Authorization = 'Bearer changed';
++    resolveStart();
++    while (calls.length < 2) await Promise.resolve();
++    assert.equal(calls[1].args.dto.connection.headers.Authorization, 'Bearer initial');
++    controller.abort();
++    await Promise.resolve();
++    assert.equal(calls[2].command, 'cancel_remote_mcp_tool_call');
++    assert.equal(calls[2].args.dto.executionCallId, calls[1].args.dto.executionCallId);
++    resolveCall({ outcome: 'outcome_unknown', code: 'mcp.call_cancelled', message: 'may have run' });
++    assert.equal((await pending).outcome, 'outcome_unknown');
++});
+diff --git a/docs/API/MCP.md b/docs/API/MCP.md
+--- a/docs/API/MCP.md
++++ b/docs/API/MCP.md
+@@ -15,6 +15,31 @@ const mcp = window.__TAURITAVERN__.api.mcp;
+ 
+ ## 2. API
+ 
++扩展自管连接通过 `api.mcp.remote`（version 1）复用原生 MCP gateway：
++
++```ts
++type RemoteMcpConnection = {
++  endpoint: string;
++  headers?: Record<string, string>;
++  protocolVersion?: McpProtocolVersion;
++};
++
++api.mcp.remote.version; // 1
++api.mcp.remote.discover(connection: RemoteMcpConnection): Promise<{
++  protocolVersion: string;
++  serverName?: string | null;
++  serverVersion?: string | null;
++  tools: Array<{ nativeName: string; title: string | null; description: string | null;
++    inputSchema: object; outputSchema: object | null; annotations: object }>;
++  diagnostics: Array<{ code: string; nativeName: string | null; message: string }>;
++}>;
++api.mcp.remote.call({ connection, nativeName, argumentsJson }, { signal? }): Promise<McpTestCallOutcome>;
++```
++
++此 Project Contract 面向扩展自管 OAuth/账户的远端连接，每次调用提供临时 endpoint、headers 和协议偏好。服务端复用同一个 `McpGateway`、HTTP pool、参数校验、取消 registry 与三态 outcome；不写 registration/catalog，不修改 Manager 的 Off/Ask/Allow，也不把扩展工具发布给 Agent 或 Legacy。OAuth 登录与刷新由消费者负责。它不提供注册工具的权限绕行入口；注册工具仍走原有 permission-aware 用例。
++
++`remote.discover` 是只读网络操作，不产生付费工具调用。`remote.call` 在发送前 snapshot 输入并完成 start acknowledgement；AbortSignal 请求 native cancellation，最终保留后端 KnownResponse/NotSent/OutcomeUnknown。参数限 256 KiB JSON object，不补默认值、不转换整数、不自动重试。调用方必须处理 OutcomeUnknown，不能当作确定失败重新发送。传入 headers 不写盘、不进入模型、日志或备份；宿主仍沿用同一 WebView 的可信扩展代码边界，不提供按扩展 ID 的隔离或假装验证物理点击。
++
+ ```ts
+ type TauriTavernMcpApi = {
+   servers: {
+@@ -191,7 +216,7 @@ Agent 没有新增公共 raw-call API。Profile v3 以 `mcp/<registration-uuid>:
+ 
+ ## 8. Legacy 消费契约
+ 
+-Legacy 集成没有扩展上面的公共 `api.mcp`。Legacy 使用第一方内部 commands 从 `McpService` 获取 Active + Ask/Allow 的 cached descriptors，并通过 permission-aware call 用例执行；第三方仍没有公共 raw MCP executor。
++Legacy 使用第一方内部 commands 从 `McpService` 获取 Active + Ask/Allow 的 cached descriptors，并通过 permission-aware call 用例执行。第三方自管连接使用 `api.mcp.remote`，不调用 Legacy 内部 commands。
+ 
+ - catalog preparation 只读 memory/disk snapshot，cache miss 不联网；单 registration 的 snapshot 读取/校验失败形成 diagnostic，不阻塞健康 MCP/local tools 或普通生成。
+ - registration description override 在共享 resolver 中应用，Legacy root 冻结覆盖后的 descriptor；后续 Manager 修改只影响下一个 root。
+@@ -206,7 +231,7 @@ Legacy 集成没有扩展上面的公共 `api.mcp`。Legacy 使用第一方内
+ 
+ 当前没有以下 API 或行为：
+ 
+-- Ask 审批、公共 raw-call API及 Legacy unknown-outcome 恢复交互；
++- Ask 审批、基于持久 registration 的通用 raw-call API及 Legacy unknown-outcome 恢复交互；
+ - OAuth、credential、stdio、2024 HTTP+SSE；
+ - Resources、Prompts、Tasks、Apps、subscriptions/list-changed；
+ - background discovery、discovery/list 通用 retry、catalog TTL/revision history；
+diff --git a/docs/FrontendHostContract.md b/docs/FrontendHostContract.md
+--- a/docs/FrontendHostContract.md
++++ b/docs/FrontendHostContract.md
+@@ -190,6 +190,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
+ - `api.skill`：管理本地知识包的导入、编辑、作用域与导出，见 [Skill API](API/Skill.md)。模型通过只读 `skills/` 工作区视图读取材料，经 `workspace.shell` 执行脚本；安装与替换由管理界面处理。
+ 
+ - `api.mcp`：MCP registration、只读 tool discovery、model-facing description override 与第一方 Manager user test call 的独立平台 API。Agent 与 Legacy generation 已通过内部 application seam 消费 MCP，但 MCP 不依附 Agent Mode，公开 API 仍不提供 raw model-call executor。
++  - `api.mcp.remote`（version 1）：扩展自管连接的原生 discovery/call 入口。每次调用提供临时 endpoint、headers 和协议版本，不持久化凭据、不发布模型工具；复用 native gateway、取消 registry 和 KnownResponse/NotSent/OutcomeUnknown，不自动重试。具体契约见 `docs/API/MCP.md`。
+   - 当前为实验性的 Project Contract；详细签名见 `docs/API/MCP.md`。
+   - 当前暴露 `servers.list/create/update/setState/remove/discover/refresh`、`tools.setPermission`、`tools.setDescriptionOverride` 与 `tools.testCall({ registrationId, nativeName, argumentsJson }, { signal? })`；description override 只改变模型 descriptor 副本，不修改 discovery catalog、权限或执行身份；`update` 可修改名称、endpoint、custom headers 与协议版本；`discover` 读取 application persistent catalog，`refresh` 是唯一强制联网入口；不暴露 raw RPC 或 RMCP session。
+   - `testCall` 是第一方 Manager 的 Project Contract：Active registration 上的显式用户调用不受 Off/Ask/Allow 阻止且不修改 permission；typed outcome 区分 `known_response`、`not_sent` 与 `outcome_unknown`，AbortSignal 只停止本地等待，不承诺远端回滚。
+diff --git a/docs/CurrentState/MCP.md b/docs/CurrentState/MCP.md
+--- a/docs/CurrentState/MCP.md
++++ b/docs/CurrentState/MCP.md
+@@ -6,6 +6,8 @@
+ 
+ ## 端到端链路
+ 
++扩展自管 OAuth 的连接通过 `api.mcp.remote` v1 调用 `McpService::discover_remote_tools/call_remote_tool`，复用同一个 `McpGateway` 与 HTTP pool，避免浏览器 Origin 限制。凭据仅用于本次调用，不创建 registration、不落盘 catalog，也不自动暴露给模型。取消与三态 outcome 复用现有 call registry/result projection。此入口不提供 OAuth 登录或刷新，由调用扩展承担；需重建宿主才能包含新增 Rust commands。
++
+ ```text
+ First-party MCP extension (React / strict TSX)
+   -> window.__TAURITAVERN__.api.mcp

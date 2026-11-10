@@ -1,6 +1,7 @@
 import {FISH_MCP, FishTokenStore} from './fish-oauth.js';
 import {decodeMono, encodeWav, JOIN_RATE} from './audio-join.js';
 import {sha256Hex} from './hash.js';
+import {FishNativeMCP} from './fish-mcp-native.js';
 
 export const MCP_MODEL = 'mcp-default';
 export const fishSubscription = connection => connection?.access === 'subscription';
@@ -196,8 +197,9 @@ async function refusedRequest(response, method, params, secrets) {
 /** Keep protocol/authentication out of generic API-key rotation and generic proxy rewriting. */
 export class FishMCP {
   constructor(oauth, {fetcher = (...a) => globalThis.fetch(...a), mergeAudio = mergeClips,
-    journal = new FishTokenStore(oauth.scope + ':audio-jobs', oauth.store?.factory)} = {}) {
+    journal = new FishTokenStore(oauth.scope + ':audio-jobs', oauth.store?.factory), host = globalThis} = {}) {
     Object.assign(this, {oauth, fetcher, mergeAudio, journal});
+    this.native = host.__TAURITAVERN__ || host.__TAURITAVERN_HOST__ ? new FishNativeMCP(oauth, host) : null;
     this.id = 0; this.inflight = new Map(); this.controller = new AbortController();
   }
   reset() { this.session = ''; this.protocol = ''; this.tools = null; this.account = ''; }
@@ -241,8 +243,18 @@ export class FishMCP {
     if (refresh) this.tools = null;
     if (this.tools) return;
     if (!this.starting) this.starting = (async () => {
+      if (this.native) {
+        const result = await this.native.discover(signal);
+        if (account !== this.oauth.record?.account) throw fail('登录账户已变化，请重新读取工具');
+        const tools = new Map();
+        for (const tool of result.tools) {
+          if (typeof tool.name !== 'string' || tools.has(tool.name)) throw fail('宿主工具列表含无效或重复名称');
+          tools.set(tool.name, tool);
+        }
+        this.protocol = result.protocolVersion; this.tools = tools; this.account = account; return;
+      }
       if (!this.protocol) {
-        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.2.3'}}, {signal, initialize: true});
+        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.2.4'}}, {signal, initialize: true});
         if (account !== this.oauth.record?.account) throw fail('登录账户已变化，请重新读取工具');
         if (!['2025-11-25', '2025-06-18', '2025-03-26'].includes(result.protocolVersion) || !result.capabilities?.tools) throw fail('服务端协商的 MCP 版本或工具能力不受支持');
         this.protocol = result.protocolVersion;
@@ -270,6 +282,7 @@ export class FishMCP {
     await this.ready(signal);
     if (expectedAccount !== undefined && expectedAccount !== this.oauth.record?.account) throw fail('登录账户已变化，已停止本次生成');
     if (!this.tools.has(name)) throw fail('官方服务没有工具 ' + name);
+    if (this.native) return this.native.call(name, args, signal, paid);
     return this.send('tools/call', {name, arguments: args}, {signal, paid});
   }
   async balance() { return creditResult(await this.call('get_credit_balance', {})); }

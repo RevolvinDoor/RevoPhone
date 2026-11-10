@@ -1,1 +1,2 @@
 tokenizers/* -text
+host-patches/**/*.patch -whitespace

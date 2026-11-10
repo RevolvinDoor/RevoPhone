@@ -369,6 +369,7 @@ export function enginesApp(ctx) {
   function fishAccount() {
     const s = api.fishStatus();
     return `<p class="hint">${s.configured ? '已保存 Fish OAuth 授权。' : '尚未连接 Fish 账户。'}使用登录时选定团队的网页积分；此方式不使用中转，也不会在失败后改扣 API 余额。</p>
+      ${s.nativeRequired ? `<p class="${s.nativeAvailable ? 'hint' : 'error-copy hint'}">${s.nativeAvailable ? 'MCP 请求由 TauriTavern 原生客户端发送。' : '当前宿主缺少原生 MCP 扩展调用接口。需要安装包含配套补丁的 TauriTavern，仅更新 RevoPhone 不够。'}</p>` : ''}
       <div class="actions">${btn('fish-login', s.preparing ? '正在准备授权…' : s.configured ? '重新授权／切换团队' : '连接 Fish 账户', 'secondary', s.pending || s.preparing ? 'disabled' : '')}
       ${s.configured || s.pending ? btn('fish-disconnect', '断开连接', 'text-button', s.preparing ? 'disabled' : '') : ''}
       ${s.configured ? btn('fish-information', '刷新工具信息', 'chip-button') + btn('fish-clear-unknown', '清除未知生成记录', 'text-button') : ''}</div>

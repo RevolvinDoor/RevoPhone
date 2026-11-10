@@ -113,10 +113,10 @@ test('Invalid refresh authorization is cleared and never falls back to an API ke
 const speech = {name: 'text_to_speech', inputSchema: {type: 'object', properties: {
   text: {type: 'string'}, voice_id: {type: 'string'}, model: {type: 'string', enum: ['s2.1-pro']},
   format: {type: 'string', enum: ['mp3', 'wav']}}, required: ['text', 'voice_id']}};
-function speechFixture({journal = new RecordStore(), download, paid, mergeAudio} = {}) {
+function speechFixture({journal = new RecordStore(), download, paid, mergeAudio, host} = {}) {
   const requests = [], oauth = {scope: 'test', record: {account: 'account-a'}, configured: true,
     token: async () => 'oauth-access', close() {}};
-  const client = new FishMCP(oauth, {journal, mergeAudio, async fetcher(url, init = {}) {
+  const client = new FishMCP(oauth, {journal, mergeAudio, host, async fetcher(url, init = {}) {
     requests.push({url, ...init});
     if (url !== FISH_MCP) return download ? download(url, init) : new Response(new Uint8Array([1, 2, 3]), {headers: {'Content-Type': 'audio/mpeg'}});
     const body = JSON.parse(init.body);
@@ -174,6 +174,44 @@ test('Downloaded links survive a new client after failure; multi-clip results ar
   const audio = await second.client.synthesize(second.request());
   assert.equal(audio.size, 2); assert.equal(downloads, 2);
   assert.equal(first.calls('text_to_speech').length, 1); assert.equal(second.calls('text_to_speech').length, 0);
+});
+
+test('TauriTavern uses native MCP with transient authorization and keeps browser fetch for audio only', async t => {
+  const native = [], host = {__TAURITAVERN__: {api: {mcp: {remote: {
+    version: 1,
+    async discover(connection) {native.push({connection}); return {protocolVersion: '2025-11-25', tools: [{...speech, nativeName: speech.name}]};},
+    async call(input) {
+      native.push(input);
+      return {outcome: 'known_response', response: {kind: 'tool_result', isError: false, textBlocks: [], diagnostics: [],
+        structuredJson: JSON.stringify({audio_url: 'https://audio.example/native.mp3'})}};
+    }
+  }}}}};
+  const f = speechFixture({host}); t.after(() => f.client.close());
+  const audio = await f.client.synthesize(f.request());
+  assert.equal(audio.size, 3); assert.equal(native.length, 2);
+  assert.equal(native[1].nativeName, 'text_to_speech');
+  assert.equal(native[1].connection.headers.Authorization, 'Bearer oauth-access');
+  assert.equal(native[1].connection.headers.Origin, undefined);
+  assert.equal(native[1].connection.endpoint, FISH_MCP);
+  assert.equal(f.requests.length, 1); assert.equal(f.requests[0].url, 'https://audio.example/native.mp3');
+  assert.equal(f.requests[0].headers, undefined);
+});
+
+test('An old TauriTavern fails before sending instead of falling back to browser MCP', async t => {
+  const f = speechFixture({host: {__TAURITAVERN__: {api: {mcp: {}}}}}); t.after(() => f.client.close());
+  await assert.rejects(f.client.information(), error => error.code === 'HOST_MCP_REQUIRED');
+  assert.equal(f.requests.length, 0);
+});
+
+test('Native unknown outcomes keep the paid journal blocked and are never retried', async t => {
+  let called = 0;
+  const f = speechFixture({host: {__TAURITAVERN__: {api: {mcp: {remote: {version: 1,
+    async discover() {return {protocolVersion: '2025-11-25', tools: [{...speech, nativeName: speech.name}]};},
+    async call() {called++; return {outcome: 'outcome_unknown', code: 'mcp.call_timeout', message: 'result unknown'};}
+  }}}}}}); t.after(() => f.client.close());
+  await assert.rejects(f.client.synthesize(f.request()), error => error.code === 'FISH_OUTCOME_UNKNOWN');
+  await assert.rejects(f.client.synthesize(f.request()), /上次的生成结果未知/);
+  assert.equal(called, 1); assert.equal(f.requests.length, 0);
 });
 
 test('Initialization 403 retains the official reason and stage without leaking OAuth credentials or retrying', async t => {

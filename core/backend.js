@@ -3044,7 +3044,7 @@ export class TTSBackend {
             updateGeneral: patch => this.updateGeneral(patch), saveNarration: patch => this.saveNarration(patch), saveRoute: route => this.saveRoute(route), saveVoicePool: list => this.saveVoicePool(clone(list)), deleteRoute: id => this.deleteRoute(id),
             switchRouteEngine, cleanAliases, validRoleName: name => typeof name === 'string' && !!name.trim() && !isPlaceholderRole(name),
             saveConnection: (engine, patch) => this.saveConnection(engine, patch),
-            fishStatus: () => this.providers.fish.oauth.status(),
+            fishStatus: () => ({...this.providers.fish.oauth.status(), nativeRequired: !!this.providers.fish.native, nativeAvailable: !!this.providers.fish.native?.available}),
             savedKeyCount: () => [...this.keyStore.load().values()].filter(Boolean).length,
             fishLogin: () => { this.assertOpen(); return this.providers.fish.oauth.beginLogin(); },
             fishFinishLogin: url => { this.assertOpen(); return this.providers.fish.oauth.finishLogin(url); },
