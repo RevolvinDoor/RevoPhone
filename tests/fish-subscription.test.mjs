@@ -90,6 +90,16 @@ test('TauriTavern opens the prepared authorization URL externally without creati
   assert.deepEqual(opened[0].slice(1), ['_blank', 'noopener']);
   assert.equal(f.oauth.status().pending, true); assert.equal(f.oauth.status().preparing, false);
   assert.equal(f.listeners.size, 0);
+  const registration = JSON.parse(f.requests.find(r => r.url.endsWith('/register')).body);
+  const redirect = new URL(registration.redirect_uris[0]), authorize = new URL(opened[0][0]);
+  assert.equal(redirect.hostname, '127.0.0.1'); assert.equal(redirect.protocol, 'http:');
+  assert.ok(Number(redirect.port) >= 49152 && Number(redirect.port) <= 65535);
+  assert.equal(authorize.searchParams.get('redirect_uri'), redirect.href);
+  redirect.searchParams.set('code', 'test-code'); redirect.searchParams.set('state', authorize.searchParams.get('state'));
+  await f.oauth.finishLogin(redirect.href);
+  const form = new URLSearchParams(f.requests.find(r => r.url.endsWith('/token')).body);
+  assert.equal(form.get('redirect_uri'), registration.redirect_uris[0]);
+  assert.equal(f.oauth.configured, true);
 });
 
 test('Invalid refresh authorization is cleared and never falls back to an API key', async t => {

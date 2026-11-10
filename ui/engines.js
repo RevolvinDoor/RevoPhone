@@ -372,7 +372,7 @@ export function enginesApp(ctx) {
       <div class="actions">${btn('fish-login', s.preparing ? '正在准备授权…' : s.configured ? '重新授权／切换团队' : '连接 Fish 账户', 'secondary', s.pending || s.preparing ? 'disabled' : '')}
       ${s.configured || s.pending ? btn('fish-disconnect', '断开连接', 'text-button', s.preparing ? 'disabled' : '') : ''}
       ${s.configured ? btn('fish-information', '刷新工具信息', 'chip-button') + btn('fish-clear-unknown', '清除未知生成记录', 'text-button') : ''}</div>
-      ${s.pending ? `<p class="hint">请在 Fish 页面完成登录。弹窗未打开时，可<a href="${esc(s.authorizationUrl)}" target="_blank" rel="noopener noreferrer">打开授权页面</a>。若回调页打不开或结果未传回，复制地址栏的完整回调地址到下方。登录十分钟后失效。</p>
+      ${s.pending ? `<p class="hint">请在 Fish 页面完成登录。未自动打开时，可<a href="${esc(s.authorizationUrl)}" target="_blank" rel="noopener noreferrer">打开授权页面</a>。${s.redirectUri?.startsWith('http://127.0.0.1:') ? '授权后会跳到本机地址；这里没有启动网页服务，浏览器显示“无法访问”是正常的。请直接复制地址栏中包含 code 和 state 的完整地址，粘贴到下方完成登录。' : '若回调页打不开或结果未传回，复制地址栏的完整回调地址到下方。'}登录十分钟后失效。</p>
       ${field('登录回调地址', textArea('fish-callback', '', 'rows="2" autocomplete="off" spellcheck="false" placeholder="粘贴登录完成后地址栏中的完整地址"'))}
       ${btn('fish-finish-login', '完成登录', 'secondary')}` : ''}
       ${s.error ? `<p class="error-copy hint">${esc(s.error)}</p>` : ''}

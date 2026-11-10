@@ -100,10 +100,15 @@ export class FishOAuth {
     if (this.closed) throw abort();
     if (this.preparing) return this.status();
     this.cancelLogin();
-    const epoch = ++this.epoch, redirectUri = this.redirectUri;
+    const epoch = ++this.epoch;
     // TauriTavern hands ordinary HTTPS links to the system browser. A blank popup instead
     // enters native new-window creation before there is an authorization page to display.
     const external = !!(this.win?.__TAURITAVERN__ || this.win?.__TAURITAVERN_HOST__);
+    // Fish permits plain HTTP only for loopback. Tauri's internal tauri.localhost/app
+    // origin is not an OAuth loopback address; use manual URL handoff without a listener.
+    const redirectUri = external
+      ? 'http://127.0.0.1:' + (49152 + crypto.getRandomValues(new Uint16Array(1))[0] % 16384) + '/revophone/fish-oauth'
+      : this.redirectUri;
     let popup = null;
     this.preparing = true; this.error = ''; this.changed();
     try {
