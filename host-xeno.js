@@ -164,9 +164,11 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
   /** 1. 附身之术 · 洞察推荐：扫描当前剧情环境，生成《附身价值与颜值评估报告》并自动登记目标角色 */
   function insightRecommend() {
     return run('insight', async ctx => {
+      const valid = captureStoryScope();
       const cur = backend.cardState()?.xeno;
       const knownNames = [cur?.protagonist?.name, ...(cur?.targets || []).map(t => t.name)].filter(Boolean).join(' ');
       const story = await recentStoryText(ctx, knownNames);
+      valid();
       if (!story.trim()) throw Error('当前还没有剧情内容可供洞察分析');
       const prompt = [
         {
@@ -201,6 +203,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
         });
       }
       if (!reports.length) throw Error('未能从当前剧情中解析出推荐目标，请重试');
+      valid();
       const next = backend.saveXeno(xeno => {
         xeno.possession.insightReports = reports;
         for (const r of reports) {
@@ -222,10 +225,12 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
   /** 2. 从当前剧情同步主角与登场目标状态栏 */
   function syncFromStory() {
     return run('sync', async ctx => {
+      const valid = captureStoryScope();
       const card = backend.cardState();
       const cur = card.xeno;
       const known = [cur.protagonist.name, ...cur.targets.map(t => t.name)].filter(Boolean).join('、');
       const story = await recentStoryText(ctx, known);
+      valid();
       if (!story.trim()) throw Error('当前还没有剧情内容可供同步');
       const prompt = [
         {
@@ -241,6 +246,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
       const block = [...raw.matchAll(/<xeno_sync>([\s\S]*?)<\/xeno_sync>/gi)].map(m => m[1]).join('\n') || raw;
       const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l.includes('｜') || l.includes('|'));
       let count = 0;
+      valid();
       const next = backend.saveXeno((xeno, nextState, cardKey) => {
         const scopedRoutes = cardRoutes(nextState?.routes || [], cardKey);
         for (const line of lines) {
@@ -273,8 +279,17 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
     });
   }
 
+  function captureStoryScope() {
+    const key = backend.activeChatKey, card = backend.cardKey?.();
+    return () => {
+      if (backend.closed || backend.activeChatKey !== key || backend.cardKey?.() !== card || backend.deletedXenoChats?.has(key)) {
+        throw Error('正文聊天已切换或删除，未写入异构结果');
+      }
+    };
+  }
+
   /** 3. 购物商城 AI 进货（支持上传图片 imageData 多模态识图 + 文字描述生成新货上架） */
-  function mallRestock({category = 'apparel', slot = 'outerwear', text = '', imageData = ''} = {}) {
+  function mallRestock({category = 'apparel', slot = 'outerwear', text = '', imageData = '', gender: requestedGender = ''} = {}) {
     return run('restock', async ctx => {
       const cur = backend.cardState()?.xeno;
       const preUser = xenoPromptEntryText(cur, 'restockPreUser');
@@ -293,11 +308,15 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
           ? WORKBENCH_FLESH_RING_RULE
           : WORKBENCH_APPAREL_RULE;
       const catTitle = category === 'skin_suit' ? '活体皮躯' : category === 'flesh_ring' ? '活体肉躯' : category === 'consumable' ? '异构生物道具' : '高定特殊服饰';
+      const metadataRule = '【装备结构与能力字段】在设计块中另列 [身体类型]：女/男/扶她/未设定；[下体处理]：replace 或 preserve；[下体类型]：auto/female/male/dual/none/custom；[下体设定]：结构与覆盖方式；[特殊能力]：能力说明；[能力生效条件]：触发、代价及限制。'
+        + '以上字段按输入要求，优先于模板中的固定性别假设。女性装备不添加男性部位，前方延展按该件结构重构，不固定为男性结构。可用 [生理构造] 记录生理特征。未要求特殊能力时留空，不擅自添加。'
+        + (GENDERS.includes(requestedGender) ? `本次指定身体类型为「${requestedGender}」，设计正文、结构字段及绘图提示词必须一致。` : '身体类型根据明确输入或参考设定；无法确定时写未设定，不统一默认为扶她。');
 
       const sysPrompt = [
         sysHeader,
         WORKBENCH_SCALE_RULE,
         workbenchRule,
+        metadataRule,
         WORKBENCH_POSE_PROMPT ? `【商品图固定姿势与构图 Tag 要求】：在生成 [生图提示词 (Prompt)] 时，请包含或优先适配以下构图与姿势 Tag：${WORKBENCH_POSE_PROMPT}` : '',
         '请额外在设计块外层附上简要上架元数据（价格：数字 200~3500；简称：4~8字），或直接严格输出上述 XML 设计块。'
       ].filter(Boolean).join('\n\n');
@@ -359,9 +378,10 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
       if (isRefusalOrEmpty(raw)) {
         const safeSysPrompt = [
           sysHeader,
+          metadataRule,
           `<${xmlTag} name="单品名称">`,
           category === 'skin_suit'
-            ? '[外观视觉还原]：(发色、发型、瞳色、五官神态与整体气质)\n[体态参数]：(身高145-178cm、胸围罩杯、腰臀比、腿部线条与肌肤质感)\n[扶她生理构造]：(人体工学比例下的生理特征与质感描述)\n[穿戴接口与机能]：(背部隐形穿戴接口、内部包裹感与声带/体香同步机能)\n[生图提示词 (Prompt)]：(高质量英文 Danbooru tag 串)'
+            ? '[外观视觉还原]：(发色、发型、瞳色、五官神态与整体气质)\n[体态参数]：(身高与整体体态)\n[生理构造]：(符合指定身体类型的结构设定)\n[穿戴接口与机能]：(穿戴接口及音色同步机能)\n[生图提示词 (Prompt)]：(符合身体类型的英文 Tag)'
             : category === 'flesh_ring'
               ? '[静息环体外观]：(未激活时的精致环状材质、色泽、纹路与穿戴位置)\n[前方延展·器官重构]：(向前重构的生理结构与尺寸特征)\n[后方延展·躯体重构]：(向后蔓延包裹全身后重构出的发色、瞳色、面容、胸臀体态与外层仿生衣物)\n[生图提示词 (Prompt)]：(提取后方延展完全体形态的英文 Danbooru tag 串)'
               : '[款式与定位]：(服装风格、适用场景与核心视觉冲击点)\n[材质与色彩]：(主面料、薄纱、皮革/金属配件的质感、反光与贴肤度)\n[剪裁与暴露结构]：(从上到下详细拆解领口、胸线、腰腹、臀侧、裙摆/裤装的剪裁细节与镂空/开叉设计)\n[穿戴互动与机关]：(穿脱方式、隐藏暗扣与对身体曲线的修饰效果)\n[生图提示词 (Prompt)]：(仅针对该套服装与穿搭效果输出精准的英文 Danbooru 服装 tag 串)',
@@ -399,11 +419,14 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
       const name = rawName.startsWith('【') ? rawName : `【${rawName.replace(/^[【\[]|[】\]]$/g, '')}】`;
       const shortName = pick('简称') || rawName.replace(/[【】\[\]]/g, '').split(/[·・\s]/)[0].slice(0, 12);
       const price = Number(pick('价格').replace(/[^\d]/g, '')) || 1280;
-      const gender = GENDERS.includes(pick('性别')) ? pick('性别') : (category === 'skin_suit' || category === 'flesh_ring' ? '扶她' : '');
+      const genderText = pickSection('身体类型') || pickSection('性别') || pick('身体类型') || pick('性别');
+      const declaredGender = /^(?:女性|女)(?:$|[（(，,；;\s])/.test(genderText) ? '女'
+        : /^(?:男性|男)(?:$|[（(，,；;\s])/.test(genderText) ? '男' : /^扶她/.test(genderText) ? '扶她' : '';
+      const gender = GENDERS.includes(requestedGender) ? requestedGender : declaredGender;
 
       const secVisual = pickSection('外观视觉还原') || pickSection('款式与定位');
       const secBody = pickSection('体态参数') || pickSection('材质与色彩');
-      const secPhysio = pickSection('扶她生理构造') || pickSection('剪裁与暴露结构');
+      const secPhysio = pickSection('生理构造') || pickSection('生理特征') || pickSection('扶她生理构造') || pickSection('剪裁与暴露结构');
       const secMech = pickSection('穿戴接口与机能') || pickSection('穿戴互动与机关');
       const secRing = pickSection('静息环体外观');
       const secForward = pickSection('前方延展·器官重构');
@@ -427,11 +450,17 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
         source: 'restock',
         effectKind: category === 'consumable' ? 'body' : '',
         gender,
+        lowerBodyMode: (pickSection('下体处理') || pick('下体处理')) === 'preserve' ? 'preserve' : 'replace',
+        lowerBodyType: ({女: 'female', 男: 'male', 扶她: 'dual'})[requestedGender]
+          || pickSection('下体类型') || pick('下体类型') || 'auto',
+        lowerBodyDescription: pickSection('下体设定') || pick('下体设定'),
+        abilities: pickSection('特殊能力') || pick('特殊能力'),
+        abilityConditions: pickSection('能力生效条件') || pick('能力生效条件'),
         appearance,
         bodyBuild,
         physiology,
         ringAppearance: category === 'flesh_ring' ? (secRing || appearance || '定制活体肉躯环') : '',
-        forwardExtension: category === 'flesh_ring' ? (secForward || physiology || '向前方增殖重构为扶她肉棒器官') : '',
+        forwardExtension: category === 'flesh_ring' ? (secForward || physiology) : '',
         backwardExtension: category === 'flesh_ring' ? (secBackward || `向后方全身蔓延包裹，重构为：${appearance}；${bodyBuild}`) : '',
         summary,
         drawPrompt,

@@ -62,11 +62,24 @@ export function asMessages(prompt) {
   return [{role: 'user', content: String(prompt ?? '')}];
 }
 
-// Manual image-prompt writing only: some tavern wrappers may stringify message
-// arrays. Use generateRaw's string + systemPrompt form at this boundary while
-// leaving the custom API's structured messages and all other features intact.
+export const hasOrderedPrelude = messages => Array.isArray(messages)
+  && messages[0]?.role === 'user' && messages[1]?.role === 'assistant' && messages[2]?.role === 'system';
+
+export function assertOrderedChatSupport(context, messages) {
+  if (hasOrderedPrelude(messages) && context?.mainApi !== 'openai') {
+    throw Error('小此前置对话需要保留 user → assistant → system。请使用酒馆的聊天补全连接或小手机的自定义文字接口，也可在「预设 → 小此功能助手」关闭对应前置对话。');
+  }
+}
+
+// Legacy manual drawing prompts can use the string compatibility path. An
+// ordered prelude must stay a real message array even when plainText is set.
 export function tavernTextRequest(request){
   const {plainText,...out}=request;
+  if(hasOrderedPrelude(out.prompt)){
+    if(!out.systemPrompt)return out;
+    const messages=out.prompt.map((message,index)=>index===2?{...message,content:[out.systemPrompt,message.content].filter(Boolean).join('\n\n')}:message);
+    return {...out,systemPrompt:'',prompt:messages};
+  }
   if(!plainText||!Array.isArray(out.prompt))return out;
   const messages=asMessages(out.prompt).map(m=>{
     if(Array.isArray(m.content)&&m.content.some(p=>p.type!=='text'))throw Error('绘图提示词请求中包含非文字内容');

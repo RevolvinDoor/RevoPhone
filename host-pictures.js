@@ -21,6 +21,7 @@ import {worldInfoFor, loreOptions} from './host-lore.js';
 import {voicePlanRequest, combinedRequest, insertVoiced} from './core/voice-plan.js';
 import {withPhone, phoneSection} from './core/chat.js';
 import {TIER_NAMES, NAI_MODEL_NAMES} from './core/novelai.js';
+import {withXiaoci} from './core/prompt-rules.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const versionsOf = record => !record ? [] : Array.isArray(record.versions) ? record.versions : record.url ? [{...record}] : [];
@@ -126,9 +127,9 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
       texts: [...prior.map(m => `${m.name}: ${m.text}`), plainStory(withoutPictures(source))]});
   }
   /** The picture planner's request for one reply, with the story's 世界书 and the card's 名单. */
-  async function pictureRequest(id, source) {
+  async function pictureRequest(id, source, prelude = true) {
     const prior = before(id);
-    return planRequest(settings(), {message: source, before: prior, only: castNow(), lore: await storyLore(prior, source)});
+    return planRequest(settings(), {message: source, before: prior, only: castNow(), lore: await storyLore(prior, source), prelude});
   }
   /** Earlier messages for the planner: names and plain text, oldest first. */
   function before(id, limit = 2) {
@@ -187,12 +188,12 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
     try {
       const source = force && wantPictures ? withoutPictures(message.mes) : message.mes, format = voice?.format();
       const preset = s.draw.presets.find(p => p.id === s.draw.activePreset) || s.draw.presets[0];
-      const pictures = wantPictures ? await pictureRequest(id, source) : null;
+      const pictures = wantPictures ? await pictureRequest(id, source, false) : null;
       const asked = wantVoice && wantPictures ? combinedRequest({rules: voice.rules(), format, pictures})
         : wantVoice ? voicePlanRequest({rules: voice.rules(), format, message: source, before: before(id)}) : pictures;
       // 正文联动手机: what happens on the phone is asked for at the end of the same request (【手机】).
       const phoneRule = phoned && phone?.wanted() ? await phone.rule() : '';
-      const prompt = withPhone(asked, phoneRule);
+      const prompt = withXiaoci(s.promptRules, [...(wantVoice ? ['voice'] : []), ...(wantPictures ? ['draw-story'] : [])], withPhone(asked, phoneRule));
       const length = (wantVoice ? Math.min(3000, 400 + source.length * 2) : 0) + (wantPictures ? planLength(s, preset.count) : 0) + (phoneRule ? 500 : 0);
       const answer = await backend.generateText(ctx, {prompt, trimNames: false, responseLength: Math.min(10000, length)});
       if (context().chat[id] !== message) return {voiced: 0, pictured: 0};

@@ -3,7 +3,7 @@
 // A call is spoken: every line the contact says is written in the voice format of the active voice preset (the same
 // tags as story dialogue), so it can be read aloud with the contact's own voice. Rules come from the chat preset, the
 // ones used in 电话. The finished call is kept in the private chat as one message of kind 'call'.
-import {promptText} from './prompt-rules.js';
+import {promptText, withXiaoci} from './prompt-rules.js';
 import {parseDialogue} from './protocol.js';
 import {messageLine, knowsRule} from './chat.js';
 import {languageName} from './languages.js';
@@ -56,7 +56,7 @@ export function buildCallRequest({prompts = {}, preset, mode, contact, lines = [
     '朗读规则': voiced && voiceRules ? voiceRules : ''});
   const turn = promptText(prompts, 'call', 'turn', {...now, '用户': user, '角色': name, '用户刚说': lines.at(-1)?.from === 'me'});
   const said = lines.length ? `【通话内容】\n${callTranscript(lines, user)}\n\n` : '';
-  return [{role: 'system', content: system}, {role: 'user', content: said + turn}];
+  return withXiaoci(prompts, 'call', [{role: 'system', content: system}, {role: 'user', content: said + turn}], {'用户': user});
 }
 
 const HANGUP = /^\s*[[【(（]\s*(挂断|挂电话|挂了|结束通话)\s*[\]】)）]\s*$/;

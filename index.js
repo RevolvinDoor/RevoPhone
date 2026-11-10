@@ -18,6 +18,8 @@ import { loreBooks } from './host-lore.js';
 import { createAppsHost } from './host-apps.js';
 import { readAssistantFiles } from './assistant-files.js';
 import { createAssistantHost } from './host-assistant.js';
+import {createAssistantTools} from './core/assistant-tools.js';
+import {blobToDataUrl, generateItemPreview, generateEntityPortrait} from './xeno-images.js';
 import { createCallHost } from './host-call.js';
 import { createMemoryHost } from './host-memory.js';
 import { createVoiceHost } from './host-voices.js';
@@ -32,6 +34,7 @@ import { xenoPromptPlan, stripXenoUpdate, applyXenoUpdateFromText, resolveLineRo
 import {wardrobeActionPlan} from './core/xeno-actions.js';
 import { createXenoHost } from './host-xeno.js';
 import { getActiveChatKey, findLastChatMessage, captureXenoChatStorage } from './host-tt.js';
+import {prependStoryXiaoci} from './core/prompt-rules.js';
 const base=new URL('.',import.meta.url),marker=globalThis.crypto?.randomUUID?.()||'unavailable';
 let stopDiagnostics=null;
 let active=false,hooked=false,settings,cache,player,panel,frame,observer,renderTimer,floating,lineRaf,lineMedia,playbackMessage,selectedMessage,backend,enabling;
@@ -110,7 +113,6 @@ async function spaceChanged(){
  if(!active||!backend)return;
  memoryHost?.refreshStory();
  const sp=openSpace(),ctx=context(),key=getActiveChatKey(context,sp.key);
- if(!key)return;
  try{
   const loaded=await backend.switchChatXeno(key,{
    hasHistory:(ctx?.chat||[]).filter(m=>m&&!m.is_system).length>1,space:sp,
@@ -383,6 +385,49 @@ const touched=e=>{
 // touchend too: on a touch screen it is the lifting of the finger that counts as the user's own touch for the browser.
 function listenTouches(win){for(const type of ['pointerdown','pointerup','touchend','click','dblclick','keydown'])win.addEventListener?.(type,touched,false);}
 listenTouches(globalThis);
+function phoneAssistantTools(owner) {
+ const api=owner.api(),check=()=>{if(backend!==owner||owner.closed)throw Error('小手机已关闭或重新连接');};
+ const use=(host,method)=>(...args)=>{check();return host()?.[method](...args);};
+ const imageContext=(allowPaid,signal)=>{const key=owner.activeChatKey;return {api,win:window,signal,
+  valid:()=>!signal?.aborted&&!owner.closed&&backend===owner&&owner.activeChatKey===key,
+  confirm:async()=>{if(!allowPaid)throw Object.assign(Error('生图需要确认费用'),{code:'PAID'});return true;}};};
+ const imageTask=async(itemId,{allowPaid=false,signal}={})=>{
+  check();const item=owner.cardState().xeno.items.find(row=>row.id===itemId);
+  if(!item)throw Error('商城里没有这件商品');
+  const key=`mall:${itemId}`,stop=()=>owner.drawQueue.cancel(key);
+  signal?.addEventListener('abort',stop,{once:true});
+  try{let generated;await generateItemPreview({...imageContext(allowPaid,signal),onImage:result=>{generated=result;}},item);
+   return {itemId,name:item.name,photoId:generated?.photoId,prompt:item.drawPrompt,imageSaved:true};
+  }finally{signal?.removeEventListener('abort',stop);}
+ };
+ return createAssistantTools({backend:owner,settings:()=>owner.cardState(),hosts:()=>({
+  mallRestock:options=>{check();if(xenoHost.busy('restock'))throw Error('商城正在进货，请完成后再试');return xenoHost.mallRestock(options);},
+  mallPicture:imageTask,
+  xenoPortrait:async(targetKey='__protagonist__',options={})=>{check();let generated;await generateEntityPortrait({...imageContext(options.allowPaid,options.signal),onImage:result=>{generated=result;}},targetKey);return {photoId:generated?.photoId,targetKey};},
+  prepareToolImage:async data=>blobToDataUrl(window,await (await fetch(data)).blob()),
+  xenoInsight:()=>{check();if(xenoHost.busy('insight'))throw Error('正在洞察，请完成后再试');return xenoHost.insightRecommend();},
+  xenoSyncStory:()=>{check();if(xenoHost.busy('sync'))throw Error('正在同步，请完成后再试');return xenoHost.syncFromStory();},
+  autoPickVoice:name=>{check();return voiceHost.pick(String(name||''),{force:true});},
+  suggestPrompt:use(()=>pictures,'suggestPrompt'),writePrompt:use(()=>pictures,'writePrompt'),tagText:use(()=>pictures,'tagText'),
+  planLatestPictures:use(()=>pictures,'planLatest'),planLatestVoice:use(()=>pictures,'voiceLatest'),
+  recentMessages:use(()=>pictures,'recentMessages'),insertImage:use(()=>pictures,'insertImage'),
+  chatReply:use(()=>chats,'reply'),chatBring:use(()=>chats,'bring'),chatAskFriend:use(()=>chats,'askFriend'),
+  chatDrawPhoto:(id,mid,options)=>{check();return chats.drawPhoto(id,mid,options);},
+  momentsRefresh:use(()=>momentsHost,'refresh'),momentsReact:use(()=>momentsHost,'react'),momentsReply:use(()=>momentsHost,'reply'),
+  momentsDrawImage:(id,options)=>{check();return momentsHost.drawImage(id,options);},
+  forumRefresh:use(()=>appsHost,'forumRefresh'),forumReact:use(()=>appsHost,'forumReact'),forumReply:use(()=>appsHost,'forumReply'),
+  peekLook:(name,keep)=>{check();return appsHost.peekLook(name,{keep:keep===true});},
+  peekDraw:(name,index,options)=>{check();return appsHost.peekDraw(name,index,options);},
+  memoryTidy:id=>{check();return memoryHost.tidy(id,{force:true});},
+  assistantMemoryTidy:id=>{check();return assistantHost.memoryTidy(id,{force:true});},
+  assistantMemoryEdit:(...args)=>{check();assistantHost.memoryCancel(args[0]);return api.assistantMemoryEdit(...args);},
+  assistantMemoryRemove:(...args)=>{check();assistantHost.memoryCancel(args[0]);return api.assistantMemoryRemove(...args);},
+  assistantMemoryForget:id=>{check();assistantHost.memoryCancel(id);return api.assistantMemoryForget(id);},
+  soundListen:use(()=>soundHost,'listen'),soundStopAmbience:use(()=>soundHost,'stopAmbience'),
+  callStatus:use(()=>callHost,'status'),callDial:use(()=>callHost,'dial'),callAnswer:use(()=>callHost,'answer'),callDecline:use(()=>callHost,'decline'),
+  callHangup:use(()=>callHost,'hangup'),callSay:use(()=>callHost,'say'),callReply:use(()=>callHost,'reply'),callRetry:use(()=>callHost,'retry'),callReplay:use(()=>callHost,'replay')
+ })});
+}
 // The stage, the pictures, the box and the game come and go as children of the page.
 if(globalThis.MutationObserver&&document.body)new MutationObserver(list=>{if(list.some(m=>[...m.addedNodes,...m.removedNodes].some(n=>n.nodeType===1&&n.matches(OVER))))syncBack();}).observe(document.body,{childList:true});
 function connect(source){
@@ -508,7 +553,7 @@ function syncFloating(){if(!active)return;if(!settings.general.floatingEnabled){
 async function enableInternal(){if(active)return;const ctx=context();// generateRaw joined the context in 1.13.2, which also ignores minimum_client_version: this keeps older taverns out.
 if(!ctx?.setExtensionPrompt||!ctx.generateRaw||!(ctx.messageFormatter?.addHook||ctx.messageFormatting)||!ctx.updateMessageBlock||!ctx.eventSource?.on||!ctx.eventSource?.removeListener||!ctx.eventTypes||!ctx.extensionSettings||!ctx.saveSettingsDebounced){notice('ST-iPhonie 需要 SillyTavern 1.13.2 或更新版本');return;}if(!globalThis.crypto?.getRandomValues||!globalThis.crypto?.randomUUID){notice('当前浏览器缺少随机数功能，请更新浏览器');return;}if(!globalThis.AudioContext){notice('当前浏览器没有网页音频（Web Audio）功能，不能播放语音；iPhone 需要 iOS 14.5 或更新');return;}speech=browserSpeech(window);backend=new TTSBackend({settings:ctx.extensionSettings[NAMESPACE],soundPack:new URL('sounds/',base).href,persist:storeSettings,notify:notice,change:status,unknown,speech});stopDiagnostics?.();stopDiagnostics=installDiagnostics(window,(...args)=>backend?.reportDiagnostic(...args),{source:'小手机主页面',owned:text=>text.includes(base.href)});settings=backend.settings;cache=backend.cache;player=backend.player;pictures=createPictureHost({context,redrawMessage,settings:()=>cardState(),backend,marker,scheduleRender,notice,voice:voicePlan,speakers,voiced:id=>prepareReply(id,voiceAhead([context()?.chat?.[id]])),phone:{wanted:()=>!!chats?.phoneAfter(),rule:()=>chats.phoneAfterPlan(),deliver:id=>chats.deliver(id)},openDraw:payload=>{pendingDraw=payload;openPanel();frame?.contentWindow?.stTtsOpenDraw?.();}});memoryHost=createMemoryHost({context,settings:()=>cardState(),backend,notice});voiceHost=createVoiceHost({context,settings:()=>cardState(),backend,saidBy,spokenBy});soundHost=createSoundHost({context,settings:()=>cardState(),backend,notice});callHost=createCallHost({context,settings:()=>cardState(),backend,notice,ringing,memory:memoryHost});callIsland=createCallIsland({status:()=>callHost.status(),phoneOpen:()=>!!panel?.open,open:()=>openPanel(),hangup:c=>c.state==='ringing'&&c.dir==='in'?callHost.decline():callHost.hangup(),say:text=>callHost.say(text),reply:()=>callHost.reply(),avatar:name=>{const ch=context()?.characters?.find(x=>x?.name===name);return ch?.avatar&&ch.avatar!=='none'?'/thumbnail?type=avatar&file='+encodeURIComponent(ch.avatar):'';}});backend.subscribe(e=>{if(e?.type==='call')callIsland?.refresh(e.call);});const tavernPic=name=>{const ch=context()?.characters?.find(x=>x?.name===name);return ch?.avatar&&ch.avatar!=='none'?'/thumbnail?type=avatar&file='+encodeURIComponent(ch.avatar):'';};msgIsland=createMessageIsland({load:id=>backend.chats.get(id),phoneOpen:()=>!!panel?.open,openChat:id=>{pendingThread=id;openPanel();frame?.contentWindow?.stTtsOpenThread?.();},send:(id,text)=>backend.chatMutate(id,()=>backend.chats.append(id,[{from:'me',kind:'text',text}],{read:true})),ask:id=>chats.reply(id),read:id=>backend.chatMutate(id,()=>backend.chats.markRead(id)),avatar:tavernPic,label:name=>settings?.chat?.remarks?.[name]||name});// 动态小窗: what is new in 朋友圈 while the phone is away; a tap opens the phone on 动态.
  noteIsland=createNoteIsland({phoneOpen:()=>!!panel?.open,open:()=>{pendingApp='chat:moments';openPanel();frame?.contentWindow?.stTtsOpenApp?.();},avatar:tavernPic,label:name=>settings?.chat?.remarks?.[name]||name});momentsWatch=watchMoments({backend,notify:notes=>noteIsland?.show(notes)});
- backend.subscribe(e=>{if(e?.type!=='chat'||!msgIsland)return;if(e.incoming)msgIsland.show(e.threadId);else if(e.typing!==undefined)msgIsland.typing(e.threadId,e.typing);else msgIsland.changed(e.threadId);});chats=createChatHost({context,settings:()=>cardState(),backend,notice,memory:memoryHost,onCall:(name,reason)=>{try{callHost.ring(name,{reason});}catch{}}});momentsHost=createMomentsHost({context,settings:()=>cardState(),backend,notice,memory:memoryHost});appsHost=createAppsHost({context,settings:()=>cardState(),backend,memory:memoryHost});xenoHost=createXenoHost({context,settings:()=>cardState(),backend,notice});backend.subscribe(e=>{if(e?.type==='call'){voiceIsland?.refresh();}});voiceIsland=createVoiceIsland({enabled:()=>settings.general.voiceIsland===true&&voiceOn(),latest:voiceWindowLines,now:()=>({id:playbackMessage?.id,index:player.queue[player.index]?.uiIndex,narration:player.queue[player.index]?.narration?player.queue[player.index].text:'',phase:player.phase,stepwise:!!player.stepwise,boundary:!!player.boundary}),playStep:playStepMessage,play:(id,i)=>playMessage(id,i),playAll:id=>playMessage(id),toggle:()=>player.toggle(),phoneOpen:()=>!!panel?.open,callShown:()=>!!callIsland?.shown});assistantHost=createAssistantHost({context,settings:()=>cardState(),backend,regex:await import('/scripts/extensions/regex/engine.js').catch(()=>null)});await backend.initialize();memoryHost.refreshStory();chats.tidyNotes().catch(()=>{});backend.setSyncFiles(tavernFiles());backend.syncDeviceName=deviceName();if(backend.settings.sync.enabled)backend.syncNow().catch(()=>{});document.addEventListener('visibilitychange',flushSync);watchPanelLayout(true);ctx.extensionSettings[NAMESPACE]=structuredClone(settings);ctx.saveSettingsDebounced();active=true;lineMedia=matchMedia('(prefers-reduced-motion: reduce)');lineMedia.addEventListener('change',animateLines);document.addEventListener('visibilitychange',animateLines);globalThis.__stIphoniePanelBridge={connect};
+ backend.subscribe(e=>{if(e?.type!=='chat'||!msgIsland)return;if(e.incoming)msgIsland.show(e.threadId);else if(e.typing!==undefined)msgIsland.typing(e.threadId,e.typing);else msgIsland.changed(e.threadId);});chats=createChatHost({context,settings:()=>cardState(),backend,notice,memory:memoryHost,onCall:(name,reason)=>{try{callHost.ring(name,{reason});}catch{}}});momentsHost=createMomentsHost({context,settings:()=>cardState(),backend,notice,memory:memoryHost});appsHost=createAppsHost({context,settings:()=>cardState(),backend,memory:memoryHost});xenoHost=createXenoHost({context,settings:()=>cardState(),backend,notice});backend.subscribe(e=>{if(e?.type==='call'){voiceIsland?.refresh();}});voiceIsland=createVoiceIsland({enabled:()=>settings.general.voiceIsland===true&&voiceOn(),latest:voiceWindowLines,now:()=>({id:playbackMessage?.id,index:player.queue[player.index]?.uiIndex,narration:player.queue[player.index]?.narration?player.queue[player.index].text:'',phase:player.phase,stepwise:!!player.stepwise,boundary:!!player.boundary}),playStep:playStepMessage,play:(id,i)=>playMessage(id,i),playAll:id=>playMessage(id),toggle:()=>player.toggle(),phoneOpen:()=>!!panel?.open,callShown:()=>!!callIsland?.shown});assistantHost=createAssistantHost({context,settings:()=>cardState(),backend,tools:phoneAssistantTools(backend),regex:await import('/scripts/extensions/regex/engine.js').catch(()=>null)});await backend.initialize();memoryHost.refreshStory();chats.tidyNotes().catch(()=>{});backend.setSyncFiles(tavernFiles());backend.syncDeviceName=deviceName();if(backend.settings.sync.enabled)backend.syncNow().catch(()=>{});document.addEventListener('visibilitychange',flushSync);watchPanelLayout(true);ctx.extensionSettings[NAMESPACE]=structuredClone(settings);ctx.saveSettingsDebounced();active=true;lineMedia=matchMedia('(prefers-reduced-motion: reduce)');lineMedia.addEventListener('change',animateLines);document.addEventListener('visibilitychange',animateLines);globalThis.__stIphoniePanelBridge={connect};
  legacy=!ctx.messageFormatter?.addHook;
  if(!hooked&&!legacy){const late=!!ctx.messageFormatter.stage?.AFTER_MARKDOWN;ctx.messageFormatter.addHook((text,meta)=>{if(!active||meta.isUser||meta.isSystem||meta.isReasoning||meta.messageId<0)return text;try{const out=transform(text,late,Number(meta.messageId));if(late)markRoles.set(Number(meta.messageId),{roles:lastRoles,inner:lastInner});return out;}catch{return text;}},{stage:ctx.messageFormatter.stage.BEFORE_REGEX,order:100});
  // A 前端美化 card's regex wraps runs of text: before it the lines are only marks, after Markdown they become waves.
@@ -517,6 +562,19 @@ if(!ctx?.setExtensionPrompt||!ctx.generateRaw||!(ctx.messageFormatter?.addHook||
  if(ctx.messageFormatter.stage.AFTER_REGEX)ctx.messageFormatter.addHook((text,meta)=>{if(!active||meta.isUser||meta.isSystem||meta.isReasoning||meta.messageId<0)return text;try{const out=unwaveFramed(text);if(out!==text)framed.add(Number(meta.messageId));else framed.delete(Number(meta.messageId));return out;}catch{return text;}},{stage:ctx.messageFormatter.stage.AFTER_REGEX,order:100});
  hooked=true;}
  const subscribe=(name,fn)=>{if(!name)return;ctx.eventSource.on(name,fn);listeners.push([ctx.eventSource,name,fn]);};subscribe(ctx.eventTypes.GENERATION_AFTER_COMMANDS,async(type,options,dryRun)=>{try{await memoryHost?.storyReady();}catch{}if(!dryRun&&!['quiet','impersonate'].includes(type)){try{const chat=context()?.chat||[],inPlace=['regenerate','swipe','continue'].includes(type)&&!chat.at(-1)?.is_user,pending=!options?.automatic_trigger&&!inPlace&&document.querySelector('#send_textarea')?.value;backend.snapshotXenoBeforeFloor(inPlace?chat.length-1:chat.length+(pending?1:0));}catch{}}inject(type,options,dryRun);});
+ // Final request-local payload preserves real U/A/S roles for inline voice/draw.
+ // Source: bundled TauriTavern 2.4.0 openai.js createGenerationParameters /
+ // CHAT_COMPLETION_SETTINGS_READY. Quiet background requests are excluded.
+ subscribe(ctx.eventTypes.CHAT_COMPLETION_SETTINGS_READY,data=>{
+  if(!active||!['normal','regenerate','swipe','continue'].includes(data?.type))return;
+  const s=cardState(),only=speakers(),scenes=[];
+  if(voiceOn()&&s.general.voiceMode!=='separate'&&promptPlan(s,modelRules(s,only),only).length)scenes.push('voice');
+  if(drawPromptPlan(s,undefined,backend.drawCast(only)).length)scenes.push('draw-story');
+  if(prependStoryXiaoci(data,s.promptRules,scenes,{'用户':context()?.name1||'Master'})){
+   const id=backend.requestLog.add('正文 · 小此前置对话',{type:data.type,scenes,messages:data.messages});
+   backend.requestLog.finish(id,{state:'已加入正文请求'});
+  }
+ });
  // Each new story reply counts toward automatic 朋友圈 posts (off unless the user turns it on) and syncs <xeno_update>.
  subscribe(ctx.eventTypes.MESSAGE_RECEIVED,id=>{const floorId=id??(context()?.chat||[]).length-1,msg=context()?.chat?.[floorId];try{if(msg&&!msg.is_user&&!msg.is_system)backend.applyXenoFloorReply(floorId,msg.swipe_id??0,msg.mes||'',{protagonistName:context()?.name1||'',...backend.xenoStoryContext(context()?.chat||[],floorId)});}catch(error){notice(error.message);}chats?.storyReplied(floorId).catch(()=>{});soundHost?.received(floorId);tagSpeakers((context()?.chat||[]).slice(-1));prepareReply(floorId,voiceAhead((context()?.chat||[]).slice(-1)));momentsHost?.storyReplied();callHost?.storyReplied();});subscribe(ctx.eventTypes.CHAT_CHANGED,spaceChanged);spaceChanged();subscribe(ctx.eventTypes.CHAT_CHANGED,()=>soundHost?.chatChanged());soundHost.chatChanged();subscribe(ctx.eventTypes.MESSAGE_SWIPED,id=>{const fid=id??(context()?.chat||[]).length-1,m=context()?.chat?.[fid],chat=context()?.chat||[];try{if(m&&!m.is_user&&!m.is_system)backend.rollbackXenoOnSwipe(fid,m.swipe_id??0,m.mes||'',{protagonistName:context()?.name1||'',chat,...backend.xenoStoryContext(chat,fid)});if(Number(fid)===0)xenoHost?.syncCardProtagonist?.(context(),{forceOpening:true});}catch(error){notice(error.message);}});subscribe(ctx.eventTypes.MESSAGE_EDITED,id=>{const fid=id??(context()?.chat||[]).length-1,m=context()?.chat?.[fid],chat=context()?.chat||[];try{if(m&&!m.is_user&&!m.is_system)backend.rollbackXenoOnEdit(fid,m.swipe_id??0,m.mes||'',{protagonistName:context()?.name1||'',chat,...backend.xenoStoryContext(chat,fid)});}catch(error){notice(error.message);}});subscribe(ctx.eventTypes.MESSAGE_DELETED,()=>{try{backend.rollbackXenoOnDelete((context()?.chat||[]).length);}catch(error){notice(error.message);}});for(const event of ['MESSAGE_SWIPED','MESSAGE_EDITED','MESSAGE_DELETED'])subscribe(ctx.eventTypes[event],id=>soundHost?.messageChanged(event==='MESSAGE_DELETED'?undefined:id));
  for(const [event,group] of [['CHAT_DELETED',false],['GROUP_CHAT_DELETED',true]])if(ctx.eventTypes[event])subscribe(ctx.eventTypes[event],fileName=>xenoChatDeleted(fileName,group));

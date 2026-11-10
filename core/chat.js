@@ -3,7 +3,7 @@
 //
 // A chat preset holds the rules the model follows when it answers in the phone, how many recent story messages
 // and chat messages it sees, and the template used when a chat is brought into the story.
-import {promptText, promptOn} from './prompt-rules.js';
+import {promptText, promptOn, withXiaoci} from './prompt-rules.js';
 import {normalizeWallet, defaultWallet, PREMIUM, guessEmoji, yuan} from './wallet.js';
 import {parseDialogue, isPlaceholderRole} from './protocol.js';
 import {cardRoutes, roleTypeOf} from './routes.js';
@@ -459,7 +459,7 @@ export function buildChatRequest({prompts = {}, preset, thread, members, story =
     '接着说': now && last && last.from !== 'me' ? (group ? '群里' : partner) : ''});
   const transcript = history.length ? `【${group ? thread.name + '（群聊）' : '和' + partner}的聊天记录】\n${history.map(m => messageLine(m, user)).filter(Boolean).join('\n')}\n\n` : '';
   const text = transcript + filesText(history, user) + turn;
-  return [{role: 'system', content: system}, {role: 'user', content: pictures.length ? [{type: 'text', text}, ...pictures.map(p => ({type: 'image_url', image_url: {url: p.url}}))] : text}];
+  return withXiaoci(prompts, group ? 'group' : 'dm', [{role: 'system', content: system}, {role: 'user', content: pictures.length ? [{type: 'text', text}, ...pictures.map(p => ({type: 'image_url', image_url: {url: p.url}}))] : text}], {'用户': user});
 }
 
 const NAME_LINE = /^\s*(?:\*\*)?[[【]?([^\]】:：\n]{1,40}?)[\]】]?(?:\*\*)?\s*[:：]\s*(.*)$/;

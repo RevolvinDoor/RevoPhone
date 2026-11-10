@@ -239,13 +239,20 @@ export function normalizeCatalogItem(raw = {}) {
     slot,
     price,
     owned: raw?.owned === true,
+    listed: typeof raw?.listed === 'boolean' ? raw.listed : raw?.source !== 'crafted',
     storyPurchaseId: clip(raw?.storyPurchaseId, 300),
-    source: ['shop', 'fusion', 'restock'].includes(raw?.source) ? raw.source : 'shop',
+    storyCraftId: clip(raw?.storyCraftId, 300),
+    source: ['shop', 'fusion', 'restock', 'crafted'].includes(raw?.source) ? raw.source : 'shop',
     sourceTargetName: clip(raw?.sourceTargetName, 80),
     voiceRole: raw?.voiceRole !== undefined ? clip(raw.voiceRole, 4000) : clip(raw?.sourceTargetName, 300),
     voiceRoleExplicit: raw?.voiceRoleExplicit === true,
     effectKind: clip(raw?.effectKind, 40),
-    gender: GENDERS.includes(raw?.gender) ? raw.gender : (category === 'skin_suit' || category === 'flesh_ring' ? '扶她' : ''),
+    gender: raw?.gender === '' ? '' : GENDERS.includes(raw?.gender) ? raw.gender : (category === 'skin_suit' || category === 'flesh_ring' ? '扶她' : ''),
+    lowerBodyMode: ['replace', 'preserve'].includes(raw?.lowerBodyMode) ? raw.lowerBodyMode : 'legacy',
+    lowerBodyType: ['female', 'male', 'dual', 'none', 'custom'].includes(raw?.lowerBodyType) ? raw.lowerBodyType : 'auto',
+    lowerBodyDescription: clip(raw?.lowerBodyDescription, 1000),
+    abilities: clip(raw?.abilities, 4000),
+    abilityConditions: clip(raw?.abilityConditions, 2000),
     appearance: clip(raw?.appearance, 1000),
     bodyBuild: clip(raw?.bodyBuild, 1000),
     physiology: clip(raw?.physiology, 1000),
@@ -267,6 +274,7 @@ export function defaultXeno() {
     autoWardrobe: true,
     wardrobePending: null,
     wardrobePurchases: [],
+    wardrobeCrafts: [],
     worldCarrier: 'auto',
     freeShop: false,
     activePreset: 'xeno-default',
@@ -421,6 +429,9 @@ export function normalizeXeno(raw) {
     wardrobePurchases: Array.isArray(raw.wardrobePurchases) ? [...new Map(raw.wardrobePurchases
       .filter(entry => entry?.id && entry?.itemId && Number.isFinite(entry.amount) && entry.amount >= 0)
       .map(entry => [clip(entry.id, 300), {id: clip(entry.id, 300), itemId: clip(entry.itemId, 120), amount: Math.round(entry.amount * 100) / 100}])).values()].slice(-500) : [],
+    wardrobeCrafts: Array.isArray(raw.wardrobeCrafts) ? [...new Map(raw.wardrobeCrafts
+      .filter(entry => entry?.id && entry?.itemId)
+      .map(entry => [clip(entry.id, 300), {id: clip(entry.id, 300), itemId: clip(entry.itemId, 120)}])).values()].slice(-500) : [],
     worldCarrier: WORLD_CARRIERS.some(([k]) => k === raw.worldCarrier) ? raw.worldCarrier : 'auto',
     freeShop: raw.freeShop === true,
     activePreset,
@@ -653,6 +664,7 @@ export function extractXenoSession(xeno) {
     parasite: structuredClone(norm.parasite),
     wardrobePending: structuredClone(norm.wardrobePending),
     wardrobePurchases: structuredClone(norm.wardrobePurchases),
+    wardrobeCrafts: structuredClone(norm.wardrobeCrafts),
     pendingActionNote: norm.pendingActionNote
   };
 }
@@ -707,6 +719,7 @@ export function mergeXenoSession(globalXeno, session = null, cardKey = '') {
     parasite: s.parasite ?? fresh.parasite,
     wardrobePending: s.wardrobePending ?? null,
     wardrobePurchases: s.wardrobePurchases ?? [],
+    wardrobeCrafts: s.wardrobeCrafts ?? [],
     pendingActionNote: s.pendingActionNote ?? ''
   });
 }
@@ -1108,7 +1121,8 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
   let appearance = e.appearance;
   let bodyBuild = e.bodyBuild;
   let physiology = e.physiology;
-  const hasOrgan = Boolean(wear.organ || ['男', '扶她'].includes(e.gender));
+  const hasOrgan = wear.lowerBodyMode === 'replace'
+    ? ['male', 'dual'].includes(wear.lowerBodyType) : Boolean(wear.organ || ['男', '扶她'].includes(e.gender));
 
   if (wear.body) {
     const outer = wear.body.item;
@@ -1118,6 +1132,12 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
     physiology = outer.physiology || physiology;
   }
   if (hasOrgan && gender === '女') gender = '扶她';
+  if (wear.lowerBodyMode === 'replace') {
+    if (wear.lowerBodyType === 'female') gender = '女';
+    else if (wear.lowerBodyType === 'dual') gender = '扶她';
+    else if (wear.lowerBodyType === 'male') gender = gender === '女' || gender === '扶她' ? '扶她' : '男';
+    physiology = `${physiology}${physiology ? '；' : ''}【当前下体：${wear.organAppearance}；来源：${wear.organSource}】`;
+  }
   if (forDrawing) appearance = wearDrawingAppearance(xeno, e);
   else if (wear.head?.itemId !== wear.body?.itemId && wear.layers.length) {
     appearance = `身体：${appearance}；头部来源：${wear.headSource}；头部外观：${wear.headAppearance}`;
@@ -1232,6 +1252,7 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
     bodySource: wear.bodySource,
     extensionText: wear.extensionText,
     layerText: wear.layerText,
+    equipmentAbilities: wear.abilities,
     // 8 detail fields
     originalBody: e.originalBody,
     currentBody,
@@ -2024,6 +2045,38 @@ export function xenoApplyCognitionMod(state, {targetKey, relationOverride, fakeM
 
 // ==================== 5. 衣柜 & 购物商城 Operations ====================
 
+export function xenoStockItem(state, raw = {}) {
+  if (!raw || typeof raw !== 'object' || !['skin_suit', 'flesh_ring', 'apparel', 'consumable'].includes(raw.category)) throw Error('请选择商品分类');
+  if (typeof raw.name !== 'string' || !raw.name.trim() || raw.name.length > 160) throw Error('请填写 1–160 字的商品名称');
+  const price = raw.price;
+  if (typeof price !== 'number' || !Number.isInteger(price) || price < 0 || price > 999999) throw Error('售价应为 0–999999 的整数');
+  if (raw.category === 'apparel' && !['outerwear', 'underwear', 'privacyCover', 'accessories'].includes(raw.slot)) throw Error('请选择服饰槽位');
+  if (raw.category === 'consumable' && !['cognition', 'body', 'physiology'].includes(raw.effectKind)) throw Error('请选择道具效果');
+  const next = normalizeXeno(state), id = clip(raw.id, 120) || 'restock_' + crypto.randomUUID();
+  if (next.items.some(item => item.id === id)) throw Error('该商品编号已存在，请编辑原商品或使用新编号');
+  if (next.items.length >= 200) throw Error('装备目录已满，请先清理单品');
+  const item = normalizeCatalogItem({...raw, id, source: 'restock', owned: false, listed: true,
+    storyPurchaseId: '', storyCraftId: '', sourceTargetName: '',
+    slot: raw.category === 'apparel' ? raw.slot : raw.category,
+    gender: GENDERS.includes(raw.gender) ? raw.gender : '', lowerBodyMode: raw.lowerBodyMode === 'preserve' ? 'preserve' : 'replace'});
+  next.items.unshift(item);
+  next.pendingActionNote = `【商城手动上架】已将「${item.name}」按售价 ¥${item.price} 上架，尚未购买或穿戴。`;
+  return next;
+}
+
+export function xenoRegisterItem(state, raw = {}) {
+  if (!raw || typeof raw !== 'object' || !['skin_suit', 'flesh_ring', 'apparel'].includes(raw.category)) throw Error('请选择自制装备分类');
+  if (!String(raw.name || '').trim() || String(raw.name).length > 160) throw Error('请填写 1–160 字的装备名称');
+  const next = normalizeXeno(state), id = clip(raw.id, 120) || 'crafted_' + crypto.randomUUID();
+  if (next.items.some(item => item.id === id)) throw Error('该装备编号已存在，请编辑原装备或使用新编号');
+  if (next.items.length >= 200) throw Error('装备目录已满，请先清理单品');
+  const item = normalizeCatalogItem({...raw, id, source: 'crafted', owned: true, listed: false, price: 0,
+    gender: GENDERS.includes(raw.gender) ? raw.gender : '', lowerBodyMode: raw.lowerBodyMode === 'preserve' ? 'preserve' : 'replace'});
+  next.items.unshift(item);
+  next.pendingActionNote = `【衣柜登记】已将自制装备「${item.name}」收入衣柜，尚未穿戴。`;
+  return next;
+}
+
 export function xenoEquipItem(state, {targetKey = '__protagonist__', itemId, mode = '', replace = false}) {
   const next = normalizeXeno(state);
   const entity = getEntity(next, targetKey);
@@ -2161,10 +2214,12 @@ export function buildEntityPortraitPrompt(xeno, entity) {
   const state = normalizeXeno(xeno);
   const e = normalizeEntity(entity, entity?.id === '__protagonist__');
   const view = effectiveEntityView(state, e, {forDrawing: true});
+  const wear = resolveWear(state, e);
   const tags = [];
 
   const isFuta = view.gender === '扶她'
-    || (state.possession?.active && state.possession.organSync && (e.id === '__protagonist__' || e.name === state.possession.targetName));
+    || (state.possession?.active && state.possession.organSync && !(wear.lowerBodyMode === 'replace' && ['female', 'none'].includes(wear.lowerBodyType))
+      && (e.id === '__protagonist__' || e.name === state.possession.targetName));
   if (isFuta) tags.push('1girl, solo, futanari, full body, masterpiece, best quality');
   else if (view.gender === '男') tags.push('1boy, solo, full body, masterpiece, best quality');
   else tags.push('1girl, solo, full body, masterpiece, best quality');
@@ -2172,7 +2227,6 @@ export function buildEntityPortraitPrompt(xeno, entity) {
   const equipTags = xenoDrawTagsFor(state, e.id === '__protagonist__' ? '__protagonist__' : e.name);
   if (equipTags) tags.push(equipTags);
 
-  const wear = resolveWear(state, e);
   if (wear.body && wear.head?.itemId !== wear.body.itemId) tags.push('retracted hood');
   if (e.voreStorage?.length > 0) {
     tags.push('distended belly, stomach bulge, vore, belly bulge, squirming bulge');
@@ -2236,7 +2290,8 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
     `- 生理特征：${pView.physiology || '（待同步：请严格跟随当前角色卡与人设中的主角生理特征设定）'}`,
     ...(protNeedSync ? ['- [主角外观同步指令] 当前主角外观尚未写入终端，请务必遵循当前角色卡与世界书对主角（{{user}}）的外观/身份/身材设定，并在本轮正文末尾 <xeno_update> 中第一行输出主角完整8项数据！'] : []),
     `- 头部：${pView.headSource} ｜ 外观：${pView.headAppearance} ｜ 音色：${pView.voiceStateText}`,
-    `- 肉棒外观：${pView.organAppearance || '未显露'} ｜ 来源：${pView.organSource}`,
+    `- 下体外观：${pView.organAppearance || '本体未记录'} ｜ 来源：${pView.organSource}`,
+    ...(pView.equipmentAbilities ? [`- 装备能力及条件：${pView.equipmentAbilities}`] : []),
     `- [详情] 原始肉体：${pView.originalBody} ｜ 当前肉体：${pView.currentBody} ｜ 变更原因：${pView.changeReason}`,
     `- [详情] 本体托管状态：${pView.hostingState}`,
     `- [详情] 声带与音色：${pView.voiceStateText}`,
@@ -2257,7 +2312,8 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
         `  - 体型身材：${tv.bodyBuild}`,
         `  - 生理特征：${tv.physiology}`,
         `  - 头部：${tv.headSource} ｜ 外观：${tv.headAppearance} ｜ 音色：${tv.voiceStateText}`,
-        `  - 肉棒外观：${tv.organAppearance || '未显露'} ｜ 来源：${tv.organSource}`,
+        `  - 下体外观：${tv.organAppearance || '本体未记录'} ｜ 来源：${tv.organSource}`,
+        ...(tv.equipmentAbilities ? [`  - 装备能力及条件：${tv.equipmentAbilities}`] : []),
         `  - [详情] 原始肉体：${tv.originalBody} ｜ 当前肉体：${tv.currentBody} ｜ 变更原因：${tv.changeReason} ｜ 托管/意识：${tv.hostingState}`,
         `  - [详情] 声带与音色：${tv.voiceStateText}`,
         `  - [详情] 皮躯/肉躯挂载：${tv.livingMountText}`,
@@ -2303,7 +2359,9 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
   for (const id of [...wornSkinIds, ...wornRingIds, ...wornApparelIds]) {
     const item = state.items.find(i => i.id === id);
     if (item?.rawDesign) designBlocks.push(`【当前穿戴单品设定：${item.name}】\n${item.rawDesign}`);
+    if (item) designBlocks.push(`【装备结构字段：${item.name}】身体类型：${item.gender || '未设定'}；下体处理：${item.lowerBodyMode}；下体类型：${item.lowerBodyType}；下体设定：${item.lowerBodyDescription || '按身体类型'}。这些当前编辑字段优先于旧设计块中相冲突的描述。`);
   }
+  if (wornSkinIds.size || wornRingIds.size || wornApparelIds.size) activeRuleBlocks.push('【装备能力】状态栏中列出的装备能力仅由实际穿戴装备提供，按各自生效条件使用，不永久写入角色本体。多层装备可各自提供能力，脱下或回退穿戴即停止提供该件能力；未满足条件不宣称生效，未登记的能力不凭空追加。女性装备的下体可覆盖为女性结构，不因穿戴者原本身体类型而自动追加男性部位；保留内层模式及旧版兼容模式按有效来源判定。肉躯前方延展按该件的下体类型重构，不固定为男性结构。');
   if (wornSkinIds.size || wornRingIds.size) activeRuleBlocks.push('【叠层外观判定】穿戴顺序由内到外。外层身体形态独立，不叠加内层体型；头部从外往内取仍覆面的有效层，音色跟随该头部。收起头部只露出下一层头部。独立部位外观按状态栏单独字段。下方完整设计用于记录各层来源，已被覆盖的内层外观不得混入最终形态或绘图。');
   if (wornRingIds.size) activeRuleBlocks.push('【肉躯开关与实际外观】前后延展独立且可同时开启。仅前方开启时提供独立部位外观，仅后方开启时提供身体覆盖；头部需后方开启且本层覆面，独立部位需前方开启且本层部位启用。关闭方向保留覆盖开关设置，但该方向的外观即时失效，改取内层或本体。正文与绘图以状态栏的有效来源为准。');
 

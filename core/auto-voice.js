@@ -4,7 +4,7 @@
 // automatically so it can be changed in the 角色 App.
 //
 // 候选音色池 entry: {engine, voice, model, name, gender: 'female'|'male'|'', age: 'child'|'young'|'adult'|'old'|'', style}.
-import {promptText} from './prompt-rules.js';
+import {promptText, withXiaoci} from './prompt-rules.js';
 import {languageCode, languageName} from './languages.js';
 
 export const POOL_LIMIT = 200;
@@ -206,7 +206,7 @@ export function voiceProfile({name, language = '', card = '', said = [], story =
 /** Picking one of a list: {index (from 0), reason} by the reply, or null when the model found none fitting. */
 export function pickRequest(profile, candidates, {prompts = {}, allowNone = true} = {}) {
   const list = candidates.map((c, i) => `${i + 1}. ${c.label}`).join('\n');
-  return [{role: 'system', content: promptText(prompts, 'auto-voice', 'pick', {'可以不选': allowNone})}, {role: 'user', content: `【角色】\n${profile}\n\n【候选音色】\n${list}\n\n挑一个：`}];
+  return withXiaoci(prompts, 'auto-voice', [{role: 'system', content: promptText(prompts, 'auto-voice', 'pick', {'可以不选': allowNone})}, {role: 'user', content: `【角色】\n${profile}\n\n【候选音色】\n${list}\n\n挑一个：`}]);
 }
 export function parsePick(reply, count) {
   const body = String(reply || '').replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
@@ -220,8 +220,8 @@ export function parsePick(reply, count) {
 
 /** What to search a voice library for: {gender, age, words} by the model (words: a few short search terms). */
 export function searchRequest(profile, engine, prompts = {}, language = '') {
-  return [{role: 'system', content: promptText(prompts, 'auto-voice', 'search', {'Fish': engine === 'fish', '语言': language ? languageName(language) : ''})},
-    {role: 'user', content: `【角色】\n${profile}\n\n要找什么样的声音？`}];
+  return withXiaoci(prompts, 'auto-voice', [{role: 'system', content: promptText(prompts, 'auto-voice', 'search', {'Fish': engine === 'fish', '语言': language ? languageName(language) : ''})},
+    {role: 'user', content: `【角色】\n${profile}\n\n要找什么样的声音？`}]);
 }
 export function parseSearch(reply) {
   const line = String(reply || '').replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').split('\n').map(l => l.trim()).find(l => /[|｜]/.test(l)) || '';

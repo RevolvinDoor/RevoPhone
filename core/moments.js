@@ -7,7 +7,7 @@
 //   【赞】名字、名字            likes on the post above (or on the post being reacted to)
 //   【评论】名字：内容          a comment; 「名字 回复 名字：内容」 answers someone
 // The rules come from the chat preset: its rules marked for 朋友圈, plus its story length and posts per refresh.
-import {promptText} from './prompt-rules.js';
+import {promptText, withXiaoci} from './prompt-rules.js';
 import {plainStory} from './chat.js';
 import {isPlaceholderRole} from './protocol.js';
 
@@ -51,7 +51,7 @@ export function buildMomentsRequest({prompts = {}, preset, mode = 'posts', peopl
     '出图': images, '名单': people.map(p => p.name).join('、')});
   const ask = promptText(prompts, 'moments', 'ask', {...now, '用户': user, '人数': preset.posts,
     '动态': mode === 'posts' ? '' : postLines(post, user), '评论': mode === 'reply' ? comment.text : '', '回复谁': mode === 'reply' && comment.to ? who(comment.to, user) : ''});
-  return [{role: 'system', content: system}, {role: 'user', content: ask}];
+  return withXiaoci(prompts, 'moments', [{role: 'system', content: system}, {role: 'user', content: ask}], {'用户': user});
 }
 
 const LINE = /^\s*(?:[-*•]\s*)?[【\[]\s*(动态|配图|赞|点赞|评论)\s*[】\]]\s*(.*)$/;

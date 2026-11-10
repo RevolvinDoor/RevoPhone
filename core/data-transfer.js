@@ -75,6 +75,11 @@ function metadata(value, field) {
     string(meta.image.photoId, field + '.image.photoId', 200, {id: true});
     if (meta.image.prompt !== undefined) string(meta.image.prompt, field + '.image.prompt', 6000, {empty: true});
   }
+  if (meta.operations !== undefined) for (const [index, value] of list(meta.operations, field + '.operations', 40).entries()) {
+    const op = object(value, `${field}.operations[${index}]`);
+    for (const key of ['id','name','label','detail']) if (op[key] !== undefined) string(op[key], `${field}.operations[${index}].${key}`, key === 'detail' ? 800 : 100, {empty: true});
+    if (!['running','done','failed','paid'].includes(op.status)) fail(field + '.operations.status');
+  }
   return assistantMeta(meta);
 }
 

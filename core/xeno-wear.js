@@ -2,6 +2,15 @@ const text = (value, limit = 120) => typeof value === 'string' ? value.trim().sl
 const kinds = ['skin_suit', 'flesh_ring'];
 const last = (list, predicate) => list.slice().reverse().find(predicate);
 const facial = /(?:hair|eyes?|eyebrows?|eyelashes?|face|facial|head|ears?|horns?|bangs|braid|ponytail|pigtails|beard|lipstick|lips|makeup|mouth|teeth|fangs|头发|发色|瞳|眼睛|脸|面容|面貌|耳朵|[黑白红蓝绿金银紫粉棕灰长短]发)/i;
+export function itemLowerBodyType(item) {
+  if (item?.lowerBodyType && item.lowerBodyType !== 'auto') return item.lowerBodyType;
+  return ({女: 'female', 男: 'male', 扶她: 'dual'})[item?.gender] || 'custom';
+}
+const lowerLabel = type => ({female: '女性结构', male: '男性结构', dual: '双性结构', none: '无独立下体结构', custom: '自定义结构'})[type] || '未设定';
+export function filterLowerBodyTags(value, type) {
+  const incompatible = ['female', 'none'].includes(type) ? /futanari|penis|erection|testicles|scrotum|阴茎|肉棒|玉囊/i : null;
+  return String(value || '').split(',').map(part => part.trim()).filter(part => part && !incompatible?.test(part)).join(', ');
+}
 
 export function extensionEnabled(mode, direction) {
   return mode === direction || mode === 'both';
@@ -77,17 +86,27 @@ export function resolveWear(xeno, entity) {
   const body = last(layers, covering) || null;
   const head = last(layers, layer => covering(layer) && layer.faceMode === 'full') || null;
   const organ = last(layers, layer => layer.organOut && (
-    layer.kind === 'flesh_ring' ? extensionEnabled(layer.extendMode, 'forward')
-      : layer.item.gender === '扶她' || Boolean(layer.item.forwardExtension)
+    layer.item.lowerBodyMode === 'preserve' ? false
+      : layer.kind === 'flesh_ring' ? extensionEnabled(layer.extendMode, 'forward')
+        : layer.item.lowerBodyMode === 'replace' || layer.item.gender === '扶她' || Boolean(layer.item.forwardExtension)
   )) || null;
+  const lowerBodyMode = organ?.item.lowerBodyMode === 'replace' ? 'replace' : 'legacy';
+  const lowerBodyType = organ ? itemLowerBodyType(organ.item) : ({女: 'female', 男: 'male', 扶她: 'dual'})[entity?.gender] || 'custom';
+  const equipped = [...new Map([...layers.map(layer => layer.item),
+    ...['outerwear', 'underwear', 'privacyCover', 'accessories'].map(slot => items.get(entity?.outfit?.[slot + 'ItemId']))]
+    .filter(Boolean).map(item => [item.id, item])).values()];
+  const abilities = equipped.filter(item => item.abilities).map(item =>
+    `「${item.name}」：${item.abilities}（条件：${item.abilityConditions || '穿戴期间可用，仍需满足能力描述中的条件'}）`).join('\n');
   const headVoice = head ? text(itemVoiceRef(xeno, head.item, head), 4000) : '';
   const label = layer => layer ? `${layer.item.name}（第 ${layer.index + 1} 层）` : '本体';
   return {
-    layers, body, head, organ, headVoice,
-    bodySource: label(body), headSource: label(head), organSource: organ ? label(organ) : '本体／未显露',
+    layers, body, head, organ, headVoice, lowerBodyMode, lowerBodyType, abilities,
+    bodySource: label(body), headSource: label(head), organSource: organ ? label(organ) : '本体',
     headAppearance: head?.item.appearance || entity?.appearance || '',
-    organAppearance: organ ? (organ.item.forwardExtension || organ.item.physiology || organ.item.summary || organ.item.name)
-      : ['男', '扶她'].includes(entity?.gender) ? '本体外观（未单独记录）' : '',
+    organAppearance: organ ? (lowerBodyMode === 'replace'
+      ? `${lowerLabel(lowerBodyType)}${organ.item.lowerBodyDescription ? '：' + organ.item.lowerBodyDescription : ''}`
+      : organ.item.forwardExtension || organ.item.physiology || organ.item.summary || organ.item.name)
+      : `${lowerLabel(lowerBodyType)}（本体）`,
     extensionText: [
       body?.kind === 'flesh_ring' && body.item.backwardExtension ? `后方（${label(body)}）：${body.item.backwardExtension}` : '',
       organ?.kind === 'flesh_ring' && organ.item.forwardExtension ? `前方（${label(organ)}）：${organ.item.forwardExtension}` : ''
@@ -98,7 +117,7 @@ export function resolveWear(xeno, entity) {
 
 export function wearDrawingTags(xeno, entity) {
   const view = resolveWear(xeno, entity);
-  const organTag = /(?:futanari|penis|erection|testicles|scrotum|genital|阴茎|肉棒|玉囊)/i;
+  const organTag = /(?:futanari|penis|erection|testicles|scrotum|genital|vagina|vulva|阴茎|肉棒|玉囊|女性结构|男性结构|双性结构)/i;
   const parts = value => String(value || '').split(',').map(part => part.trim()).filter(Boolean);
   const result = [];
   if (view.body) result.push(...parts(view.body.item.drawPrompt).filter(part =>
@@ -107,7 +126,8 @@ export function wearDrawingTags(xeno, entity) {
   if (view.head && view.head.itemId !== view.body?.itemId) result.push(...parts(view.head.item.drawPrompt).filter(part => facial.test(part)));
   if (view.body && !view.head) result.push(...parts(entity.appearance).filter(part => facial.test(part)));
   if (view.organ && view.organ.itemId !== view.body?.itemId) result.push(...parts(view.organ.item.drawPrompt).filter(part => organTag.test(part)));
-  return [...new Set(result)].join(', ');
+  const tags = [...new Set(result)].join(', ');
+  return view.lowerBodyMode === 'replace' ? filterLowerBodyTags(tags, view.lowerBodyType) : tags;
 }
 
 export function wearDrawingAppearance(xeno, entity) {

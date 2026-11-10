@@ -6,6 +6,10 @@ export {PROMPT_BLOCKS};
 
 const BLOCKS = new Map(PROMPT_BLOCKS.map(b => [b.id, b]));
 const MAX = 20000;
+// Request-local provenance, never serialized or sent to providers. This keeps
+// the new role-support check from changing legacy Xeno prelude behavior.
+const XIAOCI_REQUESTS = new WeakSet();
+export const isXiaociRequest = messages => XIAOCI_REQUESTS.has(messages);
 
 export function normalizePromptRules(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -46,6 +50,46 @@ export function promptTemplate(overrides, id, part) {
 export function promptText(overrides, id, part, values = {}) {
   if (!promptOn(overrides, id)) return '';
   return fillPrompt(promptTemplate(overrides, id, part), values);
+}
+
+/** A complete pair only: disabling/clearing either half never leaves an orphan
+ * assistant message. Multiple tasks in one request share one identity and pair. */
+export function xiaociPrelude(overrides, scenes, values = {}) {
+  if (!promptOn(overrides, 'xiaoci')) return [];
+  const identity = promptText(overrides, 'xiaoci', 'identity');
+  const users = [], assistants = [];
+  for (const scene of new Set(Array.isArray(scenes) ? scenes : [scenes])) {
+    const id = 'xiaoci-' + scene;
+    const vars = {'用户': 'Master', ...values, '小此人设': assistants.length ? '' : identity};
+    const user = promptText(overrides, id, 'user', vars);
+    const assistant = promptText(overrides, id, 'assistant', vars);
+    if (!user.trim() || !assistant.trim()) continue;
+    users.push(user);
+    assistants.push(assistant);
+  }
+  return users.length ? [{role: 'user', content: users.join('\n\n')}, {role: 'assistant', content: assistants.join('\n\n')}] : [];
+}
+
+export function withXiaoci(overrides, scenes, messages, values = {}) {
+  const prelude = xiaociPrelude(overrides, scenes, values);
+  if (!prelude.length) return messages;
+  // Most callers already start with their task's system. Imported Assistant
+  // presets may start with another role, so keep an explicit task boundary.
+  const system = messages[0]?.role === 'system' ? [] : [{role: 'system', content: '按下面的功能规则、参考资料和本轮用户输入完成当前任务。'}];
+  const request = [...prelude, ...system, ...messages];
+  XIAOCI_REQUESTS.add(request);
+  return request;
+}
+
+/** Final Chat Completion payload hook. Background generateRaw/Assistant requests
+ * use type=quiet and already own their preludes; never apply story roles there. */
+export function prependStoryXiaoci(payload, overrides, scenes, values = {}) {
+  if (!['normal', 'regenerate', 'swipe', 'continue'].includes(payload?.type) || !Array.isArray(payload.messages)) return false;
+  const prelude = xiaociPrelude(overrides, scenes, values);
+  if (!prelude.length || prelude.every((message, i) =>
+    payload.messages[i]?.role === message.role && payload.messages[i]?.content === message.content)) return false;
+  payload.messages = withXiaoci(overrides, scenes, payload.messages, values);
+  return true;
 }
 
 const has = v => Array.isArray(v) ? v.length > 0 : v !== undefined && v !== null && v !== false && v !== '' && v !== 0;

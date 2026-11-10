@@ -45,6 +45,7 @@ export function readPresetFile(text, shownKind) {
 export function presetsApp(ctx) {
   const {api} = ctx, v = createView(ctx, 'presets'), drafts = new Map();
   v.on('click', '[data-action=system-rules]', () => promptRulesSheet(ctx));
+  v.on('click', '[data-action=xiaoci-rules]', () => promptRulesSheet(ctx, {initialGroup: '小此'}));
   let current = null, currentKind = 'tts', kind = 'tts';
   // Drafts changed since they were opened or saved: their bar says 未保存, also after the page is drawn again.
   const dirty = new Set(), draftKey = () => currentKind + ':' + (current?.id || 'new');
@@ -95,7 +96,7 @@ export function presetsApp(ctx) {
           ? '异构预设包含「异构终端」「衣柜」「购物商城」的全部提示词（附身、融合、皮躯、肉躯、丸吞、改造、自动同步协议、洞察扫描及商城进货比例尺/打版工作台）。点击上方任意条目即可直接手动修改提示词内容、切换按需/常驻注入或恢复默认。'
           : '配音预设让模型把台词写成带 TTS 标签的格式。角色配音不在预设里，切换预设不会改动角色。')}</div>`;
     }
-    v.draw(heading('预设', btn('add-menu', icon('add'), 'round-button', `aria-label="新增${label}预设"`), 'Preset · 4 类') + tabs + `<button class="list-row" data-action="system-rules">${icon('sliders')}<span><strong>系统提示词</strong><small>输出格式、附加规则与请求模板</small></span>${icon('next')}</button>` + body);
+    v.draw(heading('预设', btn('add-menu', icon('add'), 'round-button', `aria-label="新增${label}预设"`), 'Preset · 4 类') + tabs + `<button class="list-row" data-action="xiaoci-rules">${icon('chat')}<span><strong>小此功能助手</strong><small>共用人设 · 各功能前置 user／assistant 对话</small></span>${icon('next')}</button><button class="list-row" data-action="system-rules">${icon('sliders')}<span><strong>系统提示词</strong><small>输出格式、附加规则与请求模板</small></span>${icon('next')}</button>` + body);
   }
 
   /** The 世界书 line: how much is left out (picked in a sheet), and the tags cleaned away (status bars). */

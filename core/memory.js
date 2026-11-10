@@ -8,7 +8,7 @@
 // exact words of a long-gone moment can come back. Searching is local (BM25 over Chinese two-character pieces, as in
 // 剧情剪辑台) and, with a 向量模型 set up, mixed with embedding similarity.
 // No DOM, storage or network here: the plans, the prompts, the parsers, the search and the texts sent to the model.
-import {promptText} from './prompt-rules.js';
+import {promptText, withXiaoci} from './prompt-rules.js';
 import {messageLine} from './chat.js';
 
 export const MEMORY_LIMITS = Object.freeze({batch: [10, 200], stage: [2, 20], epic: [2, 20], recall: [0, 10], text: 6000, nodes: 600, chunk: 8, cap: 8000});
@@ -159,12 +159,12 @@ export function transcript(messages, user) {
 export function buildMemoryRequest({prompts = {}, level, messages = [], nodes = [], user = '我', who = '', group = false}) {
   const where = group ? `群聊「${who}」` : `${user}和${who}的手机聊天`;
   if (level === 0) {
-    return [{role: 'system', content: promptText(prompts, 'memory', 'system', {'摘要': true, '哪里': where})},
-      {role: 'user', content: `聊天记录：\n${transcript(messages, user)}`}];
+    return withXiaoci(prompts, 'memory', [{role: 'system', content: promptText(prompts, 'memory', 'system', {'摘要': true, '哪里': where})},
+      {role: 'user', content: `聊天记录：\n${transcript(messages, user)}`}], {'用户': user});
   }
   const system = promptText(prompts, 'memory', 'system', {'哪里': where, '下一层': levelName(level - 1), '这一层': levelName(level), '字数': level === 1 ? '300 到 700 字' : '400 到 900 字'});
-  return [{role: 'system', content: system},
-    {role: 'user', content: nodes.map(n => `【${levelName(n.level)} · ${span(n.from, n.to)}】\n${n.text}`).join('\n\n')}];
+  return withXiaoci(prompts, 'memory', [{role: 'system', content: system},
+    {role: 'user', content: nodes.map(n => `【${levelName(n.level)} · ${span(n.from, n.to)}】\n${n.text}`).join('\n\n')}], {'用户': user});
 }
 /** The written text: think blocks, code fences and a stray heading line dropped. */
 export function parseMemory(reply) {

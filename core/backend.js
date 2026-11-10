@@ -1,16 +1,17 @@
 import {withProxyHeaders} from './proxy-url.js';
 import { normalizeNarration, NARRATOR } from './narration.js';
 import {RequestLog} from './request-log.js';
-import {PROMPT_BLOCKS, normalizePromptRules} from './prompt-rules.js';
+import {PROMPT_BLOCKS, normalizePromptRules, withXiaoci, isXiaociRequest} from './prompt-rules.js';
 import { MomentStore } from './moments-store.js';
 import { AppStore } from './app-store.js';
 import { ASSISTANT_LIMITS, normalizeAssistant, validateAssistantPatch, assistantId, assistantMessage, assertAssistantThread, assistantSummary } from './assistant.js';
+import {assistantOperations} from './assistant-tools.js';
 import { FORUM_LIMITS, buildForumRequest, cleanPost as cleanForumPost, cleanReply as cleanForumReply, startingHeat } from './forum.js';
 import { buildPeekRequest, cleanPeek, peekId } from './peek.js';
 import { languageCode } from './languages.js';
 import { normalizeMoments, buildMomentsRequest } from './moments.js';
 import { normalizeCalls, buildCallRequest } from './call.js';
-import { normalizeText, activeText, customRequest, listModels, streamText, asMessages, tavernTextRequest, answerRoom, TEXT_PRESET_ID } from './llm.js';
+import { normalizeText, activeText, customRequest, listModels, streamText, asMessages, tavernTextRequest, answerRoom, assertOrderedChatSupport, TEXT_PRESET_ID } from './llm.js';
 import {vertexSettings} from './vertex.js';
 import {wardrobeActionPlan, applyWardrobeReply} from './xeno-actions.js';
 import {captureItemVoice, freezeItemVoices} from './xeno.js';
@@ -54,7 +55,7 @@ import {
     xenoStartParasite, xenoUpdateParasite, xenoReleaseParasite,
     xenoStartVore, xenoUpdateVore, xenoRemoveVore,
     xenoResetProtagonist, xenoApplyBodyMod, xenoApplyCognitionMod,
-    xenoEquipItem, xenoUpdateMountOption, xenoUnequipSlot, xenoUseConsumable
+    xenoStockItem, xenoRegisterItem, xenoEquipItem, xenoUpdateMountOption, xenoUnequipSlot, xenoUseConsumable
 } from './xeno.js';
 import {
     getChatStoreJson,
@@ -568,7 +569,10 @@ export class TTSBackend {
     }
     previewPrompt(preset) {
         const base = this.cardState(), state = preset ? { ...base, activePreset: preset.id, presets: [clone(preset)] } : base;
-        return promptPlan(state, modelRules(state)).map(entry => entry.text).join('\n\n');
+        const rules = promptPlan(state, modelRules(state)).map(entry => entry.text).join('\n\n');
+        return withXiaoci(state.promptRules, 'voice', [{role: 'system', content: rules}])
+            .map(entry => `【${entry.role}】\n${entry.content}`).join('\n\n')
+            + '\n\n（以上为小此与本插件配音规则；实际正文请求还包含酒馆预设、角色设定和聊天。）';
     }
     parse(text) {
         // 心声 and 电话 written the story's own way (*…* and the like, as the 配音预设 says) play as such.
@@ -784,14 +788,21 @@ export class TTSBackend {
         const store = writeTtMeta ? this.xenoChatStores?.get(key) : null;
         const pending = (this.xenoChatWrites.get(key) || Promise.resolve()).catch(() => {}).then(async () => {
             if (this.closed || this.deletedXenoChats?.has(key)) return;
+            const peeks = await this.apps.list('peek').catch(() => null);
+            if (peeks) payload.peeks = peeks.filter(doc => doc.chatKey === key);
+            else if (Array.isArray(previous?.peeks)) payload.peeks = clone(previous.peeks);
+            this.xenoChatRecords.set(key, clone(payload));
             const local = await this.apps.put([{id: `xeno-chat:${key}`, kind: 'xeno-chat', ...payload, at: payload.updatedAt}]).then(() => true, () => false);
             if (this.closed || this.deletedXenoChats?.has(key)) return;
             const remote = store ? await store.write(payload).catch(() => false) : false;
-            if ((!local || store && !remote) && !this.deletedXenoChats?.has(key)) {
+            if ((!peeks || !local || store && !remote) && !this.deletedXenoChats?.has(key)) {
                 this.xenoSaveWarnings ||= new Set();
                 if (!this.xenoSaveWarnings.has(key)) {
                     this.xenoSaveWarnings.add(key);
-                    this.notify(local ? '异构状态已保存在本机，但写入聊天文件失败，请稍后重试' : remote ? '异构状态已保存到聊天文件，但本机副本保存失败' : '异构状态未能保存，请检查存储空间或权限');
+                    this.notify(local || remote
+                        ? !peeks ? '异构状态已保存，但查手机记录读取失败，暂保留上次快照，请稍后重试'
+                            : local ? '异构状态已保存在本机，但写入聊天文件失败，请稍后重试' : '异构状态已保存到聊天文件，但本机副本保存失败'
+                        : '异构状态未能保存，请检查存储空间或权限');
                 }
             } else this.xenoSaveWarnings?.delete(key);
         });
@@ -801,14 +812,23 @@ export class TTSBackend {
     /** Switches active chat session for Xeno so starting a new chat or changing chats never leaks state. */
     switchChatXeno(chatKey, options = {}) {
         const nextKey = String(chatKey || '').trim();
-        if (!nextKey || this.closed) return Promise.resolve(null);
+        if (this.closed) return Promise.resolve(null);
         const epoch = (this.xenoChatEpoch || 0) + 1;
         this.xenoChatEpoch = epoch;
         const outgoing = this.activeChatKey && this.activeChatKey !== nextKey ? this.persistActiveChatXeno() : Promise.resolve();
         const pending = (this.xenoChatNavigation || Promise.resolve()).catch(() => {}).then(async () => {
             await outgoing;
             if (this.closed || epoch !== this.xenoChatEpoch) return null;
-            return this.loadChatXeno(nextKey, options, epoch);
+            if (!nextKey) {
+                this.activeChatKey = '';
+                this.setSpace(options.space || {key: '', name: '', members: []}, {syncRoles: false});
+                this.emit('peek', {});
+                return null;
+            }
+            this.xenoChatLoads ||= new Map();
+            this.xenoChatLoads.set(nextKey, {chatKey: nextKey, session: {cardKey: options.space?.key || this.cardKey()}, ref: options.storage?.ref});
+            try { return await this.loadChatXeno(nextKey, options, epoch); }
+            finally { this.xenoChatLoads.delete(nextKey); }
         });
         this.xenoChatNavigation = pending;
         return pending;
@@ -854,6 +874,28 @@ export class TTSBackend {
         }
         if (this.closed || epoch !== this.xenoChatEpoch || this.deletedXenoChats?.has(nextKey)) return null;
         const sessionToApply = record?.session || null;
+        let restoredIds = [];
+        if (Array.isArray(record?.peeks)) {
+            const restored = record.peeks.map(doc => cleanPeek({...doc, chatKey: nextKey, space: cardKey}, doc.at || Date.now()));
+            restoredIds = restored.map(doc => doc.id);
+            const stale = (await this.apps.list('peek')).filter(doc => doc.chatKey === nextKey && !restoredIds.includes(doc.id));
+            await this.apps.removeMany(stale.map(doc => doc.id));
+            await this.apps.put(restored);
+        } else if (record && hasHistory) {
+            // One-time migration for an existing chat only. New chats never inherit a card/shared snapshot.
+            const legacy = (await this.apps.list('peek')).filter(doc => !doc.chatKey && doc.space === cardKey);
+            if (legacy.length) {
+                const restored = legacy.map(doc => cleanPeek({...doc, chatKey: nextKey, space: cardKey}, doc.at));
+                restoredIds = restored.map(doc => doc.id);
+                await this.apps.put(restored);
+                await this.apps.removeMany(legacy.map(doc => doc.id));
+            }
+        }
+        if (this.deletedXenoChats?.has(nextKey)) {
+            await this.apps.removeMany(restoredIds);
+            return null;
+        }
+        if (this.closed || epoch !== this.xenoChatEpoch) return null;
         this.activeChatKey = nextKey;
         if (space) this.setSpace(space, {syncRoles: false});
         this.xenoFloors.set(nextKey, record?.floors && typeof record.floors === 'object' ? clone(record.floors) : {});
@@ -884,6 +926,7 @@ export class TTSBackend {
         if (!record) this.initializeCardRoles(userName, narratorName, {force: true});
         await this.persistActiveChatXeno(nextKey);
         this.emit('xeno', { xeno: clone(this.cardState().xeno) });
+        this.emit('peek', {});
         return {fresh: !record};
     }
     async deleteChatXenoFile(fileName, {cardKey = this.cardKey(), group = false} = {}) {
@@ -896,9 +939,14 @@ export class TTSBackend {
             : group ? record.chatKey === `tt:group:${name}` || record.chatKey === `${cardKey}|${name}`
                 : record.chatKey?.endsWith(`:${name}`) || record.chatKey === `${cardKey}|${name}`);
         for (const [key, record] of this.xenoChatRecords) if (matches(record)) this.deletedXenoChats.add(key);
+        for (const [key, record] of this.xenoChatLoads || []) if (matches(record)) this.deletedXenoChats.add(key);
         const records = await this.apps.list('xeno-chat');
         const keys = new Set(records.filter(matches).map(record => record.chatKey));
         for (const [key, record] of this.xenoChatRecords) if (matches(record)) keys.add(key);
+        for (const [key, record] of this.xenoChatLoads || []) if (matches(record)) keys.add(key);
+        const peeks = await this.apps.list('peek');
+        for (const doc of peeks) if (doc.space === cardKey && doc.chatKey &&
+            (doc.chatKey.endsWith(`:${name}`) || doc.chatKey === `${cardKey}|${name}`)) keys.add(doc.chatKey);
         for (const key of keys) {
             this.deletedXenoChats.add(key);
             await this.xenoChatWrites?.get(key)?.catch(() => {});
@@ -908,10 +956,12 @@ export class TTSBackend {
             this.xenoChatWrites?.delete(key);
             this.xenoSessions.delete(key);
             this.xenoFloors.delete(key);
+            await this.apps.removeMany(peeks.filter(doc => doc.chatKey === key).map(doc => doc.id));
             const images = await this.apps.list('xeno-image');
             const imageKeys = new Set([...images.map(image => image.key), ...(this.xenoImages?.keys() || [])]);
             for (const imageKey of imageKeys) if (imageKey?.startsWith(`portrait:${key}:`)) await this.persistXenoImage(imageKey, '');
         }
+        this.emit('peek', {});
     }
     /** Snapshots the pre-floor Xeno session right before a reply is generated or applied. */
     snapshotXenoBeforeFloor(floorId) {
@@ -934,6 +984,16 @@ export class TTSBackend {
                 item.owned = false;
                 item.storyPurchaseId = '';
             }
+        }
+        const craftIds = new Set((session?.wardrobeCrafts || []).map(receipt => receipt.id));
+        for (const receipt of current.wardrobeCrafts || []) {
+            if (craftIds.has(receipt.id)) continue;
+            const item = global.items.find(candidate => candidate.id === receipt.itemId);
+            if (item?.storyCraftId === receipt.id) item.owned = false;
+        }
+        for (const receipt of session?.wardrobeCrafts || []) {
+            const item = global.items.find(candidate => candidate.id === receipt.itemId);
+            if (item?.storyCraftId === receipt.id) item.owned = true;
         }
         return {xeno: syncXenoWithRoutes(mergeXenoSession(global, session, this.cardKey()), this.routesHere(), this.cardKey()), balance};
     }
@@ -1113,6 +1173,10 @@ export class TTSBackend {
                 case 'selectModTarget': xeno.bodyModTarget = String(p.key || '__protagonist__'); return xeno;
                 case 'selectCogModTarget': xeno.cogModTarget = String(p.key || '__protagonist__'); return xeno;
                 case 'deleteAnchor': xeno.possession.anchors = xeno.possession.anchors.filter(a => a.name !== p.name); return xeno;
+                case 'stockItem': return xenoStockItem(xeno, {...p, ...('voiceRole' in p
+                    ? {voiceRole: captureItemVoice(p.voiceRole, {...this.settings, routes: this.routesHere()}), voiceRoleExplicit: true} : {})});
+                case 'registerItem': return xenoRegisterItem(xeno, {...p, ...('voiceRole' in p
+                    ? {voiceRole: captureItemVoice(p.voiceRole, {...this.settings, routes: this.routesHere()}), voiceRoleExplicit: true} : {})});
                 case 'saveItem': {
                     const idx = xeno.items.findIndex(i => i.id === p?.id);
                     const merged = idx >= 0 ? { ...xeno.items[idx], ...p } : p;
@@ -1152,7 +1216,7 @@ export class TTSBackend {
                     const existingById = new Map((xeno.items || []).map(i => [i.id, i]));
                     const existingByName = new Map((xeno.items || []).map(i => [`${i.category}:${i.name}`, i]));
                     let list = replaceRestock
-                        ? (xeno.items || []).filter(i => i.source === 'shop')
+                        ? (xeno.items || []).filter(i => i.source !== 'restock')
                         : (xeno.items || []).slice();
                     const byId = new Map(list.map((item, idx) => [item.id, idx]));
                     xeno.itemVoiceBindings ||= {};
@@ -1190,6 +1254,7 @@ export class TTSBackend {
         const result = this.saveXeno((xeno, next) => {
             const found = xeno.items.find(i => i.id === itemId);
             if (!found) throw Error('商城里没有这件商品');
+            if (!found.owned && found.listed === false) throw Error('这件装备不在商店出售');
             const cost = !found.owned && !xeno.freeShop ? found.price : 0;
             found.owned = true;
             let equipped = xeno;
@@ -1460,6 +1525,7 @@ export class TTSBackend {
         const text = activeText(this.settings.text);
         if (text.source === 'custom') return customRequest({ text, key: this.textKeys.get(text.id) || '', prompt: request.prompt, responseLength: request.responseLength, fetch: this.textFetch, signal: request.signal, context });
         if (!context?.generateRaw) throw Error('当前酒馆版本不支持后台生成');
+        if (isXiaociRequest(request.prompt)) assertOrderedChatSupport(context, request.prompt);
         // The chat-completion request the tavern builds is kept, so an empty answer can be asked again as a stream:
         // "假流式" channels only answer streamed requests, and the tavern's background generation never streams.
         // A length the task asks for replaces the tavern's own for that request: the tavern's, when longer, is kept.
@@ -2392,18 +2458,22 @@ export class TTSBackend {
         });
     }
     async clearAssistantThread(id) {
-        return this.mutateAssistantThread(id, thread => {
+        const result = await this.mutateAssistantThread(id, thread => {
             thread.messages = [];
             thread.titleEdited = false;
             thread.title = '新对话';
         });
+        const tasks = (await this.apps.list('assistant-task')).filter(task => task.threadId === assistantId(id));
+        await this.apps.removeMany(tasks.map(task => task.id));
+        return result;
     }
     async deleteAssistantThread(id) {
         this.assertOpen();
         const threadId = assistantId(id), thread = await this.apps.get(threadId);
         if (!thread) return false;
         assertAssistantThread(thread);
-        await this.apps.removeMany([threadId, bookId(threadId), 'vec:' + threadId]);
+        const tasks = (await this.apps.list('assistant-task')).filter(task => task.threadId === threadId);
+        await this.apps.removeMany([threadId, bookId(threadId), 'vec:' + threadId, ...tasks.map(task => task.id)]);
         this.noteGone('assistant', [threadId], Math.max(thread.restoredAt || 0, thread.updatedAt || 0));
         this.emit('assistant', { threadId, deleted: true, persisted: true });
         return true;
@@ -2554,7 +2624,31 @@ export class TTSBackend {
     // ---------- 查手机 ----------
     /** A character's phone as the model made it up; replaces the earlier one of the same person. space: the card it was
      *  looked at under (spaceKey() when the look began; the tavern may have moved to another card while it was written). */
-    async savePeek(snapshot, space = this.spaceKey()) { const doc = cleanPeek({ ...snapshot, space }, Date.now()); return (await this.appsMutate('peek', () => this.apps.put([doc])))[0]; }
+    peekScope() { return {space: this.cardKey(), chatKey: this.activeChatKey || ''}; }
+    async listPeeks(scope = this.peekScope()) {
+        if (!scope.chatKey) return [];
+        return (await this.apps.list('peek')).filter(doc => (doc.chatKey || '') === scope.chatKey && (doc.space || '') === scope.space);
+    }
+    async getPeek(name, scope = this.peekScope()) {
+        if (!scope.chatKey) return null;
+        const doc = await this.apps.get(peekId(name, scope.space, scope.chatKey));
+        return doc && (doc.chatKey || '') === scope.chatKey && (doc.space || '') === scope.space ? doc : null;
+    }
+    async savePeek(snapshot, scope = this.peekScope()) {
+        if (!scope.chatKey) throw Error('请先打开角色卡的聊天，再查手机');
+        if (this.deletedXenoChats?.has(scope.chatKey)) throw Error('原聊天已删除，查手机结果没有保存');
+        const doc = cleanPeek({...snapshot, ...scope}, Date.now());
+        const saved = (await this.appsMutate('peek', () => this.apps.put([doc])))[0];
+        if (this.deletedXenoChats?.has(scope.chatKey)) { await this.apps.remove(doc.id); throw Error('原聊天已删除，查手机结果没有保存'); }
+        if (scope.chatKey) await this.persistActiveChatXeno(scope.chatKey);
+        return saved;
+    }
+    async deletePeek(name) {
+        const scope = this.peekScope();
+        await this.appsMutate('peek', () => this.apps.remove(peekId(name, scope.space, scope.chatKey)));
+        if (scope.chatKey) await this.persistActiveChatXeno(scope.chatKey);
+        return true;
+    }
 
     /** Runs a change to the moments and tells the phone. */
     async momentsMutate(task) {
@@ -2940,6 +3034,7 @@ export class TTSBackend {
             generatedPhotos: () => this.generatedPhotos().then(({ count, bytes, sources }) => ({ count, bytes, sources: Object.fromEntries(Object.entries(sources).map(([k, { ids, ...rest }]) => [k, rest])) })), deleteGeneratedPhotos: sources => this.deleteGeneratedPhotos(sources),
             saveMoments: patch => this.saveMoments(clone(patch)), saveCalls: patch => this.saveCalls(clone(patch)),
             saveAssistant: patch => this.saveAssistant(patch), assistantThreads: () => this.assistantThreads(), assistantThread: id => this.assistantThread(id),
+            assistantOperations: async id => (await this.apps.list('assistant-task')).filter(task => task.threadId === id).map(task => ({turnId: task.turnId, operations: assistantOperations(task.calls)})),
             newAssistantThread: () => this.newAssistantThread(), appendAssistantMessage: (id, value, expectedLastId, expectedRevision) => this.appendAssistantMessage(id, value, expectedLastId, expectedRevision),
             renameAssistantThread: (id, title) => this.renameAssistantThread(id, title),
             editAssistantMessage: (id, mid, text, expectedText) => this.editAssistantMessage(id, mid, text, expectedText),
@@ -2975,9 +3070,9 @@ export class TTSBackend {
             deleteForum: id => this.appsMutate('forum', () => this.apps.remove(id)),
             clearForum: () => this.appsMutate('forum', async () => { const n = await this.clearHere(() => this.apps.list('forum'), id => this.apps.remove(id), () => this.apps.clear('forum')); await this.apps.remove(this.hotId()); return n; }),
             // 查手机: the open card's snapshot of a person, else the shared one from before 分区.
-            listPeeks: async () => { const here = this.here(); return (await this.apps.list('peek')).filter(p => inSpace(p, here)); },
-            getPeek: async name => (await this.apps.get(peekId(name, this.spaceKey()))) || (this.spaceKey() ? this.apps.get(peekId(name)) : null),
-            deletePeek: name => this.appsMutate('peek', async () => { await this.apps.remove(peekId(name, this.spaceKey())); if (this.spaceKey()) await this.apps.remove(peekId(name)); return true; }),
+            listPeeks: () => this.listPeeks(),
+            getPeek: name => this.getPeek(name),
+            deletePeek: name => this.deletePeek(name),
             /** 分区: the card open now ({key, name}) and whether 分区 is on. */
             phoneSpace: () => ({ ...clone(this.space), on: !!this.here() }),
             saveChatPreset: preset => this.saveChatPreset(preset), deleteChatPreset: id => this.deleteChatPreset(id), selectChatPreset: id => this.selectChatPreset(id),

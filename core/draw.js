@@ -12,7 +12,7 @@
 //   位置 Pn (only when pictures are planned after the reply: which paragraph the picture follows)
 // Two ways to get blocks (draw.mode): 'separate' asks the model in its own request after the reply is written and
 // inserts the blocks; 'inline' injects the rules into the story request so the reply carries the blocks itself.
-import {promptText, promptTemplate} from './prompt-rules.js';
+import {promptText, promptTemplate, withXiaoci} from './prompt-rules.js';
 import {defaultDrawParams, normalizeDrawParams, guardParams, relayUrl, NAI_MODEL_NAMES} from './novelai.js';
 import {tokenBudget, counterNow, estimateTokens, countField, tagCost} from './tokens.js';
 import {strength as vibeStrength} from './vibes.js';
@@ -615,21 +615,22 @@ export function paragraphs(message) {
   return (story.length ? story : out).map(({aside, ...p}) => p);
 }
 /** Chat-style request asking for the picture blocks of one reply. before: [{name, text}] earlier messages. */
-export function planRequest(settings, {message, before = [], preset, only = null, lore = ''} = {}) {
+export function planRequest(settings, {message, before = [], preset, only = null, lore = '', prelude = true} = {}) {
   const p = activePreset(settings.draw, preset);
   const {entries, fill, tail} = ruleText(settings, p, promptTemplate(settings.promptRules, 'draw-story', 'planFormat'), planContract, only);
   const system = entries.map(e => fill(e.text)).join('\n\n') + '\n\n' + tail;
   // 世界书: the entries the tavern would turn on for this story (the phone's choice of books), for era, places and looks.
   const ask = promptText(settings.promptRules, 'draw-story', 'planAsk', {'世界书': lore.trim(), '前情': before.map(m => `${m.name}：${m.text}`).join('\n'),
     '正文': paragraphs(message).map((x, i) => `[P${i + 1}] ${x.text}`).join('\n'), '出图数量': countOf(p)});
-  return [{role: 'system', content: system}, {role: 'user', content: ask}];
+  const messages = [{role: 'system', content: system}, {role: 'user', content: ask}];
+  return prelude ? withXiaoci(settings.promptRules, 'draw-story', messages) : messages;
 }
 /** 「从剧情生成」 in the drawing app: a request of its own (no story preset, no chain of thought), worded for the engine. */
 export function suggestRequest(settings, {before = [], only = null} = {}) {
   const gpt = settings.draw?.engine === 'gpt';
   const system = [settings.draw?.comic?.enabled ? comicGuide(settings.draw.comic, {roles: drawable(settings).filter(role => !only || only.includes(role.name))}) : promptText(settings.promptRules, 'draw-prompt', 'suggest', {'GPT': gpt, '人物规则': peopleRules(settings, [], only), '描述句规则': sentenceRule(settings), '长度': gpt ? '' : lengthLine(settings)}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
   const story = before.length ? before.map(m => `${m.name}：${m.text}`).join('\n') : '（还没有剧情）';
-  return [{role: 'system', content: system}, {role: 'user', content: settings.draw?.comic?.enabled ? `请将最近剧情中的一个完整事件转译为一页漫画：\n${story}` : promptText(settings.promptRules, 'draw-prompt', 'suggestAsk', {'剧情': story})}];
+  return withXiaoci(settings.promptRules, 'draw-suggest', [{role: 'system', content: system}, {role: 'user', content: settings.draw?.comic?.enabled ? `请将最近剧情中的一个完整事件转译为一页漫画：\n${story}` : promptText(settings.promptRules, 'draw-prompt', 'suggestAsk', {'剧情': story})}]);
 }
 /** How long the line may be, for NovelAI ('' for the other engines). */
 function lengthLine(settings) {
@@ -669,7 +670,7 @@ function peopleRules(settings, cast = [], only = null) {
 export function writeRequest(settings, {idea = '', cast = [], only = null} = {}) {
   const gpt = settings.draw?.engine === 'gpt';
   const system = [settings.draw?.comic?.enabled ? comicGuide(settings.draw.comic, {roles: drawable(settings).filter(role => !only || only.includes(role.name))}) : promptText(settings.promptRules, 'draw-prompt', 'write', {'GPT': gpt, '人物规则': peopleRules(settings, cast, only), '描述句规则': sentenceRule(settings), '长度': gpt ? '' : lengthLine(settings)}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
-  return [{role: 'system', content: system}, {role: 'user', content: settings.draw?.comic?.enabled ? `请按下面的需求生成一页漫画分镜：\n${String(idea).trim()}` : promptText(settings.promptRules, 'draw-prompt', 'writeAsk', {'想画的': String(idea).trim()})}];
+  return withXiaoci(settings.promptRules, 'draw-write', [{role: 'system', content: system}, {role: 'user', content: settings.draw?.comic?.enabled ? `请按下面的需求生成一页漫画分镜：\n${String(idea).trim()}` : promptText(settings.promptRules, 'draw-prompt', 'writeAsk', {'想画的': String(idea).trim()})}]);
 }
 /**
  * 改提示词再画: the prompt in Chinese to read ('translate'), or rewritten the way the user asked in their own words
@@ -678,9 +679,9 @@ export function writeRequest(settings, {idea = '', cast = [], only = null} = {})
 export function tagTextRequest(settings, text, mode = 'translate', wish = '') {
   const gpt = settings.draw?.engine === 'gpt', prompt = String(text ?? '').trim();
   const system = [hasComicPage(prompt) ? comicGuide(settings.draw?.comic, {roles: drawable(settings)}) + '\n保留当前漫画页的分段标记、台词归属与画格结构，仅按用户要求翻译视觉词或修改画面。' : promptText(settings.promptRules, 'draw-prompt', mode === 'revise' ? 'revise' : 'translate', {'GPT': gpt}), xenoDrawingRule(settings)].filter(Boolean).join('\n\n');
-  if (mode !== 'revise') return [{role: 'system', content: system}, {role: 'user', content: prompt}];
-  return [{role: 'system', content: system},
-    {role: 'user', content: promptText(settings.promptRules, 'draw-prompt', 'reviseAsk', {'提示词': prompt, '想怎么改': String(wish ?? '').trim() || '把里面写的中文换成英文 tag，别的不动'})}];
+  if (mode !== 'revise') return withXiaoci(settings.promptRules, 'draw-translate', [{role: 'system', content: system}, {role: 'user', content: prompt}]);
+  return withXiaoci(settings.promptRules, 'draw-revise', [{role: 'system', content: system},
+    {role: 'user', content: promptText(settings.promptRules, 'draw-prompt', 'reviseAsk', {'提示词': prompt, '想怎么改': String(wish ?? '').trim() || '把里面写的中文换成英文 tag，别的不动'})}]);
 }
 /** The answer of tagTextRequest: without thinking, a code fence around it or 「翻译：」 in front. */
 export const tagTextAnswer = reply => String(reply ?? '').replace(/<(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '').trim()

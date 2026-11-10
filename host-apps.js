@@ -2,7 +2,7 @@
 // the phone's own text model) and nothing is written into the story. One model request per app at a time.
 import {currentDm} from './core/chats.js';
 import {buildForumRequest, parseForum, postLines} from './core/forum.js';
-import {buildPeekRequest, parsePeek, peekId, mergePeek} from './core/peek.js';
+import {buildPeekRequest, parsePeek, mergePeek} from './core/peek.js';
 import {storyLines} from './core/moments.js';
 import {inSpace, activeChatPreset, cleanTagged} from './core/chat.js';
 import {worldInfoFor, loreOptions} from './host-lore.js';
@@ -104,28 +104,28 @@ export function createAppsHost({context, settings, backend, memory = null}) {
   /** Looks into a character's phone: a new snapshot, or (keep) what is new since last time put onto the old one. */
   function peekLook(name, {keep = false} = {}) {
     return run('peek', async ctx => {
-      const key = backend.spaceKey(), {preset, user} = base(), contact = backend.contacts().find(c => c.name === name);
+      const scope = backend.peekScope(), {preset, user} = base(), contact = backend.contacts().find(c => c.name === name);
       if (!contact) throw Error(`联系人里没有「${name}」`);
       const person = {name, persona: contact.persona, card: contact.persona ? '' : card(name)};
       const thread = currentDm(await backend.threads(), name);
       const history = thread ? (await backend.chats.get(thread.id)).messages.filter(m => m.kind !== 'system').slice(-20) : [];
       const story = storyLines(ctx.chat, preset, user);
       const remembered = memory ? await memory.aboutPeople([name]).catch(() => '') : '';
-      const before = keep ? (await backend.apps.get(peekId(name, key))) || (key ? await backend.apps.get(peekId(name)) : null) : null;
+      const before = keep ? await backend.getPeek(name, scope) : null;
       const earlierStory = memory?.recallStory
         ? await memory.recallStory(name, {recentCount: preset.context})
         : (memory?.storyMemory() || '');
       const prompt = buildPeekRequest({prompts: settings().promptRules, preset, before, earlier: earlierStory, person, story, user, userPersona: userPersona(), history, memory: remembered, images: !!backend.drawReady(), lore: await lore(preset, [person], story, history.map(m => m.text || ''))});
       const found = parsePeek(await ask(ctx, prompt, preset), {name, user});
-      return backend.savePeek({name, ...mergePeek(before, found)}, key);
+      return backend.savePeek({name, ...mergePeek(before, found)}, scope);
     });
   }
 
   /** Draws one photo of a character's album (index 'wallpaper': their wallpaper, upright). Without allowPaid, only when
    *  the free tier covers it. */
   async function peekDraw(name, index, {allowPaid = false} = {}) {
-    // The open card's snapshot of this person, else the shared one from before 分区.
-    const key = backend.spaceKey(), snap = (await backend.apps.get(peekId(name, key))) || (key ? await backend.apps.get(peekId(name)) : null), id = snap?.id;
+    // The current story chat's snapshot. Never fall back to another chat or a shared legacy snapshot.
+    const scope = backend.peekScope(), snap = await backend.getPeek(name, scope), id = snap?.id;
     const wall = index === 'wallpaper', pick = doc => wall ? doc.wallpaper : doc.photos?.[index], photo = snap && pick(snap);
     if (!photo) throw Error(wall ? '没有壁纸，「再看一次」后就有了' : '这张照片已经不在了');
     if (!photo.tags) throw Error((wall ? '壁纸' : '这张照片') + '没有画图用的描述，「再看一次」后就有了');
@@ -142,9 +142,10 @@ export function createAppsHost({context, settings, backend, memory = null}) {
       if (wall) { const up = sizeFor(input.params, '竖'), side = up.width, snap64 = n => Math.max(64, Math.round(n / 64) * 64); input.params = {...input.params, ...(up.width === up.height ? {width: snap64(side * .8125), height: snap64(side * 1.1875)} : up)}; }
       const result = await backend.generateImage({...input, allowPaid, name: `查手机-${name}`, key: `peek:${name}:${index}`, label: `查手机 · ${name}${wall ? ' · 壁纸' : ''}`});
       await set({photoId: result.photoId, state: 'done', note: ''});
+      if (scope.chatKey) await backend.persistActiveChatXeno(scope.chatKey);
       return result.photoId;
     } catch (error) {
-      await set({state: 'failed', note: error.code === 'PAID' ? backend.paidPrompt().note : error.message.slice(0, 200)});
+      await set({state: 'failed', note: error.code === 'PAID' ? backend.paidPrompt().note : error.message.slice(0, 200)}).catch(() => {});
       throw error;
     }
   }

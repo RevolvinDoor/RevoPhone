@@ -7,6 +7,7 @@ import {createView, esc, heading} from './common.js';
 import {icon} from './icons.js';
 import {getEntity, effectiveEntityView, formatVoiceRoleLabel, resolveWear, itemOccupant, wearLayers, itemVoiceRef} from '../core/xeno.js';
 import {extensionEnabled} from '../core/xeno-wear.js';
+import {openItemEditor} from './xeno-item-editor.js';
 import {blobToDataUrl, generateItemPreview, openVoicePoolPickerDialog, openItemVoiceListPicker, generateEntityPortrait, openEntityPortraitDialog} from './xeno-media.js';
 
 const SLOT_NAMES = {
@@ -62,7 +63,8 @@ export function wardrobeApp(ctx) {
           </select>
         </div>
         <p class="xeno-hint">当前显性外貌：<b>${esc(view.gender || '未定')}</b> ｜ 🎙️ 声带音色：<b>${esc(view.voiceStateText)}</b></p>
-        <p class="xeno-hint">身体来源：${esc(view.bodySource)}<br>头部：${esc(view.headSource)} · ${esc(view.headAppearance || '未记录')}<br>肉棒外观：${esc(view.organAppearance || '未显露')} · 来源：${esc(view.organSource)}</p>
+        <p class="xeno-hint">身体来源：${esc(view.bodySource)}<br>头部：${esc(view.headSource)} · ${esc(view.headAppearance || '未记录')}<br>下体外观：${esc(view.organAppearance || '本体未记录')} · 来源：${esc(view.organSource)}</p>
+        ${view.equipmentAbilities ? `<p class="xeno-hint">装备能力及条件：<br>${esc(view.equipmentAbilities).replace(/\n/g, '<br>')}</p>` : ''}
         ${view.extensionText ? `<p class="xeno-hint">有效延展设定：${esc(view.extensionText)}</p>` : ''}
         <div class="xeno-row-controls">
           <span class="xeno-hint">穿戴层次从内到外排列；脱下内层会先脱去它外面的各层。</span>
@@ -78,6 +80,7 @@ export function wardrobeApp(ctx) {
               <p class="slot-desc">${esc(item.summary || item.bodyBuild)}</p>
               <p class="xeno-hint">绑定音色：${esc(formatVoiceRoleLabel(voice, voicePool) || '未绑定，成为有效头部时使用本体音色')}</p>
               <div class="xeno-row-controls">
+                <button type="button" class="xeno-mini-btn" data-action="view-design" data-id="${id}">编辑设定与能力</button>
                 <button type="button" class="xeno-mini-btn" data-action="pick-item-list-voice" data-id="${id}">从列表选</button>
                 <button type="button" class="xeno-mini-btn" data-action="pick-item-fav-voice" data-id="${id}">♡ 从收藏夹选</button>
               </div>
@@ -85,9 +88,9 @@ export function wardrobeApp(ctx) {
               ${!isSkin ? `<div class="xeno-row-controls">${[['idle','静息'],['forward','前方延展'],['backward','后方延展']].map(([mode,label]) => `<button type="button" class="xeno-mini-btn ${(mode === 'idle' ? layer.extendMode === 'idle' : extensionEnabled(layer.extendMode, mode)) ? 'primary' : ''}" aria-pressed="${mode === 'idle' ? layer.extendMode === 'idle' : extensionEnabled(layer.extendMode, mode)}" data-action="ring-mode" data-id="${id}" data-mode="${mode}">${label}</button>`).join('')}</div><p class="xeno-hint">前、后方延展可同时开启；再次点击只关闭对应方向，静息会收起两个方向。</p>` : ''}
               <div class="xeno-row-controls">
                 ${[['full','全脸覆面'],['neck','收起本层头部']].map(([mode,label]) => `<button type="button" class="xeno-mini-btn ${layer.faceMode === mode ? 'primary' : ''}" data-action="${isSkin ? 'skin-face' : 'ring-face'}" data-id="${id}" data-mode="${mode}">${label}</button>`).join('')}
-                <button type="button" class="xeno-mini-btn ${layer.organOut ? 'accent' : ''}" data-action="layer-organ" data-id="${id}">${layer.organOut ? '外露部位：启用' : '外露部位：收起'}</button>
+                <button type="button" class="xeno-mini-btn ${layer.organOut ? 'accent' : ''}" data-action="layer-organ" data-id="${id}" ${item.lowerBodyMode === 'preserve' ? 'disabled' : ''}>${item.lowerBodyMode === 'preserve' ? '本件设定：保留内层' : layer.organOut ? '本层下体：启用' : '本层下体：保留内层'}</button>
               </div>
-              ${!isSkin ? '<p class="xeno-hint">头部覆盖需后方延展开启；外露部位需前方延展开启。关闭延展会保留覆盖设置，再次开启时恢复。</p>' : ''}
+              ${!isSkin ? '<p class="xeno-hint">头部覆盖需后方延展开启；本层下体需前方延展开启，并按装备设定的类型处理。关闭延展会保留覆盖设置，再次开启时恢复。</p>' : ''}
             </div>`;
           }).join('') : '<p class="xeno-hint">尚未穿戴皮躯或肉躯，可从下方库存叠加穿戴。</p>'}
           ${['outerwear', 'underwear', 'privacyCover', 'accessories'].map((slot, idx) => `
@@ -121,6 +124,7 @@ export function wardrobeApp(ctx) {
           <strong>我的衣柜库存（仅显示已拥有单品）</strong>
           <small>共 ${owned.length} 件</small>
         </div>
+        <div class="xeno-row-controls"><button type="button" class="xeno-btn primary" data-action="register-crafted">＋ 登记自制装备</button><span class="xeno-hint">已制作或已获得的装备可直接入柜。</span></div>
         ${activeTab === 'apparel' ? `
           <div class="xeno-chip-group">
             ${[['all', '全部服饰'], ['outerwear', '外搭衣物'], ['underwear', '内衣裤装'], ['privacyCover', '隐私遮挡'], ['accessories', '附加饰品']].map(([k, label]) => `
@@ -156,6 +160,8 @@ export function wardrobeApp(ctx) {
                     <p class="tb-desc">${esc(item.summary)}</p>
                     ${occupied ? `<p class="tb-spec">使用中：${esc(occupied.entity.name || '主角')}${occupied.layer ? ` · 第 ${occupied.layer} 层` : ''}</p>` : ''}
                     ${item.bodyBuild ? `<p class="tb-spec"><b>体态：</b>${esc(item.bodyBuild)}</p>` : ''}
+                    ${item.gender ? `<p class="tb-spec"><b>身体类型：</b>${esc(item.gender)}${item.source === 'crafted' ? ' · 自制／已获得' : ''}</p>` : ''}
+                    ${item.abilities ? `<p class="tb-spec"><b>特殊能力：</b>${esc(item.abilities)}</p>` : ''}
                     <div class="tb-bottom-row">
                       <div class="tb-buy-group">
                         ${occupied ? '<button type="button" class="tb-btn-buy" disabled>已占用，请先脱下</button>' : item.category === 'flesh_ring' ? `
@@ -176,7 +182,7 @@ export function wardrobeApp(ctx) {
         ` : `
           <div class="xeno-reserved-box">
             <p>衣柜的「${activeTab === 'skin_suit' ? '皮躯库' : activeTab === 'flesh_ring' ? '肉躯库' : '服饰与饰品库'}」目前为空</p>
-            <p class="sub">所有初始单品默认陈列在【购物商城】中，你可以前往商城购买入库，或在异构终端通过「融合解除·皮躯化/肉躯化」转化目标角色。</p>
+            <p class="sub">可以直接登记自制装备，也可前往商城购买，或通过异构终端的转化功能获得。</p>
             <div class="xeno-row-controls" style="justify-content:center;margin-top:10px">
               <button type="button" class="xeno-btn primary" data-action="go-mall">🛒 前往购物商城选购</button>
             </div>
@@ -187,68 +193,7 @@ export function wardrobeApp(ctx) {
   }
 
   function openDesignSheet(item) {
-    const isLiving = item.category === 'skin_suit' || item.category === 'flesh_ring';
-    const state = api.getState();
-    const voicePool = state.voicePool || [];
-    let currentVoice = itemVoiceRef(state.xeno, item);
-    const d = ctx.dialog(item.name, `
-      <div class="xeno-sheet-form">
-        ${item.imageData ? `<img class="wardrobe-sheet-img" src="${esc(item.imageData)}" alt="">` : ''}
-        <label class="xeno-field-inline"><span>单品名称</span><input class="xeno-input" data-item="name" value="${esc(item.name)}"></label>
-        <label class="xeno-field-inline"><span>一句话简介</span><input class="xeno-input" data-item="summary" value="${esc(item.summary)}"></label>
-        ${isLiving ? `
-          <div class="xeno-field-inline">
-            <span>🎙️ 绑定声带音色</span>
-            <p class="xeno-hint" data-item-voice-label>当前音色：${esc(formatVoiceRoleLabel(currentVoice, voicePool) || '未绑定，使用本体音色')}</p>
-            <div class="xeno-row-controls">
-              <button type="button" class="xeno-mini-btn" data-pick-list-voice>从列表选</button>
-              <button type="button" class="xeno-mini-btn" data-pick-fav-voice>♡ 从收藏夹选</button>
-            </div>
-            <p class="xeno-hint">${item.category === 'skin_suit' ? '全脸覆面时生效' : '后方延展·全脸覆面时生效'}。选择后自动永久保存，换聊天后仍保留。</p>
-          </div>
-        ` : ''}
-        <label class="xeno-field-inline"><span>外貌特征</span><textarea class="xeno-textarea" rows="2" data-item="appearance">${esc(item.appearance)}</textarea></label>
-        <label class="xeno-field-inline"><span>体型身材</span><textarea class="xeno-textarea" rows="2" data-item="bodyBuild">${esc(item.bodyBuild)}</textarea></label>
-        <label class="xeno-field-inline"><span>生理特征</span><textarea class="xeno-textarea" rows="2" data-item="physiology">${esc(item.physiology)}</textarea></label>
-        <label class="xeno-field-inline"><span>生图提示词 (Danbooru Tags)</span><textarea class="xeno-textarea" rows="2" data-item="drawPrompt">${esc(item.drawPrompt)}</textarea></label>
-        <label class="xeno-field-inline"><span>完整 XML 设定块（穿戴时自动注入提示词）</span><textarea class="xeno-textarea" rows="6" data-item="rawDesign">${esc(item.rawDesign)}</textarea></label>
-        <div class="actions">
-          <button type="button" class="secondary" data-sheet-cancel>关闭</button>
-          <button type="button" class="primary" data-sheet-save>保存设定</button>
-        </div>
-      </div>
-    `);
-    d.body.addEventListener('click', e => {
-      if (e.target.closest('[data-sheet-cancel]')) d.close(null);
-      if (e.target.closest('[data-pick-fav-voice],[data-pick-list-voice]')) {
-        const picker = e.target.closest('[data-pick-list-voice]') ? openItemVoiceListPicker : openVoicePoolPickerDialog;
-        picker(ctx, {
-          currentValue: currentVoice,
-          onSelect: (ref, label) => {
-            api.xenoAct('saveItem', {id: item.id, voiceRole: ref});
-            currentVoice = ref;
-            d.body.querySelector('[data-item-voice-label]').textContent = `当前音色：${label || '未绑定，使用本体音色'}`;
-            ctx.notify(ref ? `已为「${item.shortName || item.name}」保存绑定${label}` : '已清除该单品的音色绑定');
-          }
-        });
-        return;
-      }
-      if (e.target.closest('[data-sheet-save]')) {
-        const read = k => d.body.querySelector(`[data-item="${k}"]`)?.value?.trim() ?? '';
-        api.xenoAct('saveItem', {
-          id: item.id,
-          name: read('name') || item.name,
-          summary: read('summary'),
-          appearance: read('appearance'),
-          bodyBuild: read('bodyBuild'),
-          physiology: read('physiology'),
-          drawPrompt: read('drawPrompt'),
-          rawDesign: read('rawDesign')
-        });
-        d.close(true);
-        ctx.notify('单品设定档案已保存');
-      }
-    });
+    return openItemEditor(ctx, {item});
   }
 
   v.refresh = () => {
@@ -281,6 +226,7 @@ export function wardrobeApp(ctx) {
 
     if (act === 'go-xeno') { ctx.open('xeno'); return; }
     if (act === 'go-mall') { ctx.open('mall'); return; }
+    if (act === 'register-crafted') { openItemEditor(ctx, {category: activeTab}); return; }
     if (act === 'view-wearer-portrait') {
       openEntityPortraitDialog(ctx, targetKey);
       return;

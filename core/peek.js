@@ -15,7 +15,7 @@
 //   【通话】对象｜呼入/呼出/未接｜时长  one recent call
 //   【日程】时间｜事情               one thing on the calendar
 //   【音乐】歌名 - 歌手              one song listened to lately
-import {promptText} from './prompt-rules.js';
+import {promptText, withXiaoci} from './prompt-rules.js';
 import {messageLine, songOf} from './chat.js';
 
 export const PEEK_LIMITS = Object.freeze({chats: 5, lines: 24, searches: 12, notes: 5, photos: 9, cart: 8, calls: 10, events: 6, songs: 10, knows: 10, text: 600});
@@ -41,7 +41,7 @@ export function buildPeekRequest({prompts = {}, preset, person, story = [], user
     '世界书': lore.trim(), '用户设定': userPersona.trim(), '更早的剧情': earlier.trim(), '最近的剧情': said.map(s => `${s.name}：${s.text}`).join('\n'),
     '记忆': memory.trim(), '上次': before ? peekSummary(before) : '', '聊天记录': history.map(m => messageLine(m, user)).filter(Boolean).join('\n'), '出图': images});
   const ask = promptText(prompts, 'peek', 'ask', {'用户': user, '主人': name, '上次': !!before});
-  return [{role: 'system', content: system}, {role: 'user', content: ask}];
+  return withXiaoci(prompts, 'peek', [{role: 'system', content: system}, {role: 'user', content: ask}], {'用户': user});
 }
 /** The phone as last seen, short, for 接着上次看. */
 export function peekSummary(p) {
@@ -148,8 +148,10 @@ export function parsePeek(reply, {name, user = '我'} = {}) {
   return out;
 }
 
-/** The id of a person's snapshot: one per person (per card, with 分区 on). */
-export const peekId = (name, space = '') => 'peek:' + (space ? space + ':' : '') + name;
+/** One snapshot per person and story chat; the legacy card form is retained only for migration. */
+export const peekId = (name, space = '', chatKey = '') => chatKey
+  ? `peek:chat:${encodeURIComponent(chatKey)}:${encodeURIComponent(name)}`
+  : 'peek:' + (space ? space + ':' : '') + name;
 /** A picture as it is stored: its description, (when it can be drawn) its tags, the drawn picture and how drawing went. */
 function cleanPicture(x) {
   const photo = {text: clip(x.text, 200).trim(), tags: clip(x.tags, 600).trim()};
@@ -173,7 +175,8 @@ export function cleanPeek(p, at) {
   const events = (Array.isArray(p.events) ? p.events : []).slice(0, PEEK_LIMITS.events).map(e => ({when: clip(e?.when, 30).trim(), what: clip(e?.what, 80).trim()})).filter(e => e.what);
   const songs = (Array.isArray(p.songs) ? p.songs : []).slice(0, PEEK_LIMITS.songs).map(s => ({title: clip(s?.title, 120).trim(), artist: clip(s?.artist, 120).trim()})).filter(s => s.title);
   const space = clip(p.space, 300);
-  const out = {id: peekId(name, space), kind: 'peek', name, at, chats, searches: list(p.searches, PEEK_LIMITS.searches, 100), notes, photos, cart, calls, events, songs, ...(wall?.text ? {wallpaper: wall} : {}), ...(space ? {space} : {})};
+  const chatKey = clip(p.chatKey, 1000);
+  const out = {id: peekId(name, space, chatKey), kind: 'peek', name, at, chats, searches: list(p.searches, PEEK_LIMITS.searches, 100), notes, photos, cart, calls, events, songs, ...(wall?.text ? {wallpaper: wall} : {}), ...(space ? {space} : {}), ...(chatKey ? {chatKey} : {})};
   if (!chats.length && !out.searches.length && !notes.length && !out.photos.length && !cart.length && !calls.length && !events.length && !songs.length) throw Error(`没看到${name}手机里的东西，可以再试一次`);
   return out;
 }

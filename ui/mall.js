@@ -10,6 +10,7 @@ import {icon} from './icons.js';
 import {getEntity, formatVoiceRoleLabel, activeXenoPreset, xenoPromptEntryText, activeMallPoseEntryId, MALL_POSE_ENTRIES, XENO_PROMPT_DEFAULTS, itemVoiceRef} from '../core/xeno.js';
 import {blobToDataUrl, generateItemPreview, openVoicePoolPickerDialog, openItemVoiceListPicker} from './xeno-media.js';
 import {saveFile} from '../download.js';
+import {openItemEditor} from './xeno-item-editor.js';
 
 export const MALL_ITEMS_FILE = 'revophone-mall-items';
 
@@ -38,6 +39,7 @@ export function mallApp(ctx) {
   let restockOpen = false;
   let restockCategory = 'apparel';
   let restockSlot = 'outerwear';
+  let restockGender = '';
   let restockText = '';
   let restockImage = '';
   let restockAutoDraw = false;
@@ -248,6 +250,10 @@ export function mallApp(ctx) {
           </div>
         </header>
         <div class="xeno-form-block">
+          <div class="xeno-row-controls">
+            <button type="button" class="xeno-btn secondary full" data-action="manual-restock">✎ 手动录入商品（不调用模型）</button>
+          </div>
+          <p class="xeno-hint">已有完整设定可直接手动录入并定价；需要 AI 帮忙设计时，使用下方进货工坊。</p>
           <div class="xeno-grid-2">
             <label class="xeno-field-inline">
               <span>进货大类</span>
@@ -269,6 +275,7 @@ export function mallApp(ctx) {
                 </select>
               </label>
             ` : ''}
+            ${['skin_suit', 'flesh_ring'].includes(restockCategory) ? `<label class="xeno-field-inline"><span>身体类型</span><select class="xeno-select" data-change="restock-gender">${[['', '按输入／参考设定'], ['女', '女性'], ['男', '男性'], ['扶她', '扶她']].map(([key, title]) => `<option value="${key}" ${restockGender === key ? 'selected' : ''}>${title}</option>`).join('')}</select></label>` : ''}
           </div>
           <div class="tb-restock-media">
             <div class="tb-img-box restock-preview">
@@ -329,6 +336,7 @@ export function mallApp(ctx) {
     ];
     const q = searchQuery.trim().toLowerCase();
     const shelfItems = (xeno.items || []).filter(i => {
+      if (i.listed === false) return false;
       if (i.category !== activeShelf) return false;
       if (activeShelf === 'apparel' && apparelFilter !== 'all' && i.slot !== apparelFilter) return false;
       if (q && !`${i.name} ${i.shortName} ${i.summary} ${i.bodyBuild}`.toLowerCase().includes(q)) return false;
@@ -464,6 +472,12 @@ export function mallApp(ctx) {
     if (act === 'go-wardrobe') { ctx.open('wardrobe'); return; }
     if (act === 'go-xeno') { ctx.open('xeno'); return; }
     if (act === 'open-mall-batch') { openBatchManageSheet(); return; }
+    if (act === 'manual-restock') {
+      restockText = v.root.querySelector('#mall-restock-text')?.value || '';
+      openItemEditor(ctx, {destination: 'mall', category: restockCategory, slot: restockSlot, gender: restockGender,
+        onSaved({category}) {activeShelf = category; searchQuery = ''; apparelFilter = 'all'; v.refresh();}});
+      return;
+    }
     if (act === 'set-pose-preset') {
       restockText = v.root.querySelector('#mall-restock-text')?.value || restockText;
       const poseId = el.dataset.poseId || 'mallPosePrompt';
@@ -541,6 +555,7 @@ export function mallApp(ctx) {
             category: restockCategory,
             slot: restockCategory === 'apparel' ? restockSlot : restockCategory,
             text: restockText,
+            gender: ['skin_suit', 'flesh_ring'].includes(restockCategory) ? restockGender : '',
             imageData: restockImage
           });
         } finally {
@@ -634,21 +649,25 @@ export function mallApp(ctx) {
           ${item.appearance ? `<p><b>外貌特征：</b>${esc(item.appearance)}</p>` : ''}
           ${item.bodyBuild ? `<p><b>体型身材：</b>${esc(item.bodyBuild)}</p>` : ''}
           ${item.physiology ? `<p><b>生理特征：</b>${esc(item.physiology)}</p>` : ''}
+          ${isLiving ? `<p><b>身体类型：</b>${esc(item.gender || '未设定')} ｜ <b>下体处理：</b>${esc(({replace: '使用本件结构', preserve: '保留内层／本体', legacy: '旧版兼容'})[item.lowerBodyMode])}</p>` : ''}
+          ${item.lowerBodyDescription ? `<p><b>下体设定：</b>${esc(item.lowerBodyDescription)}</p>` : ''}
+          ${item.abilities ? `<p><b>特殊能力：</b>${esc(item.abilities)}</p><p><b>生效条件：</b>${esc(item.abilityConditions || '穿戴期间，按能力描述')}</p>` : ''}
           ${item.drawPrompt ? `<p><b>生图提示词：</b><code>${esc(item.drawPrompt)}</code></p>` : ''}
           <label class="xeno-field-inline">
             <span>完整高定档案</span>
             <textarea class="xeno-textarea" rows="7" readonly>${esc(item.rawDesign)}</textarea>
           </label>
-          ${isLiving ? `
             <div class="actions">
+              <button type="button" class="primary" data-sheet-edit>编辑设定与能力</button>
               <button type="button" class="secondary" data-sheet-cancel>完成</button>
             </div>
-          ` : ''}
         </div>
       `);
-      if (isLiving) {
         d.body.addEventListener('click', e => {
           if (e.target.closest('[data-sheet-cancel]')) d.close(null);
+          if (e.target.closest('[data-sheet-edit]')) {
+            d.close(null); openItemEditor(ctx, {item}); return;
+          }
           if (e.target.closest('[data-pick-fav-voice],[data-pick-list-voice]')) {
             const picker = e.target.closest('[data-pick-list-voice]') ? openItemVoiceListPicker : openVoicePoolPickerDialog;
             picker(ctx, {
@@ -663,7 +682,6 @@ export function mallApp(ctx) {
             return;
           }
         });
-      }
       return;
     }
     if (act === 'delete-mall-item') {
@@ -695,6 +713,7 @@ export function mallApp(ctx) {
       v.refresh();
       return;
     }
+    if (act === 'restock-gender') { restockGender = el.value; return; }
     if (act === 'restock-file') {
       restockText = v.root.querySelector('#mall-restock-text')?.value || restockText;
       const file = el.files?.[0];

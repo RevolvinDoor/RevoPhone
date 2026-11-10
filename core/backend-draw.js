@@ -8,6 +8,7 @@ import { PRESET_REV as DRAW_PRESET_REV, drawPromptPlan, planRequest, validateDra
 import { activeChatPreset } from './chat.js';
 import { VIBE_ANLAS } from './vibes.js';
 import {normalizeComic} from './comic.js';
+import {withXiaoci} from './prompt-rules.js';
 
 const clone = value => structuredClone(value);
 
@@ -197,7 +198,10 @@ class DrawSettings {
             return planRequest(state, { message: '（这里是刚写好的正文，第一段）\n（第二段……每一段前面会标上 [P1]、[P2]）', preset: used, only, lore })
                 .map(m => `【${m.role}】\n${m.content}`).join('\n\n');
         }
-        return drawPromptPlan(state, used, only).map(entry => entry.text).join('\n\n');
+        const rules = drawPromptPlan(state, used, only).map(entry => entry.text).join('\n\n');
+        return withXiaoci(state.promptRules, 'draw-story', [{role: 'system', content: rules}])
+            .map(entry => `【${entry.role}】\n${entry.content}`).join('\n\n')
+            + '\n\n（以上为小此与本插件绘图规则；实际正文请求还包含酒馆预设、角色设定和聊天。）';
     }
     async naiSubscription(refresh = false) {
         this.assertOpen();

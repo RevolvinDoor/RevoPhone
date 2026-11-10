@@ -81,7 +81,8 @@ export function xenoApp(ctx) {
             <div class="xeno-kv"><span class="k">体型身材</span><span class="v">${esc(view.bodyBuild)}</span></div>
             <div class="xeno-kv"><span class="k">生理特征</span><span class="v">${esc(view.physiology)}</span></div>
             <div class="xeno-kv"><span class="k">头部</span><span class="v">${esc(view.headAppearance || '未记录')}<br><small>来源：${esc(view.headSource)} ｜ ${esc(view.voiceStateText)}</small></span></div>
-            <div class="xeno-kv"><span class="k">肉棒外观</span><span class="v">${esc(view.organAppearance || '未显露')}<br><small>来源：${esc(view.organSource)}</small></span></div>
+            <div class="xeno-kv"><span class="k">下体外观</span><span class="v">${esc(view.organAppearance || '本体未记录')}<br><small>来源：${esc(view.organSource)}</small></span></div>
+            ${view.equipmentAbilities ? `<div class="xeno-kv"><span class="k">装备能力及条件</span><span class="v">${esc(view.equipmentAbilities).replace(/\n/g, '<br>')}</span></div>` : ''}
           </div>
           ${detailOpen ? `
             <div class="xeno-detail-list">

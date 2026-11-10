@@ -55,6 +55,17 @@ export class AppStore {
     return rows.filter(r => !kind || r.kind === kind).sort((a, b) => b.at - a.at).map(r => this.#public(r));
   }
   async get(id) { return this.#tx('readonly', (store, done) => { const req = store.get([this.#scope, String(id)]); req.onsuccess = () => done(this.#public(req.result)); }); }
+  /** Creates a document only when absent, atomically across tabs. */
+  async ensure(doc) {
+    return this.#tx('readwrite', (store, done) => {
+      const req = store.get([this.#scope, String(doc.id)]);
+      req.onsuccess = () => {
+        if (req.result) return done(this.#public(req.result));
+        const row = {...structuredClone(doc), id: String(doc.id), scope: this.#scope};
+        store.put(row); done(this.#public(row));
+      };
+    });
+  }
   async getMany(ids) {
     const keys = [...new Set(ids.map(String))];
     return this.#tx('readonly', (store, done) => {

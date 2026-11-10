@@ -9,7 +9,7 @@
 //   【网名】真名｜网名                 a screen name made up for a character who had none (kept from then on)
 // Everyone is on the board by a screen name (网名): the user's and the characters' are given (or made up once) and the
 // model writes only those; the answer is read back to the real names, which is how posts are stored.
-import {promptText} from './prompt-rules.js';
+import {promptText, withXiaoci} from './prompt-rules.js';
 import {isPlaceholderRole} from './protocol.js';
 
 export const FORUM_LIMITS = Object.freeze({posts: 200, replies: 80, perRefresh: 5, hot: 8, title: 60, text: 2000, reply: 500});
@@ -49,7 +49,7 @@ export function buildForumRequest({prompts = {}, preset, mode = 'posts', people,
     '我的网名': label('me'), '没网名的人': missing.join('、')});
   const ask = promptText(prompts, 'forum', 'ask', {...now, '用户': user, '帖子数': preset.posts + 1, '我的网名': label('me'),
     '帖子': mode === 'posts' ? '' : postLines(post, user, 30, label), '回复': mode === 'reply' ? reply.text : '', '回复谁': mode === 'reply' && reply.to ? label(reply.to) : ''});
-  return [{role: 'system', content: system}, {role: 'user', content: ask}];
+  return withXiaoci(prompts, 'forum', [{role: 'system', content: system}, {role: 'user', content: ask}], {'用户': user});
 }
 
 const LINE = /^\s*(?:[-*•]\s*)?[【\[]\s*(热搜|帖子|回复|评论|网名)\s*[】\]]\s*(.*)$/;

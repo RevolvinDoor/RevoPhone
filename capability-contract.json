@@ -7,6 +7,7 @@
     {"id":"formatter","owner":"sillytavern","symbol":"SillyTavern.getContext().messageFormatter.addHook","required":true,"fallback":null},
     {"id":"message-update","owner":"sillytavern","symbol":"SillyTavern.getContext().updateMessageBlock","required":true,"fallback":null},
     {"id":"events","owner":"sillytavern","symbol":"SillyTavern.getContext().eventSource","required":true,"fallback":null},
-    {"id":"settings","owner":"sillytavern","symbol":"SillyTavern.getContext().saveSettingsDebounced","required":true,"fallback":null}
+    {"id":"settings","owner":"sillytavern","symbol":"SillyTavern.getContext().saveSettingsDebounced","required":true,"fallback":null},
+    {"id":"xiaoci-inline-order","owner":"sillytavern","symbol":"SillyTavern.getContext().eventTypes.CHAT_COMPLETION_SETTINGS_READY","required":false,"fallback":"缺少此事件时不加入正文内配音／配图的小此前置对话；后台功能仍通过自己的消息数组发送。"}
   ]
 }
