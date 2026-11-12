@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {freshState} from '../core/state.js';
 import {TTSBackend} from '../core/backend.js';
 import {normalizeXeno, normalizeCatalogItem, xenoRegisterItem, xenoEquipItem, xenoUnequipSlot, xenoUpdateMountOption,
-  effectiveEntityView, resolveWear, xenoPromptPlan, extractXenoSession, buildEntityPortraitPrompt} from '../core/xeno.js';
+  effectiveEntityView, resolveWear, xenoPromptPlan, extractXenoSession, buildEntityPortraitPrompt,
+  parseItemTextBlock, splitItemDrawPrompts} from '../core/xeno.js';
 import {applyWardrobeReply, wardrobeActionPlan, matchWardrobeItems} from '../core/xeno-actions.js';
 import {createXenoHost} from '../host-xeno.js';
 import {createAssistantTools} from '../core/assistant-tools.js';
@@ -288,4 +289,142 @@ test('小此按已给定资料直接录入复用手动上架，不调用设计�
   const item = await tools.execute({id: 'direct', name: 'mallCreate', args: [{...itemInput, price: 1200}]});
   assert.equal(item.owned, false); assert.equal(item.listed, true); assert.equal(item.price, 1200);
   assert.equal(item.abilities, itemInput.abilities); assert.ok(b.settings.xeno.items.find(row => row.id === item.id));
+});
+
+test('角色提示词与肉棒提示词分离：角色提示词一律不含 futanari，肉棒提示词固定以 futanari 开头并按前后延展独立生效', async () => {
+  const state0 = base();
+  state0.protagonist.gender = '女';
+  for (const builtin of state0.items.filter(i => ['skin_suit', 'flesh_ring'].includes(i.category))) {
+    assert.doesNotMatch(builtin.drawPrompt, /\bfutanari\b/i);
+    assert.match(builtin.organDrawPrompt, /^futanari\b/i);
+  }
+  const split = splitItemDrawPrompts({
+    category: 'flesh_ring',
+    gender: '扶她',
+    drawPrompt: '1girl, solo, futanari, silver hair, red eyes, huge penis, erection, testicles, dripping precum'
+  });
+  assert.equal(split.drawPrompt, '1girl, solo, silver hair, red eyes');
+  assert.equal(split.organDrawPrompt, 'futanari, huge penis, erection, testicles, dripping precum');
+
+  let state = xenoRegisterItem(state0, {
+    id: 'ring_sep',
+    name: '赤魇肉躯环',
+    category: 'flesh_ring',
+    gender: '扶她',
+    lowerBodyMode: 'replace',
+    lowerBodyType: 'dual',
+    forwardExtension: '向前方重构紫黑巨根',
+    backwardExtension: '向后方蔓延重构银发红瞳躯体',
+    drawPrompt: '1girl, futanari, silver hair, crimson eyes, huge breasts',
+    organDrawPrompt: 'huge penis, thick veins, glans, testicles'
+  });
+  const ringItem = state.items.find(i => i.id === 'ring_sep');
+  assert.equal(ringItem.drawPrompt, '1girl, silver hair, crimson eyes, huge breasts');
+  assert.equal(ringItem.organDrawPrompt, 'futanari, huge penis, thick veins, glans, testicles');
+
+  // 1. 仅开启前方延展：只输出肉棒提示词（固定含 futanari），不输出后方角色身体提示词
+  state = xenoEquipItem(state, {itemId: 'ring_sep', mode: 'forward'});
+  let prompt = buildEntityPortraitPrompt(state, state.protagonist).prompt;
+  assert.match(prompt, /futanari, huge penis, thick veins/);
+  assert.doesNotMatch(prompt, /silver hair/);
+
+  // 2. 仅开启后方延展（关闭前方延展）：只输出角色提示词，不含肉棒提示词与 futanari
+  state = xenoUpdateMountOption(state, {itemId: 'ring_sep', patch: {fleshForwardEnabled: false, fleshBackwardEnabled: true}});
+  prompt = buildEntityPortraitPrompt(state, state.protagonist).prompt;
+  assert.match(prompt, /silver hair, crimson eyes/);
+  assert.doesNotMatch(prompt, /futanari|huge penis/);
+
+  // 3. 前后同时开启：同时包含角色提示词与固定 futanari 的肉棒提示词
+  state = xenoUpdateMountOption(state, {itemId: 'ring_sep', patch: {fleshForwardEnabled: true, fleshBackwardEnabled: true}});
+  prompt = buildEntityPortraitPrompt(state, state.protagonist).prompt;
+  assert.match(prompt, /silver hair, crimson eyes/);
+  assert.match(prompt, /futanari, huge penis, thick veins/);
+
+  // 4. 商品图生成同样合并不含 futanari 的角色提示词与固定含 futanari 的肉棒提示词
+  const s = freshState();
+  let capturedPrompt = '';
+  const ctx = {api: {drawReady: () => true, getState: () => s, generateImage: async input => {
+    capturedPrompt = input.prompt; throw Error('captured');
+  }}};
+  await assert.rejects(generateItemPreview(ctx, ringItem), /captured/);
+  assert.match(capturedPrompt, /silver hair, crimson eyes/);
+  assert.match(capturedPrompt, /futanari, huge penis, thick veins/);
+});
+
+test('手动进货支持整段提示词与设定智能识别导入（XML、标签块、中英混合大段提示词自动拆分字段与肉棒提示词）', () => {
+  const fullBlock = `<flesh_ring_design name="【圣洁修女·凝缩肉躯环】">
+简称：修女肉躯
+价格：2600
+[身体类型]：扶她
+[下体处理]：replace
+[下体类型]：dual
+[静息环体外观]：乳白色温热肉环，内壁布满圣纹肉褶。
+[前方延展·器官重构]：向前方增殖重构出 32cm 白皙青筋扶她巨根与饱满玉囊。
+[后方延展·躯体重构]：向后方全身蔓延包裹，重构为银发蓝瞳、丰乳肥臀的圣洁修女躯体。
+[特殊能力]：圣洁伪装：穿戴期间周围人自动忽略其异样。
+[能力生效条件]：后方延展开启时生效。
+[角色生图提示词 (Character Prompt)]：(1girl, solo, futanari, nun, white habit, silver hair, blue eyes, huge breasts, wide hips)
+[肉棒生图提示词 (Penis Prompt)]：(huge penis, thick shaft, veins, glans, large testicles, dripping precum)
+</flesh_ring_design>`;
+
+  const parsed = parseItemTextBlock(fullBlock);
+  assert.equal(parsed.category, 'flesh_ring');
+  assert.equal(parsed.name, '【圣洁修女·凝缩肉躯环】');
+  assert.equal(parsed.shortName, '修女肉躯');
+  assert.equal(parsed.price, 2600);
+  assert.equal(parsed.gender, '扶她');
+  assert.match(parsed.ringAppearance, /乳白色温热肉环/);
+  assert.match(parsed.forwardExtension, /32cm 白皙青筋/);
+  assert.match(parsed.backwardExtension, /银发蓝瞳/);
+  assert.equal(parsed.drawPrompt, '1girl, solo, nun, white habit, silver hair, blue eyes, huge breasts, wide hips');
+  assert.equal(parsed.organDrawPrompt, 'futanari, huge penis, thick shaft, veins, glans, large testicles, dripping precum');
+
+  // 测试无标签中英混合大段提示词也能自动识别名称、分类、价格并分离角色/肉棒提示词
+  const freeformBlock = `【深渊魅魔·活体皮躯】 售价1980元
+白发金瞳的丰满魅魔活体皮躯，身高172cm，J罩杯爆乳与蜜桃臀，胯下生长着粗壮扶她肉棒与饱满玉囊。
+1girl, solo, futanari, demon girl, white hair, golden eyes, horns, huge breasts, wide hips, huge penis, erection, veins, testicles`;
+  const freeParsed = parseItemTextBlock(freeformBlock);
+  assert.equal(freeParsed.category, 'skin_suit');
+  assert.equal(freeParsed.name, '【深渊魅魔·活体皮躯】');
+  assert.equal(freeParsed.price, 1980);
+  assert.equal(freeParsed.drawPrompt, '1girl, solo, demon girl, white hair, golden eyes, horns, huge breasts, wide hips');
+  assert.equal(freeParsed.organDrawPrompt, 'futanari, huge penis, erection, veins, testicles');
+
+  // 测试手动录入弹窗粘贴整段内容后点击智能识别或直接保存均可准确导入
+  const b = backendFixture(), handlers = {};
+  const fields = {smartInput: fullBlock, category: 'apparel', slot: 'outerwear', price: '0'};
+  const ctx = {
+    api: {getState: () => b.settings, xenoAct: b.xenoAct.bind(b)},
+    dialog(_title, _html) {
+      return {
+        body: {
+          addEventListener(type, fn) {handlers[type] = fn;},
+          querySelector(selector) {
+            if (selector === '[data-item-consumable]') return {hidden: true};
+            const key = selector.match(/data-item="([^"]+)"/)?.[1];
+            if (!key) return null;
+            return {
+              get value() {return fields[key] ?? '';},
+              set value(v) {fields[key] = String(v);}
+            };
+          }
+        },
+        close() {}
+      };
+    },
+    notify() {}
+  };
+  openItemEditor(ctx, {destination: 'mall'});
+  handlers.click({target: {closest: sel => sel === '[data-editor-smart-parse]' ? {} : null}});
+  assert.equal(fields.name, '【圣洁修女·凝缩肉躯环】');
+  assert.equal(fields.category, 'flesh_ring');
+  assert.equal(fields.price, '2600');
+  assert.equal(fields.drawPrompt, '1girl, solo, nun, white habit, silver hair, blue eyes, huge breasts, wide hips');
+  assert.equal(fields.organDrawPrompt, 'futanari, huge penis, thick shaft, veins, glans, large testicles, dripping precum');
+  handlers.click({target: {closest: sel => sel === '[data-editor-save]' ? {} : null}});
+  const stocked = b.settings.xeno.items.find(i => i.name === '【圣洁修女·凝缩肉躯环】');
+  assert.ok(stocked);
+  assert.equal(stocked.price, 2600);
+  assert.equal(stocked.drawPrompt, '1girl, solo, nun, white habit, silver hair, blue eyes, huge breasts, wide hips');
+  assert.equal(stocked.organDrawPrompt, 'futanari, huge penis, thick shaft, veins, glans, large testicles, dripping precum');
 });

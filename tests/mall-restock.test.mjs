@@ -9,14 +9,14 @@ import {mallApp} from '../ui/mall.js';
 
 const options = {category: 'skin_suit', slot: 'skin_suit', text: '银发，身高170cm', gender: '女'};
 const reply = '<skin_suit_design name="银霜">\n[体态参数]：身高170cm\n[生图提示词 (Prompt)]：silver hair, standing\n</skin_suit_design>';
-function fixture() {
+function fixture(customReply = reply) {
   const state = freshState(), requests = [];
   const preset = state.xeno.presets[0];
   for (const entry of preset.entries.filter(entry => entry.scope === 'mall')) {
     entry.text = `CUSTOM:${entry.id}`;
   }
   const backend = {cardState: () => structuredClone(state), emit() {},
-    async generateText(ctx, request) {requests.push(structuredClone(request)); return reply;},
+    async generateText(ctx, request) {requests.push(structuredClone(request)); return customReply;},
     saveXeno(update) {state.xeno = normalizeXeno(update(structuredClone(state.xeno)));}};
   const host = createXenoHost({backend, settings: () => state, context: () => ({})});
   return {state, preset, backend, host, requests};
@@ -154,4 +154,22 @@ test('商城查看本次请求读取表单草稿但不保存或请求模型，�
   assert.ok(requests[0].prompt.find(message => message.role === 'system').content.includes('draft standing pose'));
   assert.equal(requests[0].prompt.at(-1).content.includes(options.text), true);
   view.dispose();
+});
+
+test('商城 AI 进货自动分离角色生图提示词与肉棒生图提示词：角色提示词不带 futanari，肉棒提示词固定带 futanari', async () => {
+  const reply = `<flesh_ring_design name="【绯月修女·活体肉躯】">
+[身体类型]：扶她
+[下体处理]：replace
+[下体类型]：dual
+[静息环体外观]：绯红温热肉环。
+[前方延展·器官重构]：向前方重构出粗壮青筋扶她巨根与饱满玉囊。
+[后方延展·躯体重构]：向后方蔓延包裹全身，化作银发红瞳的丰满修女。
+[角色生图提示词 (Character Prompt)]：(1girl, solo, futanari, silver hair, red eyes, nun habit, huge breasts)
+[肉棒生图提示词 (Penis Prompt)]：(huge penis, thick shaft, veins, glans, testicles, dripping precum)
+</flesh_ring_design>`;
+  const {host} = fixture(reply);
+  const created = await host.mallRestock({category: 'flesh_ring', slot: 'flesh_ring', text: '绯月修女肉躯', gender: '扶她'});
+  assert.equal(created.drawPrompt, '1girl, solo, silver hair, red eyes, nun habit, huge breasts');
+  assert.doesNotMatch(created.drawPrompt, /\bfutanari\b/i);
+  assert.equal(created.organDrawPrompt, 'futanari, huge penis, thick shaft, veins, glans, testicles, dripping precum');
 });

@@ -214,7 +214,8 @@ export const XENO_PROMPT_DEFAULTS = Object.freeze({
     '[体态参数]：(严格遵循比例尺规范，描述身高、胸围罩杯、腰臀比、腿部线条与皮肤质感)',
     '[扶她生理构造]：(严格遵循比例尺规范，描述阴茎尺寸、形态、冠沟、玉囊与后庭敏感度)',
     '[穿戴接口与机能]：(描述背部脊椎隐形开口、内部温热肉壁包裹感、神经同步率及穿戴后的声带/体香同化效果)',
-    '[生图提示词 (Prompt)]：(将上述外观与体态特征转化为高质量英文 Danbooru tag 串，用于后续绘图调用)',
+    '[角色生图提示词 (Character Prompt)]：(仅将角色外貌、发色瞳色、体态与外层衣着转化为英文 Danbooru tag 串，一律严禁加入 futanari 及肉棒相关 tag)',
+    '[肉棒生图提示词 (Penis Prompt)]：(将肉棒与阴囊外观特征转化为英文 Danbooru tag 串，每一个肉棒提示词必须固定包含 futanari tag；纯女性无肉棒时留空)',
     '</skin_suit_design>',
     '</skin_suit_design_workbench>'
   ].join('\n'),
@@ -229,7 +230,8 @@ export const XENO_PROMPT_DEFAULTS = Object.freeze({
     '[静息环体外观]：(描述未激活时的环状材质、色泽、纹路与穿戴位置)',
     '[前方延展·器官重构]：(遵循比例尺规范，描述肉环向前包裹或生成的扶她阳具形态、尺寸、充血脉络与榨精/排泄机能)',
     '[后方延展·躯体重构]：(遵循比例尺规范，描述肉环向后蔓延包裹全身后，重构出的发色、瞳色、面容、胸臀体态与外层仿生衣物)',
-    '[生图提示词 (Prompt)]：(提取后方延展完全体形态的英文 Danbooru tag 串)',
+    '[角色生图提示词 (Character Prompt)]：(仅提取后方延展角色躯体、面容、胸臀与外层仿生衣物的英文 Danbooru tag 串，一律严禁加入 futanari 及肉棒相关 tag)',
+    '[肉棒生图提示词 (Penis Prompt)]：(专门提取前方延展肉棒器官形态的英文 Danbooru tag 串，每一个肉棒提示词必须固定包含 futanari tag；无肉棒结构时留空)',
     '</flesh_ring_design>',
     '</flesh_ring_design_workbench>'
   ].join('\n'),
@@ -313,7 +315,8 @@ export const INITIAL_MALL_ITEMS = Object.freeze([
     bodyBuild: '身高153cm / 胸围63cm (B罩杯) / 腰围56cm / 臀围88cm；娇小骨架蕴含惊人肉感，蜂腰与丰腴浑圆臀腿形成夸张折角',
     physiology: '异形鬼王扶她肉棒与饱满囊袋（疲软22cm/勃起35cm+），樱肉粉色柱身密布倒生肉棘与青筋，龟头与根部套尖刺金环锁具，马眼粘液横流',
     summary: '153cm B杯东瀛鬼王女仆，配35cm+倒刺金环扶她巨根',
-    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1girl, futanari, shuten douji \\(fate\\), oni horns, forehead jewel, purple hair, short hair, blunt bangs, purple eyes, slit pupils, seductive smile, tongue out, maid outfit, revealing clothes, underboob, single exposed breast, detached sleeves, purple kimono jacket, white frilled apron, black thighhighs, huge penis, barbed penis, spiky penis, veins, gold cock ring, precum, excessive semen, dripping, indoor, tatami, dim lighting, high contrast',
+    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1girl, shuten douji \\(fate\\), oni horns, forehead jewel, purple hair, short hair, blunt bangs, purple eyes, slit pupils, seductive smile, tongue out, maid outfit, revealing clothes, underboob, single exposed breast, detached sleeves, purple kimono jacket, white frilled apron, black thighhighs, dripping, indoor, tatami, dim lighting, high contrast',
+    organDrawPrompt: 'futanari, huge penis, barbed penis, spiky penis, veins, gold cock ring, precum, excessive semen',
     rawDesign: `<skin_suit_design name="酒吞童子·罗生门鬼王女仆装皮躯">
 [外观视觉还原]
 - 原型神韵: 妖艳狂放的东瀛恶鬼与娇俏女仆装的极致反差，散发着戏谑、嗜虐与淫靡交织的王者侵略气场。
@@ -331,8 +334,11 @@ export const INITIAL_MALL_ITEMS = Object.freeze([
 - 覆面伸缩: 活体组织可向上蔓延覆盖全脸拟态，亦可收缩至颈部露出穿戴者原貌。
 - 触觉接驳: 建立神经双向接驳，感官传递清晰，意念自如操控。
 
-[生图提示词 (Prompt)]
-masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1girl, futanari, shuten douji \\(fate\\), oni horns, forehead jewel, purple hair, short hair, blunt bangs, purple eyes, slit pupils, seductive smile, tongue out, maid outfit, revealing clothes, underboob, single exposed breast, detached sleeves, purple kimono jacket, white frilled apron, black thighhighs, huge penis, barbed penis, spiky penis, veins, gold cock ring, precum, excessive semen, dripping, indoor, tatami, dim lighting, high contrast
+[角色生图提示词 (Character Prompt)]
+masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1girl, shuten douji \\(fate\\), oni horns, forehead jewel, purple hair, short hair, blunt bangs, purple eyes, slit pupils, seductive smile, tongue out, maid outfit, revealing clothes, underboob, single exposed breast, detached sleeves, purple kimono jacket, white frilled apron, black thighhighs, dripping, indoor, tatami, dim lighting, high contrast
+
+[肉棒生图提示词 (Penis Prompt)]
+futanari, huge penis, barbed penis, spiky penis, veins, gold cock ring, precum, excessive semen
 </skin_suit_design>`
   },
   {
@@ -349,7 +355,8 @@ masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1gir
     bodyBuild: '身高205cm / 胸围135cm (Z罩杯超巨乳) / 腰围68cm / 臀围155cm；超规格雌性巨躯，沉重奶白肉山与极宽肥硕蜜桃臀',
     physiology: '隐藏式扶她生殖器，平时为闭合阴蒂口与饱满阴囊，勃起外翻释出28-38cm手腕粗粉嫩肉棒，马眼内部小穴化持续泌蜜',
     summary: '205cm Z杯丰熟银发精灵母马，隐藏式38cm小穴化马眼扶她巨根',
-    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1girl, futanari, tall female, mature female, elf, blonde hair, silver hair, braided hair, hair bun, side braid, long pointed ears, green eyes, blush, gentle smile, huge breasts, colossal breasts, heavy breasts, narrow waist, enormous hips, massive buttocks, thick thighs, silver halter dress, shiny latex dress, glossy silk fabric, backless dress, bulge, crotch bulge, standing, rear view, front view, side-by-side, indoor, warm ambient lighting',
+    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1girl, tall female, mature female, elf, blonde hair, silver hair, braided hair, hair bun, side braid, long pointed ears, green eyes, blush, gentle smile, huge breasts, colossal breasts, heavy breasts, narrow waist, enormous hips, massive buttocks, thick thighs, silver halter dress, shiny latex dress, glossy silk fabric, backless dress, standing, rear view, front view, side-by-side, indoor, warm ambient lighting',
+    organDrawPrompt: 'futanari, bulge, crotch bulge',
     rawDesign: `<skin_suit_design name="丰熟白银银发精灵母马皮躯">
 [外观视觉还原]
 - 原型神韵: 极端夸张的逆天丰熟母马体格与纯洁精灵圣洁感的反差，带着极具包容性、温柔成熟而又肆无忌惮展露雌性肉欲的迷人微笑。
@@ -367,8 +374,11 @@ masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1gir
 - 覆面伸缩: 活体组织可向上蔓延覆盖全脸拟态，亦可收缩至颈部露出穿戴者原貌。
 - 触觉接驳: 建立神经双向接驳，感官传递清晰，意念自如操控。
 
-[生图提示词 (Prompt)]
-masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1girl, futanari, tall female, mature female, elf, blonde hair, silver hair, braided hair, hair bun, side braid, long pointed ears, green eyes, blush, gentle smile, huge breasts, colossal breasts, heavy breasts, narrow waist, enormous hips, massive buttocks, thick thighs, silver halter dress, shiny latex dress, glossy silk fabric, backless dress, bulge, crotch bulge, standing, rear view, front view, side-by-side, indoor, warm ambient lighting
+[角色生图提示词 (Character Prompt)]
+masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1girl, tall female, mature female, elf, blonde hair, silver hair, braided hair, hair bun, side braid, long pointed ears, green eyes, blush, gentle smile, huge breasts, colossal breasts, heavy breasts, narrow waist, enormous hips, massive buttocks, thick thighs, silver halter dress, shiny latex dress, glossy silk fabric, backless dress, standing, rear view, front view, side-by-side, indoor, warm ambient lighting
+
+[肉棒生图提示词 (Penis Prompt)]
+futanari, bulge, crotch bulge
 </skin_suit_design>`
   },
   {
@@ -385,7 +395,8 @@ masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1gir
     bodyBuild: '身高近200cm母马级高挑骨架 / K罩杯超规格爆乳 / 极细小蛮腰 / 极宽大丰腴蜜桃肥臀，极致S型沙漏身段',
     physiology: '超巨型扶她肉棒，疲软小臂粗，勃起近半米长、粗如碗口，青筋虬结，下方悬垂网球级饱满阴囊，马眼内壁小穴化泌出晶莹爱液',
     summary: '近2米 K杯高贵精灵神官，碗口粗近半米超巨型扶她肉棒',
-    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, futanari, tall female elf, mature female, extremely long blonde hair, straight hair, center-parted bangs, elven circlet, emerald gem forehead jewel, pointed long ears, emerald earrings, half-closed blue eyes, heavy blush, sweat drops, shy and aroused expression, parted lips, gigantomastia, huge round breasts, cleavage, narrow waist, extremely wide hips, plump thighs, huge futanari penis, massive erection, prominent veins, glossy glans, heavy low-hanging testicles, white sleeveless qipao-style dress, side cutouts, gold trim, black waist sash, high leg slit, showing thick erection straining fabric, towering body proportion, soft dynamic lighting',
+    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, tall female elf, mature female, extremely long blonde hair, straight hair, center-parted bangs, elven circlet, emerald gem forehead jewel, pointed long ears, emerald earrings, half-closed blue eyes, heavy blush, sweat drops, shy and aroused expression, parted lips, gigantomastia, huge round breasts, cleavage, narrow waist, extremely wide hips, plump thighs, white sleeveless qipao-style dress, side cutouts, gold trim, black waist sash, high leg slit, towering body proportion, soft dynamic lighting',
+    organDrawPrompt: 'futanari, huge futanari penis, massive erection, prominent veins, glossy glans, heavy low-hanging testicles, showing thick erection straining fabric',
     rawDesign: `<skin_suit_design name="高挑丰韵长耳精灵神官皮躯 (Elven High-Priestess Futa Skin Suit)">
 [外观视觉还原]
 - 原型神韵: 雍容神圣、高贵纯洁但受巨根与强烈情欲反差支配的高挑成熟精灵；羞耻红晕、半阖媚眼与隐忍欲态并存。
@@ -403,8 +414,11 @@ masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, 1gir
 - 覆面伸缩: 活体组织可向上蔓延覆盖全脸拟态，亦可收缩至颈部露出穿戴者原貌。
 - 触觉接驳: 建立神经双向接驳，感官传递清晰，意念自如操控。
 
-[生图提示词 (Prompt)]
-masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, futanari, tall female elf, mature female, extremely long blonde hair, straight hair, center-parted bangs, elven circlet, emerald gem forehead jewel, pointed long ears, emerald earrings, half-closed blue eyes, heavy blush, sweat drops, shy and aroused expression, parted lips, gigantomastia, huge round breasts, cleavage, narrow waist, extremely wide hips, plump thighs, huge futanari penis, massive erection, prominent veins, glossy glans, heavy low-hanging testicles, white sleeveless qipao-style dress, side cutouts, gold trim, black waist sash, high leg slit, showing thick erection straining fabric, towering body proportion, soft dynamic lighting
+[角色生图提示词 (Character Prompt)]
+masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, tall female elf, mature female, extremely long blonde hair, straight hair, center-parted bangs, elven circlet, emerald gem forehead jewel, pointed long ears, emerald earrings, half-closed blue eyes, heavy blush, sweat drops, shy and aroused expression, parted lips, gigantomastia, huge round breasts, cleavage, narrow waist, extremely wide hips, plump thighs, white sleeveless qipao-style dress, side cutouts, gold trim, black waist sash, high leg slit, towering body proportion, soft dynamic lighting
+
+[肉棒生图提示词 (Penis Prompt)]
+futanari, huge futanari penis, massive erection, prominent veins, glossy glans, heavy low-hanging testicles, showing thick erection straining fabric
 </skin_suit_design>`
   },
   {
@@ -421,7 +435,8 @@ masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, fut
     bodyBuild: '身高170cm / 体重55kg / 胸围B罩杯(82/70) / 腰围62cm / 臀围96cm；上窄下丰健康梨形身材，圆翘饱满臀腿',
     physiology: '乳头戴黑色锥形金属乳环；精巧可收纳扶她器官（疲软6cm/勃起12.5cm/直径3.2cm），闲置可完整收纳回阴蒂口复原为天然阴蒂，下方紧致小穴',
     summary: '170cm B杯梨形微醺金发精灵，12.5cm可完全收纳隐藏的秀气扶她器官',
-    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, solo, adult female, mature elf woman, futanari, tall slender woman, blonde short hair, messy short cut, orange-pink gradient hair tips, long pointed ears, elven ears, small earrings, grey-green eyes, half-lidded eyes, drowsy seductive expression, freckles across nose, full lips, parted lips, oval face, sharp jawline, pale porcelain skin, rosy flush on cheeks and ears, narrow shoulders, visible collarbone, small perky breasts, round breasts, black cone nipple rings, nipple piercing, flat stomach, subtle abs, slim waist, pear-shaped body, wide hips, round firm buttocks, thick thighs, long legs, slender ankles, realistic body proportions, small penis, flaccid penis, pink glans, small testicles, smooth skin, soft sheen, lying on back, seductive pose, dramatic studio lighting, dark background, rim lighting',
+    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, solo, adult female, mature elf woman, tall slender woman, blonde short hair, messy short cut, orange-pink gradient hair tips, long pointed ears, elven ears, small earrings, grey-green eyes, half-lidded eyes, drowsy seductive expression, freckles across nose, full lips, parted lips, oval face, sharp jawline, pale porcelain skin, rosy flush on cheeks and ears, narrow shoulders, visible collarbone, small perky breasts, round breasts, black cone nipple rings, nipple piercing, flat stomach, subtle abs, slim waist, pear-shaped body, wide hips, round firm buttocks, thick thighs, long legs, slender ankles, realistic body proportions, smooth skin, soft sheen, lying on back, seductive pose, dramatic studio lighting, dark background, rim lighting',
+    organDrawPrompt: 'futanari, small penis, flaccid penis, pink glans, small testicles',
     rawDesign: `<skin_suit_design name="金发精灵扶她皮躯·修正版 (Blonde Elf Futa Skin Suit Rev.2)">
 [外观视觉还原]
 - 原型神韵: 成年精灵的空灵与慵懒醉意并存。轮廓清冷出尘，眉眼间带着微醺的松弛与漫不经心的挑逗，整体气质是"高挑修长的成熟精灵"，并非幼态。视觉焦点落在长尖耳、雀斑鼻梁、丰润唇形，以及上窄下丰的梨形身段。
@@ -440,8 +455,11 @@ masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, fut
 - 触觉接驳: 建立神经双向接驳，感官传递清晰，意念自如操控。
 - 器官收放: 皮躯兼容扶她阴茎口收放机能，意念控制释出或收回，全程感官同步。
 
-[生图提示词 (Prompt)]
-masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, solo, adult female, mature elf woman, futanari, tall slender woman, blonde short hair, messy short cut, orange-pink gradient hair tips, long pointed ears, elven ears, small earrings, grey-green eyes, half-lidded eyes, drowsy seductive expression, freckles across nose, full lips, parted lips, oval face, sharp jawline, pale porcelain skin, rosy flush on cheeks and ears, narrow shoulders, visible collarbone, small perky breasts, round breasts, black cone nipple rings, nipple piercing, flat stomach, subtle abs, slim waist, pear-shaped body, wide hips, round firm buttocks, thick thighs, long legs, slender ankles, realistic body proportions, small penis, flaccid penis, pink glans, small testicles, smooth skin, soft sheen, lying on back, seductive pose, dramatic studio lighting, dark background, rim lighting
+[角色生图提示词 (Character Prompt)]
+masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, solo, adult female, mature elf woman, tall slender woman, blonde short hair, messy short cut, orange-pink gradient hair tips, long pointed ears, elven ears, small earrings, grey-green eyes, half-lidded eyes, drowsy seductive expression, freckles across nose, full lips, parted lips, oval face, sharp jawline, pale porcelain skin, rosy flush on cheeks and ears, narrow shoulders, visible collarbone, small perky breasts, round breasts, black cone nipple rings, nipple piercing, flat stomach, subtle abs, slim waist, pear-shaped body, wide hips, round firm buttocks, thick thighs, long legs, slender ankles, realistic body proportions, smooth skin, soft sheen, lying on back, seductive pose, dramatic studio lighting, dark background, rim lighting
+
+[肉棒生图提示词 (Penis Prompt)]
+futanari, small penis, flaccid penis, pink glans, small testicles
 </skin_suit_design>`
   },
   {
@@ -461,7 +479,8 @@ masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, sol
     bodyBuild: '身高198cm大骨架巨躯 / K罩杯超级爆乳 / 紧致丰腴腰肢 / 巨磨般宽阔肥厚蜜桃臀与玉柱粗腿',
     physiology: '黑褐近墨色巨根（疲软22cm/勃起45cm/直径11cm），青筋肉棱盘虬，马眼内壁小穴化自润滑蠕动吮吸',
     summary: '前延45cm黑褐巨根；后延198cm K杯银发白狼耳女仆巨躯',
-    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, futanari, 1futanari, solo, tall female, giantess, muscular yet voluptuous body, wolf ears, wolf girl, messy medium silver hair, half-closed dark eyes, smokey makeup, black lipstick, smug seductive expression, enormous hyper breasts, cleavage, black maid bikini top, frilled maid apron, maid headdress, black latex opera gloves, massive black hyper penis, giant cock, dark skin penis, thick veins on penis, oversized flared glans, pre-cum dripping from urethral slit, huge hanging dark testicles, gigantic wide hips, thick thighs, low angle shot, looking down at viewer, dark background, dramatic chiaroscuro lighting, glossy skin texture, hyper detailed',
+    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, tall female, giantess, muscular yet voluptuous body, wolf ears, wolf girl, messy medium silver hair, half-closed dark eyes, smokey makeup, black lipstick, smug seductive expression, enormous hyper breasts, cleavage, black maid bikini top, frilled maid apron, maid headdress, black latex opera gloves, gigantic wide hips, thick thighs, low angle shot, looking down at viewer, dark background, dramatic chiaroscuro lighting, glossy skin texture, hyper detailed',
+    organDrawPrompt: 'futanari, massive black hyper penis, giant cock, dark skin penis, thick veins on penis, oversized flared glans, pre-cum dripping from urethral slit, huge hanging dark testicles',
     rawDesign: `<flesh_ring_design name="狼女仆">
 [基底环体]
 - 环身质感: 活体肉质圆环，表面微血管脉络如细网般隐现，温热搏动，触感湿润且极富弹性。
@@ -478,8 +497,11 @@ masterpiece, best quality, ultra-detailed, highly detailed aesthetic, 1girl, sol
 - 穿搭细节: 黑色女仆露胸超短裙、白色蕾丝围裙带、黑胶质感长手套与长筒吊带袜、头戴荷叶边女仆发箍。
 - 解构复原: 意念触发解构，外层组织逆向平滑收缩回根部环体，无痛还原。
 
-[生图提示词 (Prompt)]
-masterpiece, best quality, ultra-detailed, highly detailed aesthetic, futanari, 1futanari, solo, tall female, giantess, muscular yet voluptuous body, wolf ears, wolf girl, messy medium silver hair, half-closed dark eyes, smokey makeup, black lipstick, smug seductive expression, enormous hyper breasts, cleavage, black maid bikini top, frilled maid apron, maid headdress, black latex opera gloves, massive black hyper penis, giant cock, dark skin penis, thick veins on penis, oversized flared glans, pre-cum dripping from urethral slit, huge hanging dark testicles, gigantic wide hips, thick thighs, low angle shot, looking down at viewer, dark background, dramatic chiaroscuro lighting, glossy skin texture, hyper detailed
+[角色生图提示词 (Character Prompt)]
+masterpiece, best quality, ultra-detailed, highly detailed aesthetic, solo, tall female, giantess, muscular yet voluptuous body, wolf ears, wolf girl, messy medium silver hair, half-closed dark eyes, smokey makeup, black lipstick, smug seductive expression, enormous hyper breasts, cleavage, black maid bikini top, frilled maid apron, maid headdress, black latex opera gloves, gigantic wide hips, thick thighs, low angle shot, looking down at viewer, dark background, dramatic chiaroscuro lighting, glossy skin texture, hyper detailed
+
+[肉棒生图提示词 (Penis Prompt)]
+futanari, massive black hyper penis, giant cock, dark skin penis, thick veins on penis, oversized flared glans, pre-cum dripping from urethral slit, huge hanging dark testicles
 </flesh_ring_design>`
   },
   {
@@ -499,7 +521,8 @@ masterpiece, best quality, ultra-detailed, highly detailed aesthetic, futanari, 
     bodyBuild: '身高225cm / 胸围145cm (Z罩杯超重肉乳) / 腰围72cm / 臀围138cm；雌性健美霸凌曲线，六块分明腹肌与发达大理石巨腿',
     physiology: '炽白色巨硕肉柱（疲软35cm/勃起48cm/直径9.5cm）与如柚饱满双阴囊，马眼内壁彻底小穴化生有吸附肉褶',
     summary: '前延48cm炽白神骸巨柱；后延225cm Z杯腹肌健美金发女神巨躯',
-    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, futanari, 1futanari, giantess, muscular female body, tall muscular build, massive breasts, heavy sagging breasts, large pink areolae, erect puffy nipples, chiseled abs, wide hips, thick thighs, massive penis, huge flaccid cock, thick veiny shaft, flared glans, large hanging testicles, alabaster white skin, pale blonde short hair, golden eyes, glowing divine expression, dominant stature, godly physique, biological texture, pure white skin tone, front view',
+    drawPrompt: 'masterpiece, best quality, ultra-detailed, highly detailed aesthetic, giantess, muscular female body, tall muscular build, massive breasts, heavy sagging breasts, large pink areolae, erect puffy nipples, chiseled abs, wide hips, thick thighs, alabaster white skin, pale blonde short hair, golden eyes, glowing divine expression, dominant stature, godly physique, biological texture, pure white skin tone, front view',
+    organDrawPrompt: 'futanari, massive penis, huge flaccid cock, thick veiny shaft, flared glans, large hanging testicles',
     rawDesign: `<flesh_ring_design name="圣洁巨躯·炽白神骸肉躯">
 [基底环体]
 - 环身质感: 纯白如凝脂的活体肉质圆环，表面隐现浅金色微血管搏动网络，触感如温热羊脂玉，散发沉凝的神圣压迫感与肉欲热力。
@@ -515,8 +538,11 @@ masterpiece, best quality, ultra-detailed, highly detailed aesthetic, futanari, 
 - 体态曲线: 身高225cm / 胸围145cm (Z罩杯超重肉乳) / 腰围72cm / 臀围138cm。呈现极致震撼的雌性健美霸凌曲线：斜方肌与双肩肌肉圆滚饱满，六块腹肌如深凿岩层般坚实分明，两侧腰线内收至极限，下承宽大如巨盆的健美盆骨与大理石般极度发达的巨硕大腿肉柱；一对远超头颅体积的雪白豪乳因内部充沛乳脂与腺体而向外沉坠，乳晕肥厚宽大、呈现饱满的浅粉色，乳头粗长如指节般常态充血挺立；股间垂挂着极其沉重的巨型肉柱与双颗悬垂如柚的饱满阴囊，视觉压迫感拉满。
 - 解构复原: 意念微动触发组织解构，高达两米有余的炽白雌性肌肉巨躯顺次化作温暖的纯白肉流，逆向平滑收缩回根部肉质环体内，无痛还原佩戴者原始身量。
 
-[生图提示词 (Prompt)]
-masterpiece, best quality, ultra-detailed, highly detailed aesthetic, futanari, 1futanari, giantess, muscular female body, tall muscular build, massive breasts, heavy sagging breasts, large pink areolae, erect puffy nipples, chiseled abs, wide hips, thick thighs, massive penis, huge flaccid cock, thick veiny shaft, flared glans, large hanging testicles, alabaster white skin, pale blonde short hair, golden eyes, glowing divine expression, dominant stature, godly physique, biological texture, pure white skin tone, front view
+[角色生图提示词 (Character Prompt)]
+masterpiece, best quality, ultra-detailed, highly detailed aesthetic, giantess, muscular female body, tall muscular build, massive breasts, heavy sagging breasts, large pink areolae, erect puffy nipples, chiseled abs, wide hips, thick thighs, alabaster white skin, pale blonde short hair, golden eyes, glowing divine expression, dominant stature, godly physique, biological texture, pure white skin tone, front view
+
+[肉棒生图提示词 (Penis Prompt)]
+futanari, massive penis, huge flaccid cock, thick veiny shaft, flared glans, large hanging testicles
 </flesh_ring_design>`
   },
   {

@@ -332,13 +332,24 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
       const secRing = pickSection('静息环体外观');
       const secForward = pickSection('前方延展·器官重构');
       const secBackward = pickSection('后方延展·躯体重构');
+      const secCharPrompt = pickSection('角色生图提示词 (Character Prompt)') || pickSection('角色生图提示词') || pick('角色生图提示词');
+      const secOrganPrompt = pickSection('肉棒生图提示词 (Penis Prompt)') || pickSection('肉棒生图提示词') || pickSection('器官生图提示词') || pick('肉棒生图提示词') || pick('器官生图提示词');
       const secPrompt = pickSection('生图提示词 (Prompt)') || pickSection('生图提示词');
 
       const appearance = pick('外貌特征') || secVisual || secBackward || '';
       const bodyBuild = pick('体型身材') || secBody || secBackward || '';
       const physiology = pick('生理特征') || secPhysio || secForward || secMech || '';
       const summary = (pick('简介') || secVisual || secRing || appearance || bodyBuild || '商城定制进货单品').replace(/\s+/g, ' ').slice(0, 90);
-      const drawPrompt = (pick('生图提示词') || secPrompt || '').replace(/^[(（]|[)）]$/g, '').trim();
+      const drawPrompt = (secCharPrompt || pick('生图提示词') || secPrompt || '').replace(/^[(（]|[)）]$/g, '').trim();
+      const rawOrganPrompt = (secOrganPrompt || '').replace(/^[(（]|[)）]$/g, '').trim();
+      const resolvedLowerBodyType = ({女: 'female', 男: 'male', 扶她: 'dual'})[requestedGender]
+        || pickSection('下体类型') || pick('下体类型') || 'auto';
+      const hasPenisStructure = ['skin_suit', 'flesh_ring'].includes(category)
+        && !['female', 'none'].includes(resolvedLowerBodyType)
+        && (gender === '扶她' || gender === '男' || ['male', 'dual'].includes(resolvedLowerBodyType) || /肉棒|阴茎|巨根|龟头|玉囊|睾丸|futanari|penis/i.test(`${secForward} ${physiology}`));
+      const organDrawPrompt = /^(?:无|none|empty|-)$/i.test(rawOrganPrompt)
+        ? ''
+        : (rawOrganPrompt || (hasPenisStructure && !/futanari|penis|cock|dick|phallus|erection|testicles|balls/i.test(drawPrompt) ? 'futanari, penis' : ''));
 
       const newItem = normalizeCatalogItem({
         id: 'restock_' + crypto.randomUUID(),
@@ -352,8 +363,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
         effectKind: category === 'consumable' ? 'body' : '',
         gender,
         lowerBodyMode: (pickSection('下体处理') || pick('下体处理')) === 'preserve' ? 'preserve' : 'replace',
-        lowerBodyType: ({女: 'female', 男: 'male', 扶她: 'dual'})[requestedGender]
-          || pickSection('下体类型') || pick('下体类型') || 'auto',
+        lowerBodyType: resolvedLowerBodyType,
         lowerBodyDescription: pickSection('下体设定') || pick('下体设定'),
         abilities: pickSection('特殊能力') || pick('特殊能力'),
         abilityConditions: pickSection('能力生效条件') || pick('能力生效条件'),
@@ -365,6 +375,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
         backwardExtension: category === 'flesh_ring' ? (secBackward || `向后方全身蔓延包裹，重构为：${appearance}；${bodyBuild}`) : '',
         summary,
         drawPrompt,
+        organDrawPrompt,
         rawDesign: designMatch,
         imageData: imageData || ''
       });

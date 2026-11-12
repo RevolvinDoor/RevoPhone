@@ -64,7 +64,7 @@
 - `abilities` 记录能力，`abilityConditions` 记录触发、限制及代价。穿戴类装备实际穿戴后向剧情提供，脱下后停止；不是额外数值引擎。
 - `ringAppearance` 为肉躯静息外观，`forwardExtension`／`backwardExtension` 为两个独立方向的设定。实际覆盖仍受方向、头部及部位开关控制，不能宣称一上架就改变角色。
 - `voiceRole` 仅复用用户提供的真实绑定引用；不要按音色描述虚构引擎或 ID。省略时保留已有绑定。用户明确清空时可写空字符串，脚本随之写入 `voiceRoleExplicit:true`。
-- `drawPrompt` 是商品生图标签，`drawPromptOpen` 是服饰展开时使用的标签。应与设计的身体类型和比例一致，不混用多个姿势，也不无条件加入性别标签。
+- `drawPrompt` 是角色／外观生图标签（一律不加 `futanari`），`organDrawPrompt` 是肉棒／前方延展生图标签（存在时固定以 `futanari` 开头），`drawPromptOpen` 是服饰展开时使用的标签。应与设计的身体类型和比例一致，不混用多个姿势。
 - `rawDesign` 可保存完整设定或 XML，但**不是导入必需项**。优先确保结构化字段完整，避免只写 XML 导致名称、外貌、能力和标签缺失。
 
 ## 长度上限

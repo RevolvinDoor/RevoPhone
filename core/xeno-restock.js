@@ -10,12 +10,13 @@ export function buildMallRestockRequest(xeno, {category = 'apparel', slot = 'out
   const scale = get('scaleRule'), pose = xenoMallPosePromptText(xeno).trim();
   const metadataRule = '【装备结构与能力字段】在设计块中另列 [身体类型]：女/男/扶她/未设定；[下体处理]：replace 或 preserve；[下体类型]：auto/female/male/dual/none/custom；[下体设定]：结构与覆盖方式；[特殊能力]：能力说明；[能力生效条件]：触发、代价及限制。'
     + '以上字段按输入要求，优先于模板中的固定性别假设。女性装备不添加男性部位，前方延展按该件结构重构，不固定为男性结构。可用 [生理构造] 记录生理特征。未要求特殊能力时留空，不擅自添加。'
+    + '【提示词分离规则】必须将 [角色生图提示词 (Character Prompt)] 与 [肉棒生图提示词 (Penis Prompt)] 分开输出：角色生图提示词一律禁止包含 futanari 及任何男性生殖器 Tag；肉棒生图提示词（仅在具备男性/扶她肉棒结构或前方延展肉棒时填写，纯女性无肉棒留空）必须固定以 futanari 开头并包含肉棒外观 Tag。'
     + (GENDERS.includes(gender) ? `本次指定身体类型为「${gender}」，设计正文、结构字段及绘图提示词必须一致。` : '身体类型根据明确输入或参考设定；无法确定时写未设定，不统一默认为扶她。');
   const system = [
     get('restockSysHeader'),
     get(workbenchId),
     metadataRule,
-    pose ? `【商品图固定姿势与构图 Tag 要求】：在生成 [生图提示词 (Prompt)] 时，请包含或优先适配以下构图与姿势 Tag：${pose}` : '',
+    pose ? `【商品图固定姿势与构图 Tag 要求】：在生成 [角色生图提示词 (Character Prompt)] / [生图提示词 (Prompt)] 时，请包含或优先适配以下构图与姿势 Tag：${pose}` : '',
     '请额外在设计块外层附上简要上架元数据（价格：数字 200~3500；简称：4~8字），或直接严格输出上述 XML 设计块。',
     scale ? '【本次比例尺】以下是当前使用预设中已保存且启用的比例尺。设计正文和生图提示词须保持一致；模板中的示例、默认范围或默认风格与它冲突时，以这条比例尺为准。\n' + scale : ''
   ].filter(Boolean).join('\n\n');

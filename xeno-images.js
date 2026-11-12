@@ -1,6 +1,6 @@
 // Shared manual/assistant image operations. No UI mounting or implicit model request.
 import {buildEntityPortraitPrompt, getEntity, xenoMallPosePromptText} from './core/xeno.js';
-import {filterLowerBodyTags, itemLowerBodyType} from './core/xeno-wear.js';
+import {filterLowerBodyTags, itemLowerBodyType, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt} from './core/xeno-wear.js';
 
 async function drawImage(ctx, input) {
   if (ctx.signal?.aborted || ctx.valid && !ctx.valid()) throw Error('操作已取消或聊天已切换');
@@ -51,18 +51,26 @@ export async function generateItemPreview(ctx, item) {
   const style = state.draw?.styles?.find(s => s.id === state.draw.activeStyle) || state.draw?.styles?.[0] || {artist: '', positive: '', negative: ''};
   const poseTags = xenoMallPosePromptText(state.xeno).trim();
   const personTag = item.gender === '男' ? '1boy' : item.gender ? '1girl' : '';
-  const rawTags = item.drawPrompt || [
-    item.category === 'skin_suit' || item.category === 'flesh_ring' ? `${personTag}, solo, full body, masterpiece` : 'solo, fashion showcase',
-    item.appearance,
-    item.bodyBuild,
-    item.summary
+  const lowerType = itemLowerBodyType(item);
+  const charPrompt = normalizeCharacterDrawPrompt(item.drawPrompt);
+  const organPrompt = !(item.lowerBodyMode === 'replace' && ['female', 'none'].includes(lowerType)) && item.organDrawPrompt
+    ? normalizeOrganDrawPrompt(item.organDrawPrompt)
+    : '';
+  const rawTags = [
+    charPrompt || [
+      item.category === 'skin_suit' || item.category === 'flesh_ring' ? `${personTag}, solo, full body, masterpiece` : 'solo, fashion showcase',
+      item.appearance,
+      item.bodyBuild,
+      item.summary
+    ].filter(Boolean).join(', '),
+    organPrompt
   ].filter(Boolean).join(', ');
-  const baseTags = item.lowerBodyMode === 'replace' ? filterLowerBodyTags(rawTags, itemLowerBodyType(item)) : rawTags;
+  const baseTags = item.lowerBodyMode === 'replace' ? filterLowerBodyTags(rawTags, lowerType) : rawTags;
   const combinedBase = poseTags && !String(baseTags).toLowerCase().includes(poseTags.slice(0, 18).toLowerCase())
     ? `${poseTags}, ${baseTags}`
     : baseTags;
   const combinedPrompt = [style.artist, style.positive, combinedBase].map(s => String(s || '').trim()).filter(Boolean).join(', ');
-  const prompt = item.lowerBodyMode === 'replace' ? filterLowerBodyTags(combinedPrompt, itemLowerBodyType(item)) : combinedPrompt;
+  const prompt = item.lowerBodyMode === 'replace' ? filterLowerBodyTags(combinedPrompt, lowerType) : combinedPrompt;
   const negative = String(style.negative || 'lowres, bad anatomy, bad hands, text, error').trim();
 
   let result;

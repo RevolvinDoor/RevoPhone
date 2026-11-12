@@ -9,6 +9,7 @@ const SLOTS = ['outerwear', 'underwear', 'privacyCover', 'accessories'];
 const LIMITS = {id: 120, name: 160, shortName: 80, summary: 400, appearance: 1000, bodyBuild: 1000,
   physiology: 1000, ringAppearance: 800, forwardExtension: 1000, backwardExtension: 1000,
   lowerBodyDescription: 1000, abilities: 4000, abilityConditions: 2000, drawPrompt: 1500,
+  organDrawPrompt: 1500,
   drawPromptOpen: 1500, voiceRole: 4000, rawDesign: 6000};
 const OMIT = ['owned', 'imageData', 'storyPurchaseId', 'storyCraftId', 'sourceTargetName'];
 const KEYS = new Set([...Object.keys(LIMITS), ...OMIT, 'category', 'slot', 'price', 'source', 'listed',
@@ -55,6 +56,20 @@ function prepareItem(raw, assignIds) {
   item.gender = enumValue(raw.gender ?? '', ['', '男', '女', '扶她'], 'gender');
   item.lowerBodyMode = enumValue(raw.lowerBodyMode ?? 'replace', ['replace', 'preserve', 'legacy'], 'lowerBodyMode');
   item.lowerBodyType = enumValue(raw.lowerBodyType ?? 'auto', ['auto', 'female', 'male', 'dual', 'none', 'custom'], 'lowerBodyType');
+  if (own(item, 'drawPrompt')) {
+    item.drawPrompt = item.drawPrompt
+      .split(/\s*[,，]\s*/)
+      .map(s => s.trim())
+      .filter(s => s && !/^(?:\d*\s*)?futanari$/i.test(s))
+      .join(', ');
+  }
+  if (own(item, 'organDrawPrompt') && item.organDrawPrompt) {
+    const tags = item.organDrawPrompt
+      .split(/\s*[,，]\s*/)
+      .map(s => s.trim())
+      .filter(s => s && !/^(?:\d*\s*)?futanari$/i.test(s));
+    item.organDrawPrompt = ['futanari', ...tags].join(', ').slice(0, LIMITS.organDrawPrompt);
+  }
   item.slot = item.category === 'apparel' ? enumValue(raw.slot, SLOTS, 'slot') : item.category;
   if (raw.slot !== undefined && raw.slot !== item.slot) fail(`slot 与分类不一致，应为 ${item.slot}`);
   if (item.category === 'consumable') item.effectKind = enumValue(raw.effectKind, ['cognition', 'body', 'physiology'], 'effectKind');

@@ -7,8 +7,8 @@ import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {encodeBoundVoiceRef, parseBoundVoiceRef} from './xeno-voice.js';
 import {lineEffect} from './voice-fx.js';
 import {enforceStatusLocks, normalizeStatusLocks, statusLockText, normalizeOrgans, organRecordText, applyOrganUpdates, migrateLowerBody, lowerBodyStateValue, LEGACY_ORGAN_SYNC_RULE, ORGAN_SYNC_RULE} from './character-status.js';
-import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, wearDrawingAppearance, itemVoiceRef, extensionEnabled, extensionMode} from './xeno-wear.js';
-export {wearLayers, resolveWear, itemOccupant, itemVoiceRef};
+import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, wearDrawingAppearance, itemVoiceRef, extensionEnabled, extensionMode, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt, splitItemDrawPrompts, parseItemTextBlock} from './xeno-wear.js';
+export {wearLayers, resolveWear, itemOccupant, itemVoiceRef, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt, splitItemDrawPrompts, parseItemTextBlock};
 export {XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset};
 
 export const MALL_POSE_ENTRIES = Object.freeze([
@@ -237,6 +237,17 @@ export function normalizeCatalogItem(raw = {}) {
   const defaultSlot = category === 'skin_suit' ? 'skin_suit' : category === 'flesh_ring' ? 'flesh_ring' : category === 'consumable' ? 'consumable' : 'outerwear';
   const slot = ['skin_suit', 'flesh_ring', 'outerwear', 'underwear', 'privacyCover', 'accessories', 'consumable'].includes(raw?.slot) ? raw.slot : defaultSlot;
   const price = Number.isFinite(Number(raw?.price)) ? Math.max(0, Math.min(999999, Math.round(Number(raw.price)))) : 500;
+  const gender = raw?.gender === '' ? '' : GENDERS.includes(raw?.gender) ? raw.gender : (category === 'skin_suit' || category === 'flesh_ring' ? '扶她' : '');
+  const lowerBodyMode = ['replace', 'preserve'].includes(raw?.lowerBodyMode) ? raw.lowerBodyMode : 'legacy';
+  const lowerBodyType = ['female', 'male', 'dual', 'none', 'custom'].includes(raw?.lowerBodyType) ? raw.lowerBodyType : 'auto';
+  const prompts = splitItemDrawPrompts({
+    category,
+    gender,
+    lowerBodyMode,
+    lowerBodyType,
+    drawPrompt: raw?.drawPrompt,
+    organDrawPrompt: raw?.organDrawPrompt
+  });
   return {
     id: clip(raw?.id, 120) || ('item_' + crypto.randomUUID()),
     name: clip(raw?.name, 160) || '未命名单品',
@@ -253,9 +264,9 @@ export function normalizeCatalogItem(raw = {}) {
     voiceRole: raw?.voiceRole !== undefined ? clip(raw.voiceRole, 4000) : clip(raw?.sourceTargetName, 300),
     voiceRoleExplicit: raw?.voiceRoleExplicit === true,
     effectKind: clip(raw?.effectKind, 40),
-    gender: raw?.gender === '' ? '' : GENDERS.includes(raw?.gender) ? raw.gender : (category === 'skin_suit' || category === 'flesh_ring' ? '扶她' : ''),
-    lowerBodyMode: ['replace', 'preserve'].includes(raw?.lowerBodyMode) ? raw.lowerBodyMode : 'legacy',
-    lowerBodyType: ['female', 'male', 'dual', 'none', 'custom'].includes(raw?.lowerBodyType) ? raw.lowerBodyType : 'auto',
+    gender,
+    lowerBodyMode,
+    lowerBodyType,
     lowerBodyDescription: clip(raw?.lowerBodyDescription, 1000),
     abilities: clip(raw?.abilities, 4000),
     abilityConditions: clip(raw?.abilityConditions, 2000),
@@ -266,8 +277,9 @@ export function normalizeCatalogItem(raw = {}) {
     forwardExtension: clip(raw?.forwardExtension, 1000),
     backwardExtension: clip(raw?.backwardExtension, 1000),
     summary: clip(raw?.summary, 400),
-    drawPrompt: clip(raw?.drawPrompt, 1500),
-    drawPromptOpen: clip(raw?.drawPromptOpen, 1500),
+    drawPrompt: clip(prompts.drawPrompt, 1500),
+    organDrawPrompt: clip(prompts.organDrawPrompt, 1500),
+    drawPromptOpen: clip(normalizeCharacterDrawPrompt(raw?.drawPromptOpen), 1500),
     rawDesign: clip(raw?.rawDesign, 6000),
     imageData: clip(raw?.imageData, 500000)
   };
@@ -2049,32 +2061,44 @@ export function xenoApplyCognitionMod(state, {targetKey, relationOverride, fakeM
 // ==================== 5. 衣柜 & 购物商城 Operations ====================
 
 export function xenoStockItem(state, raw = {}) {
-  if (!raw || typeof raw !== 'object' || !['skin_suit', 'flesh_ring', 'apparel', 'consumable'].includes(raw.category)) throw Error('请选择商品分类');
-  if (typeof raw.name !== 'string' || !raw.name.trim() || raw.name.length > 160) throw Error('请填写 1–160 字的商品名称');
-  const price = raw.price;
+  if (!raw || typeof raw !== 'object') throw Error('请选择商品分类');
+  const hasBlock = Boolean(raw.rawText || (!String(raw.name || '').trim() && (raw.rawDesign || raw.drawPrompt)));
+  const parsed = hasBlock ? parseItemTextBlock(raw.rawText || raw.rawDesign || raw.drawPrompt, {fallbackCategory: raw.category || 'apparel'}) : null;
+  const input = parsed && Object.keys(parsed).length
+    ? {...parsed, ...Object.fromEntries(Object.entries(raw).filter(([k, v]) => k !== 'rawText' && v !== undefined && v !== ''))}
+    : raw;
+  if (!['skin_suit', 'flesh_ring', 'apparel', 'consumable'].includes(input.category)) throw Error('请选择商品分类');
+  if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 160) throw Error('请填写 1–160 字的商品名称');
+  const price = input.price;
   if (typeof price !== 'number' || !Number.isInteger(price) || price < 0 || price > 999999) throw Error('售价应为 0–999999 的整数');
-  if (raw.category === 'apparel' && !['outerwear', 'underwear', 'privacyCover', 'accessories'].includes(raw.slot)) throw Error('请选择服饰槽位');
-  if (raw.category === 'consumable' && !['cognition', 'body', 'physiology'].includes(raw.effectKind)) throw Error('请选择道具效果');
-  const next = normalizeXeno(state), id = clip(raw.id, 120) || 'restock_' + crypto.randomUUID();
+  if (input.category === 'apparel' && !['outerwear', 'underwear', 'privacyCover', 'accessories'].includes(input.slot)) throw Error('请选择服饰槽位');
+  if (input.category === 'consumable' && !['cognition', 'body', 'physiology'].includes(input.effectKind)) throw Error('请选择道具效果');
+  const next = normalizeXeno(state), id = clip(input.id, 120) || 'restock_' + crypto.randomUUID();
   if (next.items.some(item => item.id === id)) throw Error('该商品编号已存在，请编辑原商品或使用新编号');
   if (next.items.length >= 200) throw Error('装备目录已满，请先清理单品');
-  const item = normalizeCatalogItem({...raw, id, source: 'restock', owned: false, listed: true,
+  const item = normalizeCatalogItem({...input, id, source: 'restock', owned: false, listed: true,
     storyPurchaseId: '', storyCraftId: '', sourceTargetName: '',
-    slot: raw.category === 'apparel' ? raw.slot : raw.category,
-    gender: GENDERS.includes(raw.gender) ? raw.gender : '', lowerBodyMode: raw.lowerBodyMode === 'preserve' ? 'preserve' : 'replace'});
+    slot: input.category === 'apparel' ? input.slot : input.category,
+    gender: GENDERS.includes(input.gender) ? input.gender : '', lowerBodyMode: input.lowerBodyMode === 'preserve' ? 'preserve' : 'replace'});
   next.items.unshift(item);
   next.pendingActionNote = `【商城手动上架】已将「${item.name}」按售价 ¥${item.price} 上架，尚未购买或穿戴。`;
   return next;
 }
 
 export function xenoRegisterItem(state, raw = {}) {
-  if (!raw || typeof raw !== 'object' || !['skin_suit', 'flesh_ring', 'apparel'].includes(raw.category)) throw Error('请选择自制装备分类');
-  if (!String(raw.name || '').trim() || String(raw.name).length > 160) throw Error('请填写 1–160 字的装备名称');
-  const next = normalizeXeno(state), id = clip(raw.id, 120) || 'crafted_' + crypto.randomUUID();
+  if (!raw || typeof raw !== 'object') throw Error('请选择自制装备分类');
+  const hasBlock = Boolean(raw.rawText || (!String(raw.name || '').trim() && (raw.rawDesign || raw.drawPrompt)));
+  const parsed = hasBlock ? parseItemTextBlock(raw.rawText || raw.rawDesign || raw.drawPrompt, {fallbackCategory: raw.category || 'skin_suit'}) : null;
+  const input = parsed && Object.keys(parsed).length
+    ? {...parsed, ...Object.fromEntries(Object.entries(raw).filter(([k, v]) => k !== 'rawText' && v !== undefined && v !== ''))}
+    : raw;
+  if (!['skin_suit', 'flesh_ring', 'apparel'].includes(input.category)) throw Error('请选择自制装备分类');
+  if (!String(input.name || '').trim() || String(input.name).length > 160) throw Error('请填写 1–160 字的装备名称');
+  const next = normalizeXeno(state), id = clip(input.id, 120) || 'crafted_' + crypto.randomUUID();
   if (next.items.some(item => item.id === id)) throw Error('该装备编号已存在，请编辑原装备或使用新编号');
   if (next.items.length >= 200) throw Error('装备目录已满，请先清理单品');
-  const item = normalizeCatalogItem({...raw, id, source: 'crafted', owned: true, listed: false, price: 0,
-    gender: GENDERS.includes(raw.gender) ? raw.gender : '', lowerBodyMode: raw.lowerBodyMode === 'preserve' ? 'preserve' : 'replace'});
+  const item = normalizeCatalogItem({...input, id, source: 'crafted', owned: true, listed: false, price: 0,
+    gender: GENDERS.includes(input.gender) ? input.gender : '', lowerBodyMode: input.lowerBodyMode === 'preserve' ? 'preserve' : 'replace'});
   next.items.unshift(item);
   next.pendingActionNote = `【衣柜登记】已将自制装备「${item.name}」收入衣柜，尚未穿戴。`;
   return next;
@@ -2209,9 +2233,9 @@ export function xenoDrawTagsFor(xeno, name) {
     const app = id ? items.find(i => i.id === id) : null;
     if (!app) continue;
     if (slot === 'outerwear' && entity.outfit.coatPose === 'open' && app.drawPromptOpen) {
-      tags.push(app.drawPromptOpen);
+      tags.push(normalizeCharacterDrawPrompt(app.drawPromptOpen));
     } else if (app.drawPrompt) {
-      tags.push(app.drawPrompt);
+      tags.push(normalizeCharacterDrawPrompt(app.drawPrompt));
     }
   }
   return tags.filter(Boolean).join(', ');
@@ -2228,12 +2252,12 @@ export function buildEntityPortraitPrompt(xeno, entity) {
   const isFuta = view.gender === '扶她'
     || (state.possession?.active && state.possession.organSync && !(wear.lowerBodyMode === 'replace' && ['female', 'none'].includes(wear.lowerBodyType))
       && (e.id === '__protagonist__' || e.name === state.possession.targetName));
-  if (isFuta) tags.push('1girl, solo, futanari, full body, masterpiece, best quality');
-  else if (view.gender === '男') tags.push('1boy, solo, full body, masterpiece, best quality');
+  if (view.gender === '男') tags.push('1boy, solo, full body, masterpiece, best quality');
   else tags.push('1girl, solo, full body, masterpiece, best quality');
 
   const equipTags = xenoDrawTagsFor(state, e.id === '__protagonist__' ? '__protagonist__' : e.name);
   if (equipTags) tags.push(equipTags);
+  if (isFuta && !/\bfutanari\b/i.test(equipTags)) tags.push('futanari');
 
   if (wear.body && wear.head?.itemId !== wear.body.itemId) tags.push('retracted hood');
   if (e.voreStorage?.length > 0) {

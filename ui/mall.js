@@ -496,7 +496,7 @@ export function mallApp(ctx) {
     }
     if (act === 'manual-restock') {
       restockText = v.root.querySelector('#mall-restock-text')?.value || '';
-      openItemEditor(ctx, {destination: 'mall', category: restockCategory, slot: restockSlot, gender: restockGender,
+      openItemEditor(ctx, {destination: 'mall', category: restockCategory, slot: restockSlot, gender: restockGender, initialText: restockText,
         onSaved({category}) {activeShelf = category; searchQuery = ''; apparelFilter = 'all'; v.refresh();}});
       return;
     }
@@ -669,7 +669,8 @@ export function mallApp(ctx) {
           ${isLiving ? `<p><b>身体类型：</b>${esc(item.gender || '未设定')} ｜ <b>下体处理：</b>${esc(({replace: '使用本件结构', preserve: '保留内层／本体', legacy: '旧版兼容'})[item.lowerBodyMode])}</p>` : ''}
           ${item.lowerBodyDescription ? `<p><b>下体设定：</b>${esc(item.lowerBodyDescription)}</p>` : ''}
           ${item.abilities ? `<p><b>特殊能力：</b>${esc(item.abilities)}</p><p><b>生效条件：</b>${esc(item.abilityConditions || '穿戴期间，按能力描述')}</p>` : ''}
-          ${item.drawPrompt ? `<p><b>生图提示词：</b><code>${esc(item.drawPrompt)}</code></p>` : ''}
+          ${item.drawPrompt ? `<p><b>角色生图提示词：</b><code>${esc(item.drawPrompt)}</code></p>` : ''}
+          ${item.organDrawPrompt ? `<p><b>肉棒生图提示词：</b><code>${esc(item.organDrawPrompt)}</code></p>` : ''}
           <label class="xeno-field-inline">
             <span>完整高定档案</span>
             <textarea class="xeno-textarea" rows="7" readonly>${esc(item.rawDesign)}</textarea>
