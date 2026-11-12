@@ -189,7 +189,8 @@ export function presetsApp(ctx) {
   // The editor keeps to what is changed most (name, format, the rules); the rest folds away, each rule is one row that
   // opens in a sheet, and what is rare (发送预览, 恢复成默认内容, 删除预设) sits in the 「⋯」 of the title.
   const ruleHelp = (e, draw, chat, xeno) => xeno
-    ? (e.scope === 'mall' ? '商城点击「AI 进货」时使用当前已保存且处于「使用中」的异构预设；保存到其他预设不会切换当前预设。比例尺统一由「商城进货 · 比例尺规范」控制，关闭或清空后不补回默认值；每次只发送选中分类的工作台与一个姿势。商城「查看本次请求」可核对实际内容。请保留所选分类的 XML 输出标签；改乱了可恢复这一条。'
+    ? (e.id === 'organSyncGuidance' ? '用于正文自动同步与「从剧情同步」的器官提取规则。请保留 <xeno_organs> 标签与 JSON 字段，已有记录使用原 ID；未提及项保留，已锁定项不可修改。正文自动提取同时受异构终端与状态自动同步开关控制。关闭或清空本条不会解除器官锁。'
+      : e.scope === 'mall' ? '商城点击「AI 进货」时使用当前已保存且处于「使用中」的异构预设；保存到其他预设不会切换当前预设。比例尺统一由「商城进货 · 比例尺规范」控制，关闭或清空后不补回默认值；每次只发送选中分类的工作台与一个姿势。商城「查看本次请求」可核对实际内容。请保留所选分类的 XML 输出标签；改乱了可恢复这一条。'
       : e.scope === 'task' ? '点击「洞察推荐」或「从剧情同步」时发送给模型的提取提示词。请保留输出标签（如 <insight> 或 <xeno_sync>）及竖线分隔列顺序，以便自动解析。'
       : e.id === 'autoSync' ? '附在实时状态栏末尾，指示正文模型在角色新登场、换装或身体变化时输出 <xeno_update> 同步块。'
       : e.id === 'statusLockGuidance' ? '可编辑的正文描写说明。当前锁定值由「角色状态」勾选开关自动发送；停用或清空这条说明不会解除状态锁，请在角色状态中取消勾选。'
@@ -202,7 +203,8 @@ export function presetsApp(ctx) {
   /** The small line under a rule's row: where it goes, or how it starts. */
   function ruleNote(e, draw, chat, xeno = false) {
     if (xeno) {
-      const tag = e.scope === 'mall' ? '商城进货工作台'
+      const tag = e.id === 'organSyncGuidance' ? '正文自动同步 / 主动剧情同步'
+        : e.scope === 'mall' ? '商城进货工作台'
         : e.scope === 'task' ? '主动扫描/同步任务'
         : e.id === 'autoSync' ? '正文状态栏末尾协议'
         : e.triggerMode === 'always' ? '正文常驻注入' : '正文按需注入（关键词或已启用状态）';

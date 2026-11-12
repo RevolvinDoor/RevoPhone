@@ -34,7 +34,7 @@ export function withoutVoice(message, formats) {
  * as it is, so the model still sees one example of the format. sounds: drop 音效 tags (the rule says how to write them).
  */
 export function outgoingChat(chat, {pictures = true, voice = true, keepLatest = true, formats = [], sounds = true} = {}) {
-  if (!Array.isArray(chat) || (!pictures && !sounds && !(voice && formats.length))) return chat;
+  if (!Array.isArray(chat)) return chat;
   const voiced = m => !m?.is_user && typeof m?.mes === 'string' && withoutVoice(m.mes, formats) !== m.mes;
   let keep = -1;
   if (voice && keepLatest) for (let i = chat.length - 1; i >= 0; i--) if (voiced(chat[i])) { keep = i; break; }
@@ -44,7 +44,7 @@ export function outgoingChat(chat, {pictures = true, voice = true, keepLatest = 
     let mes = m.mes;
     if (pictures && /<img\b/i.test(mes)) mes = withoutPictures(mes);
     if (sounds && /<(?:sfx|ambience)\b/i.test(mes)) mes = withoutSounds(mes);
-    if (/<\/?xeno_(?:update|action)\b/i.test(mes)) mes = stripXenoUpdate(mes);
+    if (/<\/?xeno_(?:update|action|organs)\b/i.test(mes)) mes = stripXenoUpdate(mes);
     if (voice && formats.length && i !== keep) mes = withoutVoice(mes, formats);
     if (mes !== m.mes) chat[i] = {...m, mes};
   }

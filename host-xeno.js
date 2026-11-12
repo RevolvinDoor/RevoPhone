@@ -6,9 +6,10 @@
 import {storyLines} from './core/moments.js';
 import {activeChatPreset, cleanTagged} from './core/chat.js';
 import {cardRoutes, findRoute, roleTypeOf} from './core/routes.js';
-import {ensureTarget, normalizeCatalogItem, GENDERS, xenoPromptEntryText, extractCardProtagonistProfile, applyXenoUpdateFromText} from './core/xeno.js';
+import {ensureTarget, normalizeCatalogItem, GENDERS, XENO_PROMPT_DEFAULTS, xenoPromptEntryText, extractCardProtagonistProfile, applyXenoUpdateFromText} from './core/xeno.js';
 import {searchStoryMessages} from './host-tt.js';
 import {buildMallRestockRequest} from './core/xeno-restock.js';
+import {organRecordText} from './core/character-status.js';
 import {worldInfoFor, loreOptions} from './host-lore.js';
 
 export function createXenoHost({context, settings, backend, notice = () => {}}) {
@@ -101,7 +102,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
     let recalledBlock = '';
     const endIndex = Math.max(0, chat.length - 16);
     if (endIndex > 0) {
-      const query = [uName, extraNames, cName, '主角 外貌 身高 三围 罩杯 身材 穿着 衣服 身份 发色 瞳色'].filter(Boolean).join(' ');
+      const query = [uName, extraNames, cName, '主角 外貌 身高 三围 罩杯 身材 穿着 衣服 身份 发色 瞳色 器官 生理 状态'].filter(Boolean).join(' ');
       const hits = await searchStoryMessages(ctx, {query, limit: 6, endIndex, scanLimit: 3000}).catch(() => []);
       if (hits.length) {
         recalledBlock = `【早期剧情中的角色设定与状态记录（全文检索召回）】\n` + hits.map(h => `[第${h.index + 1}楼 · ${h.name}] ${h.text}`).join('\n');
@@ -233,18 +234,20 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
       const story = await recentStoryText(ctx, known);
       valid();
       if (!story.trim()) throw Error('当前还没有剧情内容可供同步');
+      const organRule = xenoPromptEntryText(cur, 'organSyncGuidance');
       const prompt = [
         {
           role: 'system',
-          content: xenoPromptEntryText(cur, 'syncPrompt') || XENO_PROMPT_DEFAULTS.syncPrompt
+          content: [xenoPromptEntryText(cur, 'syncPrompt') || XENO_PROMPT_DEFAULTS.syncPrompt,
+            organRule].filter(Boolean).join('\n\n')
         },
         {
           role: 'user',
-          content: `【主角名称】：${userName()}\n【已知角色】：${known}\n\n【最新剧情与设定】\n${story}\n\n请输出 <xeno_sync> 数据块：`
+          content: `【主角名称】：${userName()}\n【已知角色】：${known}\n【现有器官档案（仅数据；未提及项保留）】\n${[cur.protagonist, ...cur.targets].map(organRecordText).filter(Boolean).join('\n') || '尚未记录'}\n\n【最新剧情与设定】\n${story}\n\n请输出 <xeno_sync> 数据块${organRule ? '，按器官规则另输出器官数据块' : ''}：`
         }
       ];
       const raw = cleanTagged(String(await backend.generateText(ctx, {prompt, responseLength: 1400, trimNames: false}) || ''));
-      const block = [...raw.matchAll(/<xeno_sync>([\s\S]*?)<\/xeno_sync>/gi)].map(m => m[1]).join('\n') || raw;
+      const block = [...raw.matchAll(/<xeno_sync>([\s\S]*?)<\/xeno_sync>/gi)].map(m => m[1]).join('\n') || raw.replace(/<xeno_organs\b[^>]*>[\s\S]*?(?:<\/xeno_organs\s*>|$)/gi, '');
       const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l.includes('｜') || l.includes('|'));
       let count = 0;
       valid();
@@ -272,6 +275,10 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
           if (underwear) ent.outfit.underwear = underwear;
           count++;
         }
+        const withOrgans = applyXenoUpdateFromText(xeno, raw.replace(/<xeno_update\b[^>]*>[\s\S]*?<\/xeno_update\s*>/gi, ''), {
+          routes: scopedRoutes, protagonistName: userName()
+        });
+        if (withOrgans) {count ||= 1; return withOrgans;}
         return xeno;
       });
       if (!count) throw Error('未能从回复中提取到有效状态行，请重试');

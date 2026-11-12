@@ -2,7 +2,7 @@ import {normalizeXeno, getEntity, xenoRegisterItem, xenoEquipItem, xenoUnequipSl
 
 const clean = value => String(value || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 const plain = value => String(value || '')
-  .replace(/<(think|thinking|analysis|xeno_update|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
+  .replace(/<(think|thinking|analysis|xeno_update|xeno_organs|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
   .replace(/<img\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?(?:<\/img\s*>|$)/gi, '')
   .replace(/<xeno_action\b[^>]*>[\s\S]*?(?:<\/xeno_action\s*>|$)/gi, '')
   .replace(/<[^>]*>/g, '');

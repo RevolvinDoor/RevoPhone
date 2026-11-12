@@ -1,5 +1,5 @@
 import {withProxyHeaders} from './proxy-url.js';
-import {editCharacterStatus} from './character-status.js';
+import {editCharacterStatus, editCharacterOrgan} from './character-status.js';
 import {getEntity, effectiveEntityView} from './xeno.js';
 import { normalizeNarration, NARRATOR } from './narration.js';
 import {RequestLog} from './request-log.js';
@@ -1162,11 +1162,15 @@ export class TTSBackend {
         const p = payload && typeof payload === 'object' ? clone(payload) : {};
         return this.saveXeno((xeno, nextState, cardKey) => {
             switch (action) {
+                case 'editCharacterOrgan':
                 case 'editCharacterStatus': {
                     if (p.chatKey !== undefined && p.chatKey !== (this.activeChatKey || '')) throw Error('聊天已切换，请重新打开编辑');
-                    const entity = getEntity(xeno, p.targetKey || '__protagonist__');
+                    const entity = action === 'editCharacterOrgan'
+                        ? [xeno.protagonist, ...xeno.targets].find(person => person.id === (p.targetKey || '__protagonist__'))
+                        : getEntity(xeno, p.targetKey || '__protagonist__');
                     if (!entity) throw Error('该角色已不存在');
-                    editCharacterStatus(entity, p, effectiveEntityView(xeno, entity));
+                    if (action === 'editCharacterOrgan') editCharacterOrgan(entity, p);
+                    else editCharacterStatus(entity, p, effectiveEntityView(xeno, entity));
                     return xeno;
                 }
                 case 'startPossession': return xenoStartPossession(xeno, p);
