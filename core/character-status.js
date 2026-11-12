@@ -42,7 +42,7 @@ export function organRecordText(entity, view = entity) {
 
 export function applyOrganUpdates(source, resolveEntity, viewOf) {
   let changed = false;
-  for (const match of source.matchAll(/<xeno_organs\b[^>]*>([\s\S]*?)<\/xeno_organs\s*>/gi)) {
+  for (const match of source.matchAll(/<xeno_organs\b[^>]*>((?:(?!<\/?(?:xeno_organs|xeno_action|xeno_update|xeno_sync|think|thinking|analysis|thought|cot|reasoning|tts)\b)[\s\S])*?)<\/xeno_organs\s*>/gi)) {
     if (match[1].length > 150000) continue;
     let updates;
     try { updates = JSON.parse(match[1]); } catch { continue; }

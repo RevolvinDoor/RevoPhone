@@ -6,7 +6,7 @@
 import {storyLines} from './core/moments.js';
 import {activeChatPreset, cleanTagged} from './core/chat.js';
 import {cardRoutes, findRoute, roleTypeOf} from './core/routes.js';
-import {ensureTarget, normalizeCatalogItem, GENDERS, XENO_PROMPT_DEFAULTS, xenoPromptEntryText, extractCardProtagonistProfile, applyXenoUpdateFromText, effectiveEntityView} from './core/xeno.js';
+import {ensureTarget, normalizeCatalogItem, GENDERS, XENO_PROMPT_DEFAULTS, xenoPromptEntryText, extractCardProtagonistProfile, applyXenoUpdateFromText, effectiveEntityView, stripXenoUpdate} from './core/xeno.js';
 import {searchStoryMessages} from './host-tt.js';
 import {buildMallRestockRequest} from './core/xeno-restock.js';
 import {organRecordText} from './core/character-status.js';
@@ -247,7 +247,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
         }
       ];
       const raw = cleanTagged(String(await backend.generateText(ctx, {prompt, responseLength: 1400, trimNames: false}) || ''));
-      const block = [...raw.matchAll(/<xeno_sync>([\s\S]*?)<\/xeno_sync>/gi)].map(m => m[1]).join('\n') || raw.replace(/<xeno_organs\b[^>]*>[\s\S]*?(?:<\/xeno_organs\s*>|$)/gi, '');
+      const block = [...raw.matchAll(/<xeno_sync>([\s\S]*?)<\/xeno_sync>/gi)].map(m => m[1]).join('\n') || stripXenoUpdate(raw);
       const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l.includes('｜') || l.includes('|'));
       let count = 0;
       valid();

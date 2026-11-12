@@ -2299,7 +2299,8 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
     if (message && !message.is_system && typeof message.mes === 'string') scanMessages.push(message.mes);
   }
   const scanText = [...scanMessages, input].filter(text => typeof text === 'string').map(text => text
-    .replace(/<(think|thinking|analysis|xeno_update|xeno_action|xeno_organs|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ')
+    && stripXenoUpdate(text)
+      .replace(/<(think|thinking|analysis|thought|cot|reasoning|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ')
     .replace(/<img\b(?![^>]*\bsrc\s*=)[^>]*>[^<]*(?:<\/img\s*>|$)/gi, ' ')
     .replace(/<[^>]*>/g, ' ')
     .normalize('NFKC').toLowerCase()).join('\n');
@@ -2446,19 +2447,41 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
   return blocks;
 }
 
-// Matches only the innermost paired <xeno_update>...</xeno_update> block, never spanning across another <xeno_update>, <think>, or <tts>
-const XENO_UPDATE_RE = /<xeno_update\b[^>]*>((?:(?!<\/?(?:xeno_update|think|thinking|tts)\b)[\s\S])*?)<\/xeno_update\s*>/gi;
-const THINK_BLOCK_RE = /<(?:think|thinking|analysis)\b[^>]*>[\s\S]*?<\/(?:think|thinking|analysis)\s*>/gi;
+const XENO_BOUNDARY_TAG = '(?:xeno_update|xeno_action|xeno_organs|xeno_sync|think|thinking|analysis|thought|cot|reasoning|tts)';
+// Matches only the innermost paired <xeno_update> / <xeno_action> / <xeno_organs> block, never spanning across another xeno/think/tts tag
+const XENO_UPDATE_RE = new RegExp(`<xeno_update\\b[^>]*>((?:(?!<\\/?${XENO_BOUNDARY_TAG}\\b)[\\s\\S])*?)<\\/xeno_update\\s*>`, 'gi');
+const XENO_ACTION_RE = new RegExp(`<xeno_action\\b[^>]*>((?:(?!<\\/?${XENO_BOUNDARY_TAG}\\b)[\\s\\S])*?)<\\/xeno_action\\s*>`, 'gi');
+const XENO_ORGANS_RE = new RegExp(`<xeno_organs\\b[^>]*>((?:(?!<\\/?${XENO_BOUNDARY_TAG}\\b)[\\s\\S])*?)<\\/xeno_organs\\s*>`, 'gi');
+const THINK_BLOCK_RE = /<(?:think|thinking|analysis|thought|cot|reasoning)\b[^>]*>[\s\S]*?<\/(?:think|thinking|analysis|thought|cot|reasoning)\s*>/gi;
 
-/** Strips `<xeno_update>...</xeno_update>` blocks from rendered/outgoing story text so the chat stays clean. */
+function stripJsonPayloadBlock(_full, inner) {
+  const body = String(inner ?? '').trim();
+  if (!body) return '';
+  try { JSON.parse(body); return ''; } catch {}
+  if (/^[\[{][\s\S]{0,600}[\]}]$/.test(body) && !/\n\s*\n/.test(body)) return '';
+  return String(inner ?? '').replace(/\s*\[[\s\S]*\]\s*$/, '');
+}
+
+function stripStatusPayloadBlock(_full, inner) {
+  const raw = String(inner ?? '');
+  if (!raw.trim()) return '';
+  const lines = raw.split(/\r?\n/);
+  const kept = lines.filter(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    return !/[|｜]/.test(trimmed);
+  });
+  return kept.some(line => line.trim()) ? kept.join('\n') : '';
+}
+
+/** Strips `<xeno_update>...</xeno_update>`, `<xeno_action>...</xeno_action>`, and `<xeno_organs>...</xeno_organs>` blocks from rendered/outgoing story text so the chat stays clean without eating story prose if a tag is mentioned in CoT. */
 export function stripXenoUpdate(text) {
   return String(text ?? '')
-    .replace(/<xeno_organs\b[^>]*>[\s\S]*?(?:<\/xeno_organs\s*>|$)/gi, '')
-    .replace(/<\/xeno_organs\s*>/gi, '')
-    .replace(/<xeno_action\b[^>]*>[\s\S]*?(?:<\/xeno_action\s*>|$)/gi, '')
-    .replace(/<\/xeno_action\s*>/gi, '')
-    .replace(XENO_UPDATE_RE, '')
-    .replace(/<\/?xeno_update\b[^>]*>/gi, '')
+    .replace(XENO_ORGANS_RE, stripJsonPayloadBlock)
+    .replace(XENO_ACTION_RE, stripJsonPayloadBlock)
+    .replace(XENO_UPDATE_RE, stripStatusPayloadBlock)
+    .replace(/<xeno_(?:action|organs)\b[^>]*>\s*\[(?:(?!\r?\n\s*\r?\n)[^<>])*$/gi, '')
+    .replace(/<\/?xeno_(?:update|action|organs)\b[^>]*>/gi, '')
     .trimEnd();
 }
 

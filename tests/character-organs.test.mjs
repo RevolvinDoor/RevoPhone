@@ -108,6 +108,12 @@ test('下体字段与锁随聊天存档和楼层回退恢复，新聊天不继�
   const text = '故事正文' + tag({lowerBodyState: '疲软'});
   assert.equal(stripXenoUpdate(text), '故事正文');
   assert.equal(outgoingChat([{mes: text}], {pictures: false, voice: false, sounds: false})[0].mes, '故事正文');
+  const cotUnclosedNoTail = '<think>思考：本轮无需输出 <xeno_action>、<xeno_update> 或 <xeno_organs>。</think>\n第一段正文。\n第二段正文。';
+  assert.equal(stripXenoUpdate(cotUnclosedNoTail), '<think>思考：本轮无需输出 、 或 。</think>\n第一段正文。\n第二段正文。');
+  const cotUnclosedWithTail = '<think>思考：末尾需要输出 <xeno_action>、<xeno_organs> 和 <xeno_update>。</think>\n第一段正文。\n<tts>旅人|1,0.7|出发吧</tts>\n第二段正文。\n<xeno_action>[{"action":"equip","target":"主角","itemId":"skin","evidence":"第一段正文。"}]</xeno_action>\n' + tag({lowerBodyState: '疲软'}) + '\n<xeno_update>旅人|旅客|扶她|黑发|高挑|原有生理描述|外套|内衣</xeno_update>';
+  assert.equal(stripXenoUpdate(cotUnclosedWithTail), '<think>思考：末尾需要输出 、 和 。</think>\n第一段正文。\n<tts>旅人|1,0.7|出发吧</tts>\n第二段正文。');
+  const plainCotAccidentalClose = '思考：检查 <xeno_update>\n第一段正文。\n第二段正文。\n旅人|旅客|扶她|黑发|高挑|原有生理描述|外套|内衣\n</xeno_update>';
+  assert.equal(stripXenoUpdate(plainCotAccidentalClose), '思考：检查 \n第一段正文。\n第二段正文。');
 });
 
 test('旧原样默认器官规则升级，自定义文本与关闭清空保留；锁定事实独立注入', () => {

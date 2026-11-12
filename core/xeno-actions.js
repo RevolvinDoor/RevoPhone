@@ -1,10 +1,9 @@
-import {normalizeXeno, getEntity, xenoRegisterItem, xenoEquipItem, xenoUnequipSlot, xenoUpdateMountOption, itemOccupant, wearLayers} from './xeno.js';
+import {normalizeXeno, getEntity, xenoRegisterItem, xenoEquipItem, xenoUnequipSlot, xenoUpdateMountOption, itemOccupant, wearLayers, stripXenoUpdate} from './xeno.js';
 
 const clean = value => String(value || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
-const plain = value => String(value || '')
-  .replace(/<(think|thinking|analysis|xeno_update|xeno_organs|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
+const plain = value => stripXenoUpdate(value)
+  .replace(/<(think|thinking|analysis|thought|cot|reasoning|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
   .replace(/<img\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?(?:<\/img\s*>|$)/gi, '')
-  .replace(/<xeno_action\b[^>]*>[\s\S]*?(?:<\/xeno_action\s*>|$)/gi, '')
   .replace(/<[^>]*>/g, '');
 const wearable = item => ['skin_suit', 'flesh_ring', 'apparel'].includes(item.category);
 const negative = /(?:没有|并未|并没有|尚未|还没|还未|未能|并不|不能|不会|不曾|不再(?:穿|脱|戴|套|换|取)|不要|别再|不想|不打算|未曾|从未|打算|准备|想要|考虑|如果|假如|曾经|昨天|回忆|计划|是否|能否|能不能|可以吗|[？?])/;
@@ -60,7 +59,7 @@ export function wardrobeActionPlan(xeno, {input = '', chat = [], balance = 0} = 
     '正文中实际完成的穿脱与设置变更（不限定用户直接命令）均须同步。询问、计划、否定、回忆、假设不执行。没有变化不输出操作块。',
     '自制装备登记：只有正文明确完成制作且写明名称、分类时才输出 action:"register"，target:"主角"，item:{name,category:"skin_suit"|"flesh_ring"|"apparel",gender:"女"|"男"|"扶她"|"",appearance?,bodyBuild?,physiology?,abilities?,abilityConditions?,lowerBodyMode:"replace"|"preserve",lowerBodyType:"auto"|"female"|"male"|"dual"|"none"|"custom",lowerBodyDescription?,forwardExtension?,backwardExtension?,drawPrompt?,organDrawPrompt?}，evidence 必须逐字引用已完成制作的原句且包含装备名及分类。只填写正文确立的内容；未提及能力不编造。登记直接入柜、不扣钱包、不上架商店，不等于已经穿戴。道具尚未制成、仅讨论制作、仅见到他人装备、商店商品不能登记。不能把“买下”伪装成“自制”。',
     '同轮先 register 再穿戴新装备时，后续 equip 可不填 itemId，改用 query:"刚登记装备的完整名称"，evidence 引用实际穿戴原句。没有同轮成功登记时不能用此方式创建或猜测编号。身体类型和下体结构独立：女性结构不会自动生成男性部位；preserve 保留内层或本体，replace 按该件结构覆盖；肉躯前方延展按结构设定处理。',
-    '正文完成后输出一个隐藏 JSON 数组块 <xeno_action>[...]</xeno_action>。每项字段：action 为 register/equip/replace/remove/set/offer/purchase/cancel；target 为“主角”或已登记姓名；除新装备登记外 itemId 必须来自下方清单或同轮登记结果；evidence 是正文中实际完成动作的原句，必须逐字一致，offer 则引用购买询问原句。query 保留用户对物品的原始描述。',
+    '正文完成后输出一个隐藏 JSON 数组块 <xeno_action>[...]</xeno_action>（思考过程/思维链中严禁写出 xeno_action 标签或半截尖括号标签）。每项字段：action 为 register/equip/replace/remove/set/offer/purchase/cancel；target 为“主角”或已登记姓名；除新装备登记外 itemId 必须来自下方清单或同轮登记结果；evidence 是正文中实际完成动作的原句，必须逐字一致，offer 则引用购买询问原句。query 保留用户对物品的原始描述。',
     '必须输出可执行操作，只有外观描述、库存说明或 xeno_update 不会完成穿戴。例如正文“你穿上了银发皮躯。”，随后输出 <xeno_action>[{"action":"equip","target":"主角","itemId":"清单里的实际ID","evidence":"你穿上了银发皮躯。"}]</xeno_action>；不要照抄示例ID。',
     'remove 可省 itemId，改用 slot:"outermost" 或 "all"。set 必须指定已穿戴层的 itemId。肉躯前后延展是独立开关：patch 用 fleshForwardEnabled:boolean、fleshBackwardEnabled:boolean，可同时为 true，只修改实际改变的项；兼容 fleshExtendMode:"idle"/"forward"/"backward"/"both"（绝对设置，idle 关闭两项）。',
     '头部覆盖开启／关闭对应 skinFaceMode 或 fleshFaceMode:"full"/"neck"；下体覆盖／独立部位启用或收起对应皮躯 skinOrganOut:boolean、肉躯 organOut:boolean。覆盖开关不改变延展方向。未指定装备名或层数时只操作该角色最外层对应类型的已穿戴装备，不能修改库存或其他角色的装备。',
@@ -260,8 +259,8 @@ export function applyWardrobeReply(state, reply, {userText = '', previousReply =
   if (!state || state.enabled === false || state.autoWardrobe === false) return {state, messages: []};
   const source = String(reply || '')
     .replace(/```[\s\S]*?(?:```|$)/g, '')
-    .replace(/<(think|thinking|analysis|script|style|pre|code)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '');
-  const blocks = [...source.matchAll(/<xeno_action\b[^>]*>([\s\S]*?)<\/xeno_action\s*>/gi)];
+    .replace(/<(think|thinking|analysis|thought|cot|reasoning|script|style|pre|code)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
+  const blocks = [...source.matchAll(/<xeno_action\b[^>]*>((?:(?!<\/?(?:xeno_action|xeno_organs|xeno_update|xeno_sync|think|thinking|analysis|thought|cot|reasoning|tts)\b)[\s\S])*?)<\/xeno_action\s*>/gi)];
   const hasOperations = blocks.some(block => {
     try { const actions = JSON.parse(block[1]); return Array.isArray(actions) && actions.length > 0; } catch { return false; }
   });
