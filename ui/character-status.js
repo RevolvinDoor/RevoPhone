@@ -1,4 +1,5 @@
-import {createView, esc, heading} from './common.js';
+import {createView, esc, heading, help} from './common.js';
+import {icon} from './icons.js';
 import {effectiveEntityView} from '../core/xeno.js';
 import {STATUS_FIELDS, STATUS_OUTFIT_FIELDS} from '../core/character-status.js';
 
@@ -15,23 +16,34 @@ export function characterStatusApp(ctx) {
   v.refresh = () => {
     const xeno = api.getState().xeno, entity = current(xeno), view = effectiveEntityView(xeno, entity);
     selected = entity.id;
+    const lockCount = Object.keys(STATUS_FIELDS).filter(field => entity.statusLocks?.[field]).length;
+    const recordedCount = Object.keys(STATUS_FIELDS).filter(field => String(STATUS_OUTFIT_FIELDS.includes(field) ? entity.outfit[field] || '' : view[field] || '').trim()).length;
+    const syncing = Boolean(api.xenoBusy?.('sync'));
+    const fieldIcons = {appearance: 'person', bodyBuild: 'expand', outerwear: 'layers', underwear: 'layers', privacyCover: 'lock', accessories: 'wand'};
     const row = field => {
       const locked = Boolean(entity.statusLocks?.[field]);
       const text = STATUS_OUTFIT_FIELDS.includes(field) ? entity.outfit[field] : view[field];
       const derived = !STATUS_OUTFIT_FIELDS.includes(field) && view[field] !== entity[field];
-      return `<article class="status-field"><div class="status-field-head"><h3>${esc(STATUS_FIELDS[field])}</h3>
-        <label class="status-lock"><input type="checkbox" data-lock="${field}" aria-label="锁定${esc(STATUS_FIELDS[field])}" ${locked ? 'checked' : ''}>锁定</label></div>
-        <p>${esc(text || '未记录')}</p>${derived ? '<small>当前外观由穿戴或形态决定，修改来源请前往衣柜或异构终端。</small>' : ''}<button type="button" class="text-button" data-edit="${field}" ${locked || derived ? 'disabled' : ''}>${locked ? '解锁后可编辑' : derived ? '随当前形态更新' : '编辑记录'}</button></article>`;
+      return `<article class="status-field${locked ? ' is-locked' : ''}${text ? '' : ' is-empty'}">
+        <div class="status-field-head"><span class="status-field-symbol" aria-hidden="true">${icon(fieldIcons[field])}</span><h3>${esc(STATUS_FIELDS[field])}</h3>
+          ${!locked && !derived ? `<button type="button" class="status-edit" data-edit="${field}" aria-label="编辑${esc(STATUS_FIELDS[field])}">${icon('edit')}<span>编辑</span></button>` : `<span class="status-state">${locked ? '已固定' : '随形态'}</span>`}</div>
+        <p class="status-value">${esc(text || '尚未记录')}</p>
+        <div class="status-field-footer"><span class="status-field-hint">${locked ? '解锁后可更改' : derived ? '由当前穿戴或形态决定' : '可随剧情更新'}</span>
+        <label class="status-lock"><input type="checkbox" role="switch" data-lock="${field}" aria-label="锁定${esc(STATUS_FIELDS[field])}" ${locked ? 'checked' : ''}><span class="status-lock-track" aria-hidden="true"></span><span>${locked ? '已锁定' : '锁定'}</span></label></div></article>`;
     };
-    v.draw(`${heading('角色状态', '', 'Character Status')}
-      <label class="status-person">查看角色<select data-person aria-label="查看角色">${entities(xeno).map(person => `<option value="${esc(person.id)}" ${person.id === selected ? 'selected' : ''}>${esc(person.name || '主角')}${person.id === '__protagonist__' ? ' · 主角' : ''}</option>`).join('')}</select></label>
-      <p class="status-note">${esc(entity.identity || '身份未记录')} · 锁定字段会约束正文，并阻止同步覆盖。模型仍可能出现不遵守约束的描写。</p>
-      <div class="actions"><button type="button" class="secondary" data-action="sync" ${api.xenoBusy?.('sync') ? 'disabled' : ''}>${api.xenoBusy?.('sync') ? '同步中…' : '从剧情同步'}</button><button type="button" class="secondary" data-action="wardrobe">衣柜</button><button type="button" class="secondary" data-action="xeno">异构终端</button></div>
-      <h2 class="group-title">当前外观</h2>${row('appearance')}${row('bodyBuild')}
-      <h2 class="group-title">衣物穿戴</h2>${STATUS_OUTFIT_FIELDS.map(row).join('')}
-      <details class="status-sources" data-group="status-sources-${esc(entity.id)}"><summary>来源与变化</summary>
-        <dl>${[['原始身体', view.originalBody], ['当前身体', view.currentBody], ['身体来源', view.bodySource], ['头部来源', view.headSource], ['穿戴层次', view.layerText], ['变化原因', view.changeReason]].map(([label, text]) => `<dt>${esc(label)}</dt><dd>${esc(text || '未记录')}</dd>`).join('')}</dl>
-        <p class="status-note">显示当前记录中的来源与变化原因，不是完整历史日志。</p></details>`);
+    v.draw(`${heading('角色状态', help('勾选锁定后，记录保持当前值，并向正文发送约束。先解锁再修改。模型仍可能出现不遵守约束的描写。由形态决定的外观，请到衣柜或异构终端修改来源。'), 'Character / Status')}
+      <section class="status-profile" aria-label="人物概览"><div class="status-profile-top">
+        <span class="status-monogram" aria-hidden="true">${esc(Array.from(entity.name || '角')[0])}</span>
+        <div class="status-profile-copy"><span class="status-kicker">${entity.id === '__protagonist__' ? '主角档案' : '角色档案'}</span><h2>${esc(entity.name || '未命名主角')}</h2><p>${esc(entity.identity || '身份尚未记录')}</p></div></div>
+        <div class="status-profile-meta"><span>${icon('file')}已记录 ${recordedCount} / 6 项</span><span>${icon('lock')}${lockCount ? `${lockCount} 项已锁定` : '暂无锁定'}</span></div>
+        <label class="status-person"><span>切换角色</span><select data-person aria-label="查看角色">${entities(xeno).map(person => `<option value="${esc(person.id)}" ${person.id === selected ? 'selected' : ''}>${esc(person.name || '主角')}${person.id === '__protagonist__' ? ' · 主角' : ''}</option>`).join('')}</select></label>
+      </section>
+      <nav class="status-toolbar" aria-label="状态操作"><button type="button" class="status-sync" data-action="sync" aria-busy="${syncing}" ${syncing ? 'disabled' : ''}>${icon('refresh')}<span>${syncing ? '同步中…' : '从剧情同步'}</span></button><button type="button" data-action="wardrobe">${icon('layers')}<span>衣柜</span></button><button type="button" data-action="xeno">${icon('sliders')}<span>终端</span></button></nav>
+      <section aria-label="当前外观"><div class="status-section-heading"><h2>当前外观</h2><span>APPEARANCE</span></div><div class="status-group">${row('appearance')}${row('bodyBuild')}</div></section>
+      <section aria-label="衣物穿戴"><div class="status-section-heading"><h2>衣物穿戴</h2><span>WARDROBE</span></div><div class="status-group">${STATUS_OUTFIT_FIELDS.map(row).join('')}</div></section>
+      <details class="status-sources" data-group="status-sources-${esc(entity.id)}"><summary><span class="status-source-icon" aria-hidden="true">${icon('layers')}</span><span><strong>来源与变化</strong><small>身体来源 · 穿戴层次 · 变化原因</small></span><span class="status-chevron" aria-hidden="true">${icon('down')}</span></summary>
+        <dl>${[['原始身体', view.originalBody], ['当前身体', view.currentBody], ['身体来源', view.bodySource], ['头部来源', view.headSource], ['穿戴层次', view.layerText], ['变化原因', view.changeReason]].map(([label, text]) => `<div><dt>${esc(label)}</dt><dd>${esc(text || '未记录')}</dd></div>`).join('')}</dl>
+        <p class="status-note">这里保留当前来源与原因，不是历史日志。</p></details>`);
   };
   v.on('change', '[data-person]', el => {selected = el.value; v.refresh();});
   v.on('change', '[data-lock]', el => {
