@@ -139,6 +139,21 @@ export const XENO_RULE_TEXTS = Object.freeze({
   头部覆盖: 皮躯的头部组织可凭意念从颈部向上蔓延覆盖全脸（与真实头部无异），或向下收缩褪至颈部展现穿戴者原本面貌
   社会认知: 皮躯在社会认知中属于“全包裹式的紧身衣物”，外层无需再穿内衣裤，直接以皮躯外观出门完全符合社会隐私规范`,
 
+  mallShop: `# 购物商城：机械悬轨陈列室与活体躯壳/服装选购演出规则
+商城选购与购买服装场景:
+  空间环境:
+    场景基调: 幽暗、私密且带有冷硬工业/科研质感的【异构商城·实体陈列更衣舱】（或随世界观适配为隐秘地下工坊/次元陈列室）。深灰金属格栅墙面隔绝外界，仅由头顶导轨射灯投下冷白与幽绿交织的聚光，将待售躯壳与服装的肉感阴影勾勒得极具立体压迫感
+  顶置滑轨悬吊陈列:
+    陈列方式: 商城中的活体皮躯、肉躯（以完整后方延展躯体模特态展示）及高定特殊服饰并非叠放在普通柜台，而是按完整立体人形垂直悬吊在天花板的【自动化机械传输滑轨】上，排成深不见底的静默队列
+    待售状态: 悬挂在滑轨上的每一具躯壳均处于彻底无意识、无自主生气的静息垂挂状态——双目微阖或眼神空洞凝滞，双臂自然垂落身体两侧，肌肤却保持着温润逼真的弹性光泽，宛如流水线上等待被挑选与穿入的高定肉身成衣
+  遥控切换与物理惯性演出（核心细节）:
+    控制器交互: 选购者站在滑轨正前方，手中握着一枚灰黑色的长方体控制器（表面嵌有泛着幽绿荧光的切换按钮与确认键）。每当手指按下绿色按钮，清脆的按键咔哒声后，头顶导轨便响起低沉冷漠的电机运作嗡鸣
+    平移入场与体型压迫: 当前悬吊的躯壳顺着滑轨平稳地向左侧滑出暗影，下一具待售躯壳随即从右侧滑入并精准急停在选购者正前方。面对高挑乃至两米级母马/健美巨躯规格的商品时，悬空的躯壳居高临下笼罩视野，选购者的平视视线往往正对着躯壳紧实的腰腹、丰硕耻丘或高耸胸乳下沿
+    急停晃动惯性: 滑轨骤然停稳的瞬间，躯壳上沉甸甸的丰满巨乳、宽阔浑圆的臀腿软肉，以及胯间垂挂的粗硕扶她肉棒与饱满玉囊，都会因物理惯性在选购者眼前近距离地沉重晃动、钟摆般摇晃数下，随后才缓缓止息，带来扑面而来的肉体体量感与视觉冲击
+  审视、成交与穿戴衔接:
+    挑选过程: 选购者可在单调冷酷的机械滑轨切换声中，面无表情或带着挑剔审视的目光，逐一检视面前躯壳的胸臀弧度、腹肌纹理、面料剪裁及胯下巨根尺寸，按下按钮不断滑过不满意的款式，直至找到中意目标
+    购买结算: 当选购者锁定停在面前的商品并确认购买时，导轨锁扣发出泄压轻响：若选择「加入衣柜」，该具躯壳/服装即刻由轨道收回转入私人衣柜仓待命；若选择「买下并立即穿戴」，悬吊的躯壳/服装直接降低至合适高度，背部脊椎隐形裂口（或肉躯环口/衣襟）应声张开，顺滑包裹贴合穿戴者全身`,
+
   vore: `# 特异能力：丸吞之术
 丸吞之术:
   核心机制: 施展者可通过自身各类穴口（口腔、小穴、肛门、宽厚肉质的阴茎口/鸡巴口、或异化捕食尾）发动吞噬，穴口与腔道获得超维度扩张韧性与环形肌肉绞压力，将猎物强行吞入
@@ -165,6 +180,7 @@ export const XENO_PROMPT_DEFAULTS = Object.freeze({
   parasite: XENO_RULE_TEXTS.parasite,
   skinSuit: XENO_RULE_TEXTS.skinSuit,
   fleshRing: XENO_RULE_TEXTS.fleshRing,
+  mallShop: XENO_RULE_TEXTS.mallShop,
   vore: XENO_RULE_TEXTS.vore,
   alienation: XENO_RULE_TEXTS.alienation,
   autoSync: [
@@ -259,6 +275,7 @@ export const XENO_TRIGGER_KEYWORDS = Object.freeze({
   parasite: ['寄生', '子体', '潜伏共生', '共生同化', '合作共生', '巨躯'],
   skinSuit: ['皮躯', '活体皮衣', 'skinsuit', 'skin suit'],
   fleshRing: ['肉躯', '活体肉环'],
+  mallShop: ['商城', '商店', '选购', '购买', '买下', '买一件', '买这件', '买这套', '试穿', '挑衣服', '挑皮躯', '滑轨', '陈列', '挂轨', '遥控器'],
   vore: ['丸吞', '体内收纳', 'vore'],
   alienation: ['肉体改造', '丸吞尾', '吞噬孔洞', '异化捕食尾']
 });
@@ -272,6 +289,7 @@ export const DEFAULT_XENO_ENTRIES = Object.freeze([
   {id: 'parasite', title: '核心能力三：寄生之术', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.parasite},
   {id: 'skinSuit', title: '活体装备：皮躯规则', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.skinSuit},
   {id: 'fleshRing', title: '活体道具：肉躯规则', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.fleshRing},
+  {id: 'mallShop', title: '购物商城：悬轨躯壳陈列与选购演出规则', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.mallShop},
   {id: 'vore', title: '特异能力：丸吞之术规则', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.vore},
   {id: 'alienation', title: '肉体改造：丸吞尾与吞噬孔洞异化', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.alienation},
   {id: 'autoSync', title: '状态自动同步协议（<xeno_update>）', scope: 'story', triggerMode: 'always', enabled: true, text: XENO_PROMPT_DEFAULTS.autoSync},

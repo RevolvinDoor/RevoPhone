@@ -2377,6 +2377,7 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
     if (id === 'parasite') return Boolean(state.parasite?.active || state.parasite?.bodyHost || state.parasite?.scions?.length);
     if (id === 'skinSuit') return wornSkinIds.size > 0;
     if (id === 'fleshRing') return wornRingIds.size > 0;
+    if (id === 'mallShop') return Boolean(state.wardrobePending?.itemId || /商城|商店|购买|买下|选购/.test(state.pendingActionNote || ''));
     if (id === 'vore') return allEntities.some(e => e.voreStorage.length > 0);
     if (id === 'alienation') return allEntities.some(e => e.predatorTail !== 'none' || ORIFICE_SLOTS.some(([k]) => e.orificeMods[k] !== '常态'));
     return false;

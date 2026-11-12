@@ -428,3 +428,26 @@ test('手动进货支持整段提示词与设定智能识别导入（XML、标�
   assert.equal(stocked.drawPrompt, '1girl, solo, nun, white habit, silver hair, blue eyes, huge breasts, wide hips');
   assert.equal(stocked.organDrawPrompt, 'futanari, huge penis, thick shaft, veins, glans, large testicles, dripping precum');
 });
+
+test('购物商城悬轨陈列选购提示词（mallShop）在商城购买或剧情选购时自动按需注入', () => {
+  const b = backendFixture();
+  b.settings.chat.wallet.balance = 5000;
+  const shopEntry = b.settings.xeno.presets[0].entries.find(e => e.id === 'mallShop');
+  assert.ok(shopEntry);
+  assert.equal(shopEntry.scope, 'story');
+  assert.match(shopEntry.text, /自动化机械传输滑轨/);
+  assert.match(shopEntry.text, /急停晃动惯性/);
+
+  // 未触发商城选购时不常驻注入
+  const idlePlan = xenoPromptPlan(b.settings.xeno, null, {input: '今天去散步'});
+  const idleRules = idlePlan.find(p => p.key === 'sttts.entry.xeno-rules')?.text || '';
+  assert.doesNotMatch(idleRules, /自动化机械传输滑轨/);
+
+  // 商城购买后或输入选购关键词时自动注入悬轨陈列室提示词
+  const unowned = b.settings.xeno.items.find(i => !i.owned && i.listed !== false);
+  b.buyXenoItem(unowned.id);
+  assert.match(b.settings.xeno.pendingActionNote, /悬轨陈列室/);
+  const buyPlan = xenoPromptPlan(b.settings.xeno, null, {input: '继续'});
+  const buyRules = buyPlan.find(p => p.key === 'sttts.entry.xeno-rules')?.text || '';
+  assert.match(buyRules, /自动化机械传输滑轨/);
+});

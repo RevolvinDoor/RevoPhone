@@ -1301,12 +1301,18 @@ export class TTSBackend {
             const found = xeno.items.find(i => i.id === itemId);
             if (!found) throw Error('商城里没有这件商品');
             if (!found.owned && found.listed === false) throw Error('这件装备不在商店出售');
+            const wasOwned = found.owned;
             const cost = !found.owned && !xeno.freeShop ? found.price : 0;
             found.owned = true;
             let equipped = xeno;
             if (equipTargetKey) {
                 equipped = found.category === 'consumable' ? xenoUseConsumable(xeno, { targetKey: equipTargetKey, itemId })
                     : xenoEquipItem(xeno, { targetKey: equipTargetKey, itemId, mode: equipMode });
+                if (!wasOwned) {
+                    equipped.pendingActionNote = `【本轮购物商城选购并穿戴】在异构商城悬轨陈列室按下遥控器切换审视后，选定停在面前的【${found.name}】（${xeno.freeShop ? '免单 ¥0' : `售价 ¥${found.price}`}）完成购买并当场穿戴/使用。${equipped.pendingActionNote || ''}`;
+                }
+            } else if (!wasOwned) {
+                equipped.pendingActionNote = `【本轮购物商城选购入柜】在异构商城悬轨陈列室按下遥控器切换审视后，选定停在面前的【${found.name}】（${xeno.freeShop ? '免单 ¥0' : `售价 ¥${found.price}`}）完成购买，由顶置滑轨解锁转入私人衣柜待命。`;
             }
             if (next.chat.wallet.balance < cost) throw Error('余额不足，未购买或穿戴');
             if (cost > 0) {
