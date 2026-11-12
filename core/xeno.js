@@ -572,12 +572,8 @@ export function normalizeXenoPreset(raw) {
       const withoutSwitchRule = builtin.text.replace(/^[ \t]*开关规则:.*\r?\n/m, '');
       if (entryText === withoutSwitchRule || entryText === builtin.text.replace(/^[ \t]*开关规则:.*\r?\n/m, oldSwitchRule)) entryText = builtin.text;
     }
-    if (id === 'autoSync' && entryText.includes('1. 当本轮剧情中有【新登场的女性/扶她重要角色】首次亮相') && builtin?.text) {
-      entryText = builtin.text;
-    }
-    if (id === 'syncPrompt' && entryText.startsWith('你是【异构终端】的实时状态栏提取引擎。请根据最新剧情与角色设定') && builtin?.text) {
-      entryText = builtin.text;
-    }
+    // A legacy phrase is not proof that the whole entry is an untouched default.
+    // Preserve saved sync rules; users can explicitly restore an entry in Presets.
     let entryTitle = clip(e.title, 80) || builtin?.title || '自定义提示词条目';
     if (id === 'mallPosePrompt' && entryTitle === '商城进货 · 商品生图姿势提示词（T-pose+三视图）' && builtin?.title) {
       entryTitle = builtin.title;
