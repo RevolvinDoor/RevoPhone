@@ -6,6 +6,7 @@ import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS, XENO_PROMPT_DEFAULTS, XENO_TRIGGER_
 import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {encodeBoundVoiceRef, parseBoundVoiceRef} from './xeno-voice.js';
 import {lineEffect} from './voice-fx.js';
+import {enforceStatusLocks, normalizeStatusLocks, statusLockText} from './character-status.js';
 import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, wearDrawingAppearance, itemVoiceRef, extensionEnabled, extensionMode} from './xeno-wear.js';
 export {wearLayers, resolveWear, itemOccupant, itemVoiceRef};
 export {XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset};
@@ -190,7 +191,7 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
     && (!raw?.bodyBuild || raw?.bodyBuild === '身高178cm，匀称挺拔');
   const name = cleanField(raw?.name, 80);
   const gender = isLegacyDefaultProt ? '' : (GENDERS.includes(raw?.gender) ? raw.gender : '');
-  return {
+  return enforceStatusLocks({
     id: clip(raw?.id, 80) || (isProtagonist ? '__protagonist__' : crypto.randomUUID()),
     // === 常驻竖排 6 项（不含性格，默认留空） ===
     name,
@@ -206,6 +207,7 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
     hostingState: cleanField(raw?.hostingState, 200),
     livingMount: normalizeLivingMount(raw?.livingMount),
     outfit: normalizeOutfit(raw?.outfit),
+    statusLocks: normalizeStatusLocks(raw?.statusLocks),
     voreStorage: Array.isArray(raw?.voreStorage) ? raw.voreStorage.slice(0, 20).map(normalizeVoreEntry) : [],
     cognitionState: normalizeCognition(raw?.cognitionState),
     // === 肉体改造：丸吞尾 & 孔洞异化 ===
@@ -223,7 +225,7 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
       physiology: clip(raw.baseSnapshot.physiology, 1000),
       voiceRole: clip(raw.baseSnapshot.voiceRole, 4000)
     } : null
-  };
+  });
 }
 
 export function normalizeCatalogItem(raw = {}) {
@@ -1234,8 +1236,8 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
     name: e.name,
     identity: e.identity,
     gender,
-    appearance,
-    bodyBuild,
+    appearance: e.statusLocks?.appearance?.value ?? appearance,
+    bodyBuild: e.statusLocks?.bodyBuild?.value ?? bodyBuild,
     physiology,
     headAppearance: wear.headAppearance,
     headSource: wear.headSource,
@@ -2090,6 +2092,7 @@ export function xenoEquipItem(state, {targetKey = '__protagonist__', itemId, mod
     next.pendingActionNote = `【本轮衣柜操作：${replace ? '更换最外层' : '叠加穿戴'}】「${entity.name || '主角'}」穿上【${item.name}】，位于第 ${entity.livingMount.layers.length} 层。当前穿戴：${resolveWear(next, entity).layerText}。请依照实际层次更新最终外观、头部与音色。`;
   } else if (item.category === 'apparel') {
     const slot = ['outerwear', 'underwear', 'privacyCover', 'accessories'].includes(item.slot) ? item.slot : 'outerwear';
+    if (entity.statusLocks?.[slot]) throw Error('该衣物栏已锁定，请先到角色状态解锁');
     entity.outfit[slot] = `${item.name}（${item.summary}）`;
     entity.outfit[slot + 'ItemId'] = item.id;
     if (/风衣/.test(item.name) && (mode === 'open' || mode === 'cover')) {
@@ -2104,6 +2107,9 @@ export function xenoUpdateMountOption(state, {targetKey = '__protagonist__', ite
   const next = normalizeXeno(state);
   const entity = getEntity(next, targetKey);
   if (!entity) throw Error('找不到指定的穿戴者');
+  for (const field of ['outerwear', 'underwear', 'privacyCover', 'accessories']) {
+    if (entity.statusLocks?.[field] && (patch[field] !== undefined || (field === 'outerwear' && patch.coatPose !== undefined))) throw Error('该衣物栏已锁定，请先到角色状态解锁');
+  }
   const layers = entity.livingMount.layers;
   const skin = itemId ? layers.find(layer => layer.itemId === itemId && layer.kind === 'skin_suit') : layers.slice().reverse().find(layer => layer.kind === 'skin_suit');
   const ring = itemId ? layers.find(layer => layer.itemId === itemId && layer.kind === 'flesh_ring') : layers.slice().reverse().find(layer => layer.kind === 'flesh_ring');
@@ -2140,6 +2146,7 @@ export function xenoUnequipSlot(state, {targetKey = '__protagonist__', slot, ite
   const next = normalizeXeno(state);
   const entity = getEntity(next, targetKey);
   if (!entity) throw Error('找不到指定的穿戴者');
+  if (entity.statusLocks?.[slot]) throw Error('该衣物栏已锁定，请先到角色状态解锁');
   if (itemId || ['skin_suit', 'flesh_ring', 'outermost', 'all'].includes(slot)) {
     const layers = entity.livingMount.layers;
     const index = slot === 'all' ? 0 : itemId ? layers.findIndex(layer => layer.itemId === itemId)
@@ -2241,11 +2248,14 @@ export function buildEntityPortraitPrompt(xeno, entity) {
 // ==================== 6. SillyTavern Prompt Injection & Auto-Sync ====================
 
 export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = '', generationType = ''} = {}) {
-  if (!xeno || xeno.enabled === false) return [];
+  if (!xeno) return [];
+  const locked = statusLockText(xeno);
+  const lockBlocks = locked ? [{key: 'sttts.entry.character-status-locks', text: locked, position: 1, depth: 0, role: 0}] : [];
+  if (xeno.enabled === false) return lockBlocks;
   const state = normalizeXeno(xeno);
   const preset = presetOverride ? normalizeXenoPreset(presetOverride) : activeXenoPreset(state);
   const entryMap = new Map((preset.entries || []).map(e => [e.id, e]));
-  const blocks = [];
+  const blocks = [...lockBlocks];
   let history = Array.isArray(chat) ? chat : [];
   if (['regenerate', 'swipe'].includes(generationType) && history.length && !history.at(-1)?.is_user) {
     history = history.slice(0, -1);
@@ -2486,7 +2496,7 @@ export function applyXenoUpdateFromText(state, text, options = {}) {
   if (changed && next.cardKey && !next.protagonistCleared && (next.protagonist.name || next.protagonist.appearance || next.protagonist.bodyBuild || next.protagonist.physiology || next.protagonist.identity)) {
     next.cardProtagonists[next.cardKey] = cleanBaselineProtagonist(next.protagonist, next);
   }
-  return changed ? next : null;
+  return changed ? normalizeXeno(next) : null;
 }
 
 /**

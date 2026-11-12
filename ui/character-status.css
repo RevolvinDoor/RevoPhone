@@ -1,0 +1,13 @@
+.view[data-app="character-status"] .status-person,.status-editor{display:grid;gap:10px}
+.view[data-app="character-status"] select,.status-editor textarea{width:100%;box-sizing:border-box;font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+.view[data-app="character-status"] .status-field{padding:16px;margin:12px 0;border:1px solid color-mix(in srgb,currentColor 18%,transparent);border-radius:16px}
+.view[data-app="character-status"] .status-field-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.view[data-app="character-status"] h3{font-size:15px;margin:0}
+.view[data-app="character-status"] .status-lock{display:flex;align-items:center;gap:8px;min-height:44px;white-space:nowrap}
+.view[data-app="character-status"] input[type="checkbox"]{width:20px;height:20px;accent-color:#478f88}
+.view[data-app="character-status"] p,.view[data-app="character-status"] dd{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}
+.status-note{font-size:12px;line-height:1.6;opacity:.75}
+.view[data-app="character-status"] .status-sources{padding:16px;border-radius:16px;border:1px solid color-mix(in srgb,currentColor 18%,transparent)}
+.view[data-app="character-status"] summary{cursor:pointer;min-height:32px}
+.view[data-app="character-status"] dt{font-weight:600;margin-top:14px}
+.view[data-app="character-status"] dd{margin:5px 0 0}

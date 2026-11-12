@@ -548,6 +548,8 @@ export type BackendEvent =
 
 /** Framework-independent facade. Methods may throw validation/lifecycle errors. */
 export interface BackendFacade {
+    /** Current chat identity for rejecting stale character-status edit dialogs. */
+    statusChatKey(): string;
     getRequestLogs(): Array<{id: string; at: number; source: string; level: 'info' | 'warn' | 'error'; state: string; duration?: number; request: unknown; response?: unknown}>;
     clearRequestLogs(): void;
     reportDiagnostic(source: string, detail: Record<string, unknown>, level?: 'info' | 'warn' | 'error'): void;

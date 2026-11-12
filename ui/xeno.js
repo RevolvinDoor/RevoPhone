@@ -705,6 +705,7 @@ export function xenoApp(ctx) {
          <button type="button" class="round-button ${settingsOpen ? 'active' : ''}" data-action="toggle-xeno-settings" title="终端设置">${icon('sliders')}</button>`,
         'Xeno Terminal'
       )}
+      <button type="button" class="secondary" data-action="open-status">打开角色状态 · 外观与穿戴</button>
       ${settingsOpen ? `
         <section class="xeno-settings-drawer">
           <div class="setting-row">
@@ -900,6 +901,7 @@ export function xenoApp(ctx) {
     if (act === 'open-wardrobe') { ctx.open('wardrobe'); return; }
     if (act === 'open-mall') { ctx.open('mall'); return; }
     if (act === 'open-roles') { ctx.open('roles'); return; }
+    if (act === 'open-status') { ctx.open('character-status'); return; }
     if (act === 'open-xeno-presets') { ctx.open('presets'); ctx.showPresetKind?.('xeno'); return; }
     if (act === 'toggle-xeno-settings') { settingsOpen = !settingsOpen; v.refresh(); return; }
     if (act === 'toggle-xeno-enabled') { api.saveXeno({enabled: !xeno.enabled}); return; }

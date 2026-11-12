@@ -8,6 +8,7 @@ const gear = (() => {
 })();
 
 const GLYPHS = {
+  'character-status': '<rect x="10" y="7" width="44" height="50" rx="9"/><circle cx="28" cy="24" r="8" fill="var(--t2)"/><path d="M16 44c0-14 24-14 24 0z" fill="var(--t2)"/><path d="m37 45 5 5 10-14" fill="none" stroke="var(--tac)" stroke-width="4" stroke-linecap="round"/>',
   xeno: '<circle cx="32" cy="32" r="22" fill="var(--t2)"/><path d="M32 10c7 8 11 15 11 22s-4 14-11 22c-7-8-11-15-11-22s4-14 11-22z" fill="currentColor"/><circle cx="32" cy="32" r="6.5" fill="var(--tac)"/><path d="M13 32h9M42 32h9" stroke="var(--tac)" stroke-width="3.5" stroke-linecap="round"/>',
   wardrobe: '<path d="M32 18c0-4 3-7 6.5-7a5.5 5.5 0 0 1 4 9.2L32 27 11 39a4 4 0 0 0 2 7.5h38a4 4 0 0 0 2-7.5L32 27z" fill="currentColor"/><path d="M18 46.5l4 10h20l4-10z" fill="var(--t2)"/><circle cx="32" cy="37" r="4" fill="var(--tac)"/>',
   mall: '<path d="M12 22h40l-4 32H16z" fill="currentColor"/><path d="M22 22v-5a10 10 0 0 1 20 0v5" fill="none" stroke="var(--t2)" stroke-width="4.5" stroke-linecap="round"/><circle cx="25" cy="34" r="3.5" fill="var(--tac)"/><circle cx="39" cy="34" r="3.5" fill="var(--tac)"/><path d="M25 42q7 5 14 0" fill="none" stroke="var(--t2)" stroke-width="3" stroke-linecap="round"/>',

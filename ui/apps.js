@@ -2,6 +2,7 @@
 // and place its id on the home screen below (a reserved slot is replaced by the id).
 //   colors: [tile top, tile bottom / glyph shade, glyph accent]
 export const APPS = {
+  'character-status': {name: '角色状态', eyebrow: 'Character Status', colors: ['#b9ece2', '#438b85', '#ffe1ac']},
   xeno: {name: '异构终端', eyebrow: 'Xeno Terminal', colors: ['#ffb2e6', '#8b3dff', '#7ef9ff']},
   wardrobe: {name: '衣柜', eyebrow: 'Living Wardrobe', colors: ['#ffd1e8', '#e04f8b', '#fff29c']},
   mall: {name: '购物商城', eyebrow: 'Xeno Boutique', colors: ['#ffe2a8', '#f07b3f', '#a8f5d2']},
@@ -28,8 +29,8 @@ export const SLOT = null;
 // shown, and a page with only reserved places is left out.
 export const HOME = {
   pages: [
-    ['xeno', 'wardrobe', 'mall', 'roles', 'engines', 'presets', 'forum', 'peek'],
-    ['library', 'gallery', 'notes', 'sounds', 'assistant', 'logs']
+    ['character-status', 'xeno', 'wardrobe', 'mall', 'roles', 'engines', 'presets', 'forum'],
+    ['peek', 'library', 'gallery', 'notes', 'sounds', 'assistant', 'logs']
   ],
   dock: ['chat', 'draw', 'listen', 'settings']
 };

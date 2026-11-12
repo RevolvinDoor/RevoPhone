@@ -1,4 +1,6 @@
 import {withProxyHeaders} from './proxy-url.js';
+import {editCharacterStatus} from './character-status.js';
+import {getEntity, effectiveEntityView} from './xeno.js';
 import { normalizeNarration, NARRATOR } from './narration.js';
 import {RequestLog} from './request-log.js';
 import {PROMPT_BLOCKS, normalizePromptRules, withXiaoci, isXiaociRequest} from './prompt-rules.js';
@@ -1160,6 +1162,13 @@ export class TTSBackend {
         const p = payload && typeof payload === 'object' ? clone(payload) : {};
         return this.saveXeno((xeno, nextState, cardKey) => {
             switch (action) {
+                case 'editCharacterStatus': {
+                    if (p.chatKey !== undefined && p.chatKey !== (this.activeChatKey || '')) throw Error('聊天已切换，请重新打开编辑');
+                    const entity = getEntity(xeno, p.targetKey || '__protagonist__');
+                    if (!entity) throw Error('该角色已不存在');
+                    editCharacterStatus(entity, p, effectiveEntityView(xeno, entity));
+                    return xeno;
+                }
                 case 'startPossession': return xenoStartPossession(xeno, p);
                 case 'setPossessionMode': return xenoSetPossessionMode(xeno, p.mode);
                 case 'toggleOrganSync': return xenoToggleOrganSync(xeno, p.force);
@@ -3149,6 +3158,7 @@ export class TTSBackend {
             saveChatOptions: patch => this.saveChatOptions(clone(patch)),
             wallet: () => this.wallet(), buyDecoration: (kind, key) => this.buyDecoration(kind, key), saveGift: gift => this.saveGift(gift), deleteGift: id => this.deleteGift(id),
             walletTopup: (amount, note) => this.walletTopup(amount, note),
+            statusChatKey: () => this.activeChatKey || '',
             saveXeno: patch => this.saveXeno(patch), xenoAct: (action, payload) => this.xenoAct(action, payload), buyXenoItem: (itemId, options) => this.buyXenoItem(itemId, clone(options || {})),
             saveXenoPreset: preset => this.saveXenoPreset(preset), deleteXenoPreset: id => this.deleteXenoPreset(id), selectXenoPreset: id => this.selectXenoPreset(id), previewXenoPrompt: preset => this.previewXenoPrompt(preset),
             sendPaid: (threadId, message) => this.sendPaid(threadId, message), takeSent: (threadId, messageId, accept) => this.takeSent(threadId, messageId, accept !== false),

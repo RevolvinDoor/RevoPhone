@@ -20,6 +20,7 @@ import {soundsApp} from './sounds.js';
 import {assistantApp} from './assistant.js';
 import {logsApp} from './logs.js';
 import {xenoApp} from './xeno.js';
+import {characterStatusApp} from './character-status.js';
 import {wardrobeApp} from './wardrobe.js';
 import {mallApp} from './mall.js';
 import {momentsNew, momentsSeen} from './moments.js';
@@ -30,7 +31,7 @@ import {grow, launch, nudge, within, visible, islandIn, moving} from './carry.js
 import {todayPage} from './today.js';
 
 // App factories, keyed by the ids in apps.js.
-const FACTORIES = {xeno: xenoApp, wardrobe: wardrobeApp, mall: mallApp, roles: rolesApp, engines: enginesApp, presets: presetsApp, library: libraryApp, gallery: galleryApp, notes: notesApp, listen: listenApp, settings: settingsApp, draw: drawApp, chat: chatApp, forum: forumApp, peek: peekApp, sounds: soundsApp, assistant: assistantApp, logs: logsApp};
+const FACTORIES = {'character-status': characterStatusApp, xeno: xenoApp, wardrobe: wardrobeApp, mall: mallApp, roles: rolesApp, engines: enginesApp, presets: presetsApp, library: libraryApp, gallery: galleryApp, notes: notesApp, listen: listenApp, settings: settingsApp, draw: drawApp, chat: chatApp, forum: forumApp, peek: peekApp, sounds: soundsApp, assistant: assistantApp, logs: logsApp};
 const ACTIVE_PHASES = ['playing', 'paused', 'generating', 'waiting'];
 
 // Network and battery in the status bar come from the user's own device (where the browser tells them).
