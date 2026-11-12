@@ -6,7 +6,7 @@ import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS, XENO_PROMPT_DEFAULTS, XENO_TRIGGER_
 import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {encodeBoundVoiceRef, parseBoundVoiceRef} from './xeno-voice.js';
 import {lineEffect} from './voice-fx.js';
-import {enforceStatusLocks, normalizeStatusLocks, statusLockText, normalizeOrgans, organRecordText, applyOrganUpdates} from './character-status.js';
+import {enforceStatusLocks, normalizeStatusLocks, statusLockText, normalizeOrgans, organRecordText, applyOrganUpdates, migrateLowerBody, lowerBodyStateValue, LEGACY_ORGAN_SYNC_RULE, ORGAN_SYNC_RULE} from './character-status.js';
 import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, wearDrawingAppearance, itemVoiceRef, extensionEnabled, extensionMode} from './xeno-wear.js';
 export {wearLayers, resolveWear, itemOccupant, itemVoiceRef};
 export {XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset};
@@ -185,6 +185,7 @@ export function normalizeOrificeMods(raw = {}) {
 }
 
 export function normalizeEntity(raw = {}, isProtagonist = false) {
+  const lowerBody = migrateLowerBody(raw);
   const isLegacyDefaultProt = isProtagonist
     && (!raw?.name || raw?.name === '主角')
     && (!raw?.appearance || raw?.appearance === '五官端正，眼神深邃')
@@ -201,6 +202,8 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
     bodyBuild: cleanField(raw?.bodyBuild, 1000),
     physiology: cleanField(raw?.physiology, 1000),
     organs: normalizeOrgans(raw?.organs),
+    lowerBodyAppearance: lowerBody.lowerBodyAppearance,
+    lowerBodyState: lowerBody.lowerBodyState,
     // === 点击【详情】展示的 8 项 ===
     originalBody: cleanField(raw?.originalBody, 160),
     currentBody: cleanField(raw?.currentBody, 160),
@@ -208,7 +211,7 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
     hostingState: cleanField(raw?.hostingState, 200),
     livingMount: normalizeLivingMount(raw?.livingMount),
     outfit: normalizeOutfit(raw?.outfit),
-    statusLocks: normalizeStatusLocks(raw?.statusLocks),
+    statusLocks: normalizeStatusLocks(lowerBody.statusLocks),
     voreStorage: Array.isArray(raw?.voreStorage) ? raw.voreStorage.slice(0, 20).map(normalizeVoreEntry) : [],
     cognitionState: normalizeCognition(raw?.cognitionState),
     // === 肉体改造：丸吞尾 & 孔洞异化 ===
@@ -570,6 +573,7 @@ export function normalizeXenoPreset(raw) {
     const scope = ['story', 'task', 'mall'].includes(e.scope) ? e.scope : (builtin?.scope || 'story');
     const triggerMode = ['auto', 'always'].includes(e.triggerMode) ? e.triggerMode : (builtin?.triggerMode || 'always');
     let entryText = typeof e.text === 'string' ? e.text.slice(0, 20000) : (builtin?.text || '');
+    if (id === 'organSyncGuidance' && entryText === LEGACY_ORGAN_SYNC_RULE) entryText = ORGAN_SYNC_RULE;
     if (id === 'fleshRing' && builtin?.text) {
       const oldSwitchRule = '    开关规则: 前方延展与后方延展是两个独立开关，可以同时开启；关闭其中一项保留另一项，静息关闭两项。头部覆盖和下体独立外观另行开关，不改动延展方向或其他穿戴层。\n';
       const withoutSwitchRule = builtin.text.replace(/^[ \t]*开关规则:.*\r?\n/m, '');
@@ -578,6 +582,7 @@ export function normalizeXenoPreset(raw) {
     // A legacy phrase is not proof that the whole entry is an untouched default.
     // Preserve saved sync rules; users can explicitly restore an entry in Presets.
     let entryTitle = clip(e.title, 80) || builtin?.title || '自定义提示词条目';
+    if (id === 'organSyncGuidance' && entryTitle === '角色状态 · 器官逐项同步规则') entryTitle = builtin.title;
     if (id === 'mallPosePrompt' && entryTitle === '商城进货 · 商品生图姿势提示词（T-pose+三视图）' && builtin?.title) {
       entryTitle = builtin.title;
     }
@@ -1242,6 +1247,9 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
     physiology,
     headAppearance: wear.headAppearance,
     headSource: wear.headSource,
+    lowerBodyGender: gender,
+    lowerBodyAppearance: e.statusLocks?.lowerBodyAppearance?.value ?? (e.lowerBodyAppearance || wear.organAppearance),
+    lowerBodyState: lowerBodyStateValue(e.statusLocks?.lowerBodyState?.value ?? e.lowerBodyState, gender),
     organAppearance: wear.organAppearance,
     organSource: wear.organSource,
     bodySource: wear.bodySource,
@@ -2250,7 +2258,7 @@ export function buildEntityPortraitPrompt(xeno, entity) {
 
 export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = '', generationType = ''} = {}) {
   if (!xeno) return [];
-  const locked = statusLockText(xeno);
+  const locked = statusLockText(xeno, entity => effectiveEntityView(xeno, entity));
   const lockBlocks = locked ? [{key: 'sttts.entry.character-status-locks', text: locked, position: 1, depth: 0, role: 0}] : [];
   if (xeno.enabled === false) return lockBlocks;
   const state = normalizeXeno(xeno);
@@ -2291,7 +2299,7 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
     `- 外貌特征：${pView.appearance || '（待同步：请严格跟随当前角色卡、角色卡世界书、开场白与用户人设中的主角外观设定，并在本轮末尾 <xeno_update> 第一行补全主角状态栏）'}`,
     `- 体型身材：${pView.bodyBuild || '（待同步：请严格跟随当前角色卡与人设中的主角身高/体型/身材设定）'}`,
     `- 生理特征：${pView.physiology || '（待同步：请严格跟随当前角色卡与人设中的主角生理特征设定）'}`,
-    ...(organRecordText(state.protagonist) ? [`- 器官逐项档案（JSON数据）：${organRecordText(state.protagonist)}`] : []),
+    `- 下体记录（JSON数据）：${organRecordText(state.protagonist, pView)}`,
     ...(protNeedSync ? ['- [主角外观同步指令] 当前主角外观尚未写入终端，请务必遵循当前角色卡与世界书对主角（{{user}}）的外观/身份/身材设定，并在本轮正文末尾 <xeno_update> 中第一行输出主角完整8项数据！'] : []),
     `- 头部：${pView.headSource} ｜ 外观：${pView.headAppearance} ｜ 音色：${pView.voiceStateText}`,
     `- 下体外观：${pView.organAppearance || '本体未记录'} ｜ 来源：${pView.organSource}`,
@@ -2315,7 +2323,7 @@ export function xenoPromptPlan(xeno, presetOverride = null, {chat = [], input = 
         `  - 外貌特征：${tv.appearance}`,
         `  - 体型身材：${tv.bodyBuild}`,
         `  - 生理特征：${tv.physiology}`,
-        ...(organRecordText(t) ? [`  - 器官逐项档案（JSON数据）：${organRecordText(t)}`] : []),
+        `  - 下体记录（JSON数据）：${organRecordText(t, tv)}`,
         `  - 头部：${tv.headSource} ｜ 外观：${tv.headAppearance} ｜ 音色：${tv.voiceStateText}`,
         `  - 下体外观：${tv.organAppearance || '本体未记录'} ｜ 来源：${tv.organSource}`,
         ...(tv.equipmentAbilities ? [`  - 装备能力及条件：${tv.equipmentAbilities}`] : []),
@@ -2435,7 +2443,7 @@ export function applyXenoUpdateFromText(state, text, options = {}) {
   const source = String(text ?? '')
     .replace(THINK_BLOCK_RE, '')
     .replace(/<tts\b[^>]*>[\s\S]*?<\/tts\s*>/gi, '');
-  const matches = [...source.matchAll(XENO_UPDATE_RE)];
+  const matches = options.lowerBodyOnly ? [] : [...source.matchAll(XENO_UPDATE_RE)];
   if (!matches.length && !/<xeno_organs\b/i.test(source)) return null;
   const next = normalizeXeno(state);
   const routes = Array.isArray(options?.routes) ? options.routes : [];
@@ -2500,12 +2508,12 @@ export function applyXenoUpdateFromText(state, text, options = {}) {
       changed = true;
     }
   }
-  changed = applyOrganUpdates(source, target => {
+  changed = (!options.skipLowerBody && applyOrganUpdates(source, target => {
     const route = findRoute(routes, target);
     if (route && roleTypeOf(route) === 'narrator') return null;
     if (['主角', '__protagonist__', next.protagonist.name, protNameHint].filter(Boolean).includes(target)) return next.protagonist;
     return next.targets.find(entity => entity.id === target || entity.name === target);
-  }) || changed;
+  }, entity => effectiveEntityView(next, entity))) || changed;
   if (changed && next.cardKey && !next.protagonistCleared && (next.protagonist.name || next.protagonist.appearance || next.protagonist.bodyBuild || next.protagonist.physiology || next.protagonist.identity)) {
     next.cardProtagonists[next.cardKey] = cleanBaselineProtagonist(next.protagonist, next);
   }

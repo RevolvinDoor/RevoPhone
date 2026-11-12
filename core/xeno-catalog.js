@@ -263,7 +263,7 @@ export const XENO_TRIGGER_KEYWORDS = Object.freeze({
 
 export const DEFAULT_XENO_ENTRIES = Object.freeze([
   {id: 'statusLockGuidance', title: '角色状态 · 锁定字段描写规则', scope: 'story', triggerMode: 'always', enabled: true, text: XENO_PROMPT_DEFAULTS.statusLockGuidance},
-  {id: 'organSyncGuidance', title: '角色状态 · 器官逐项同步规则', scope: 'task', triggerMode: 'always', enabled: true, text: XENO_PROMPT_DEFAULTS.organSyncGuidance},
+  {id: 'organSyncGuidance', title: '角色状态 · 下体外观与状态同步规则', scope: 'task', triggerMode: 'always', enabled: true, text: XENO_PROMPT_DEFAULTS.organSyncGuidance},
   {id: 'coreTerms', title: '核心概念定义（原始本体与目标肉体）', scope: 'story', triggerMode: 'always', enabled: true, text: XENO_PROMPT_DEFAULTS.coreTerms},
   {id: 'possession', title: '核心能力一：附身之术', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.possession},
   {id: 'fusion', title: '核心能力二：融合之术', scope: 'story', triggerMode: 'auto', enabled: true, text: XENO_PROMPT_DEFAULTS.fusion},

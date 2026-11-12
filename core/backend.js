@@ -1,5 +1,5 @@
 import {withProxyHeaders} from './proxy-url.js';
-import {editCharacterStatus, editCharacterOrgan} from './character-status.js';
+import {editCharacterStatus} from './character-status.js';
 import {getEntity, effectiveEntityView} from './xeno.js';
 import { normalizeNarration, NARRATOR } from './narration.js';
 import {RequestLog} from './request-log.js';
@@ -1068,13 +1068,14 @@ export class TTSBackend {
         floors[fid].operationId ||= crypto.randomUUID();
         const prepared = this.prepareXenoStory(baseSession);
         const baseXeno = prepared.xeno;
+        const syncOptions = {routes: this.routesHere(), protagonistName: options.protagonistName, cardMembers: this.space?.members || []};
         const updated = messageText
-            ? applyXenoUpdateFromText(baseXeno, messageText, { routes: this.routesHere(), protagonistName: options.protagonistName, cardMembers: this.space?.members || [] })
+            ? applyXenoUpdateFromText(baseXeno, messageText, {...syncOptions, skipLowerBody: true})
             : null;
         const applied = applyWardrobeReply(updated || baseXeno, messageText, {
             ...options, balance: prepared.balance, operationId: `${floors[fid].operationId}:${sid}`, baseline: baseXeno
         });
-        const finalXeno = applied.state;
+        let finalXeno = applied.state;
         for (const entity of [finalXeno.protagonist, ...finalXeno.targets]) {
             const original = [baseXeno.protagonist, ...baseXeno.targets].find(candidate => candidate.id === entity.id);
             const targetKey = entity.id === '__protagonist__' ? '__protagonist__' : entity.name;
@@ -1082,6 +1083,8 @@ export class TTSBackend {
                 for (const field of ['gender', 'appearance', 'bodyBuild', 'physiology']) entity[field] = original[field];
             }
         }
+        // Validate lower-body state after this reply's actual wardrobe changes.
+        finalXeno = applyXenoUpdateFromText(finalXeno, messageText, {...syncOptions, lowerBodyOnly: true}) || finalXeno;
         finalXeno.pendingActionNote = '';
         const result = this.saveXenoStory(finalXeno);
         floors[fid].swipes ||= {};
@@ -1162,15 +1165,11 @@ export class TTSBackend {
         const p = payload && typeof payload === 'object' ? clone(payload) : {};
         return this.saveXeno((xeno, nextState, cardKey) => {
             switch (action) {
-                case 'editCharacterOrgan':
                 case 'editCharacterStatus': {
                     if (p.chatKey !== undefined && p.chatKey !== (this.activeChatKey || '')) throw Error('聊天已切换，请重新打开编辑');
-                    const entity = action === 'editCharacterOrgan'
-                        ? [xeno.protagonist, ...xeno.targets].find(person => person.id === (p.targetKey || '__protagonist__'))
-                        : getEntity(xeno, p.targetKey || '__protagonist__');
+                    const entity = getEntity(xeno, p.targetKey || '__protagonist__');
                     if (!entity) throw Error('该角色已不存在');
-                    if (action === 'editCharacterOrgan') editCharacterOrgan(entity, p);
-                    else editCharacterStatus(entity, p, effectiveEntityView(xeno, entity));
+                    editCharacterStatus(entity, p, effectiveEntityView(xeno, entity));
                     return xeno;
                 }
                 case 'startPossession': return xenoStartPossession(xeno, p);

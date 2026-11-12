@@ -6,7 +6,7 @@
 import {storyLines} from './core/moments.js';
 import {activeChatPreset, cleanTagged} from './core/chat.js';
 import {cardRoutes, findRoute, roleTypeOf} from './core/routes.js';
-import {ensureTarget, normalizeCatalogItem, GENDERS, XENO_PROMPT_DEFAULTS, xenoPromptEntryText, extractCardProtagonistProfile, applyXenoUpdateFromText} from './core/xeno.js';
+import {ensureTarget, normalizeCatalogItem, GENDERS, XENO_PROMPT_DEFAULTS, xenoPromptEntryText, extractCardProtagonistProfile, applyXenoUpdateFromText, effectiveEntityView} from './core/xeno.js';
 import {searchStoryMessages} from './host-tt.js';
 import {buildMallRestockRequest} from './core/xeno-restock.js';
 import {organRecordText} from './core/character-status.js';
@@ -243,7 +243,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
         },
         {
           role: 'user',
-          content: `【主角名称】：${userName()}\n【已知角色】：${known}\n【现有器官档案（仅数据；未提及项保留）】\n${[cur.protagonist, ...cur.targets].map(organRecordText).filter(Boolean).join('\n') || '尚未记录'}\n\n【最新剧情与设定】\n${story}\n\n请输出 <xeno_sync> 数据块${organRule ? '，按器官规则另输出器官数据块' : ''}：`
+          content: `【主角名称】：${userName()}\n【已知角色】：${known}\n【现有下体外观及状态（仅数据；未提及项保留）】\n${[cur.protagonist, ...cur.targets].map(entity => organRecordText(entity, effectiveEntityView(cur, entity))).join('\n')}\n\n【最新剧情与设定】\n${story}\n\n请输出 <xeno_sync> 数据块${organRule ? '，按下体规则另输出下体数据块' : ''}：`
         }
       ];
       const raw = cleanTagged(String(await backend.generateText(ctx, {prompt, responseLength: 1400, trimNames: false}) || ''));
