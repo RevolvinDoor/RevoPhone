@@ -2897,7 +2897,7 @@ export class TTSBackend {
                     reason: '须由登录后发现的官方工具确认支持'})),
                 modelNote: '默认模型由官方 MCP 决定；角色单独指定的模型须符合工具参数。参考音频和原 API 参数不发送。',
                 tags: TTSParameters.tags('fish', current.model), sounds: [], sourceDate: '2026-11-11',
-                tagNote: '正文演技标签原样发送。台词中的“语速,表现力”只有官方工具声明对应字段时才能控制；未开放的非默认值会在生成前报错。'};
+                tagNote: '正文演技标签原样发送。台词中的“语速,表现力”仅在官方工具声明对应字段时发送；未开放时自动忽略数值参数。'};
         }
         if (engine === 'fish') catalog.models = catalog.models.filter(id => id !== MCP_MODEL);
         catalog.models = catalog.models.map(id => ({ id, supported: true, reason: '' }));

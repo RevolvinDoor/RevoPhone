@@ -390,6 +390,12 @@ test('Schema validation stops unsupported models, extra overrides, and unknown r
   const changed = structuredClone(speech); changed.inputSchema.properties.workspace = {type: 'string'}; changed.inputSchema.required.push('workspace');
   assert.throws(() => speechArguments(changed, {...input, arguments: {}}), /workspace/);
   assert.equal(speechArguments(changed, {...input, arguments: {workspace: 'test'}}).workspace, 'test');
+  const nonDefaultProsody = buildRequest('fish', {...f.connection, model: MCP_MODEL}, {voice: 'voice-a'}, {text: '[whispering] 你好', emotion: '0.9,0.8'}, new Map(), f.oauth.record.account);
+  assert.deepEqual(speechArguments(speech, nonDefaultProsody.body), {text: '[whispering] 你好', voice_id: 'voice-a'});
+  const withProsodySchema = structuredClone(speech);
+  withProsodySchema.inputSchema.properties.speed = {type: 'number', minimum: 0.5, maximum: 2};
+  withProsodySchema.inputSchema.properties.temperature = {type: 'number', minimum: 0, maximum: 1};
+  assert.deepEqual(speechArguments(withProsodySchema, nonDefaultProsody.body), {text: '[whispering] 你好', voice_id: 'voice-a', speed: 0.9, temperature: 0.8});
 });
 
 test('SSE parser handles byte/chunk boundaries, notifications, multiple data lines, and a persistent connection', async () => {

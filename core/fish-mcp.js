@@ -47,8 +47,7 @@ export function speechArguments(tool, request) {
   }
   if (request.prosody) for (const name of ['speed', 'temperature']) {
     const key = property(tool, name), value = request.prosody[name];
-    if (key) args[key] = value;
-    else if (value !== (name === 'speed' ? 1 : .7)) throw fail('此工具不开放' + (name === 'speed' ? '语速' : '表现力') + '参数，请使用正文演技标签');
+    if (key && accepts(schema.properties[key], value)) args[key] = value;
   }
   const extra = request.arguments || {};
   if (!object(extra)) throw fail('附加参数必须是 JSON 对象');
@@ -262,7 +261,7 @@ export class FishMCP {
         this.protocol = result.protocolVersion; this.tools = tools; this.account = account; return;
       }
       if (!this.protocol) {
-        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.3.5'}}, {signal, initialize: true});
+        const result = await this.send('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'RevoPhone', version: '1.3.6'}}, {signal, initialize: true});
         if (account !== this.oauth.record?.account) throw fail('登录账户已变化，请重新读取工具');
         if (!['2025-11-25', '2025-06-18', '2025-03-26'].includes(result.protocolVersion) || !result.capabilities?.tools) throw fail('服务端协商的 MCP 版本或工具能力不受支持');
         this.protocol = result.protocolVersion;
