@@ -23,6 +23,25 @@ function fixture(customReply = reply) {
 }
 const system = request => request.messages.find(message => message.role === 'system').content;
 
+test('同人AI进货采用NovelAI cosplay Tag；支持指定、模型识别，未识别不静默上架', async () => {
+  for (const category of ['skin_suit', 'flesh_ring']) {
+    const xml = category === 'skin_suit' ? 'skin_suit_design' : 'flesh_ring_design';
+    const response = `<${xml} name="初音同人">\n[同人角色Tag]：hatsune_miku\n[角色生图提示词 (Character Prompt)]：masterpiece, best quality, aqua hair\n</${xml}>`;
+    const {host, state, requests} = fixture(response);
+    const item = await host.mallRestock({category, fanwork: true});
+    assert.equal(item.fanwork, true); assert.equal(item.cosplayCharacter, 'hatsune miku');
+    assert.equal(item.drawPrompt, 'hatsune miku (cosplay), aqua hair');
+    assert.doesNotMatch(item.organDrawPrompt, /cosplay/);
+    assert.equal(state.xeno.items.find(i => i.id === item.id).cosplayCharacter, 'hatsune miku');
+    assert.match(requests[0].prompt.find(m => m.role === 'system').content, /NovelAI.*cosplay/);
+    const explicit = await host.mallRestock({category, fanwork: true, cosplayCharacter: 'test_character (series)'});
+    assert.match(explicit.drawPrompt, /^test character \(series\) \(cosplay\),/);
+  }
+  const {host, state} = fixture(), count = state.xeno.items.length;
+  await assert.rejects(host.mallRestock({...options, fanwork: true}), /未识别到同人角色/);
+  assert.equal(state.xeno.items.length, count);
+});
+
 test('进货只使用当前预设、选中分类及一份自定义比例尺，保留独立前置消息和参考图', () => {
   const {state, preset} = fixture();
   const inactive = defaultXenoPreset(); inactive.id = 'inactive';
@@ -143,16 +162,25 @@ test('商城查看本次请求读取表单草稿但不保存或请求模型，�
     for (const fn of listeners.get('click')) fn({target, preventDefault() {}});
   }
   click('toggle-restock');
+  assert.match(root.innerHTML, /data-change="restock-fanwork"/);
+  for (const [change, extra] of [['restock-fanwork', {checked: true}], ['restock-cosplay', {value: 'hatsune_miku'}]]) {
+    const target = {dataset: {change}, ...extra,
+      closest: selector => selector === '[data-change]' ? target : null};
+    for (const fn of listeners.get('change')) fn({target});
+  }
   const before = structuredClone(state);
   click('preview-restock');
   assert.equal(requests.length, 0); assert.equal(saved, 0); assert.deepEqual(state, before);
   assert.match(dialogContent, /draft standing pose|CUSTOM:scaleRule/);
   assert.ok(dialogContent.includes('draft standing pose')); assert.ok(dialogContent.includes(options.text));
+  assert.ok(dialogContent.includes('hatsune_miku'));
   click('run-restock');
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(errors, []); assert.equal(requests.length, 1); assert.equal(saved, 1);
   assert.ok(requests[0].prompt.find(message => message.role === 'system').content.includes('draft standing pose'));
   assert.equal(requests[0].prompt.at(-1).content.includes(options.text), true);
+  const created = state.xeno.items.find(item => item.source === 'restock');
+  assert.equal(created.fanwork, true); assert.match(created.drawPrompt, /hatsune miku \(cosplay\)/);
   view.dispose();
 });
 

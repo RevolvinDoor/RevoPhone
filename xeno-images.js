@@ -1,6 +1,7 @@
 // Shared manual/assistant image operations. No UI mounting or implicit model request.
 import {buildEntityPortraitPrompt, getEntity, xenoMallPosePromptText} from './core/xeno.js';
 import {filterLowerBodyTags, itemLowerBodyType, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt} from './core/xeno-wear.js';
+import {stripQualityDrawTags} from './core/xeno-wear.js';
 
 async function drawImage(ctx, input) {
   if (ctx.signal?.aborted || ctx.valid && !ctx.valid()) throw Error('操作已取消或聊天已切换');
@@ -58,7 +59,7 @@ export async function generateItemPreview(ctx, item) {
     : '';
   const rawTags = [
     charPrompt || [
-      item.category === 'skin_suit' || item.category === 'flesh_ring' ? `${personTag}, solo, full body, masterpiece` : 'solo, fashion showcase',
+      item.category === 'skin_suit' || item.category === 'flesh_ring' ? `${personTag}, solo, full body` : 'solo, fashion showcase',
       item.appearance,
       item.bodyBuild,
       item.summary
@@ -70,7 +71,7 @@ export async function generateItemPreview(ctx, item) {
     ? `${poseTags}, ${baseTags}`
     : baseTags;
   const combinedPrompt = [style.artist, style.positive, combinedBase].map(s => String(s || '').trim()).filter(Boolean).join(', ');
-  const prompt = item.lowerBodyMode === 'replace' ? filterLowerBodyTags(combinedPrompt, lowerType) : combinedPrompt;
+  const prompt = stripQualityDrawTags(item.lowerBodyMode === 'replace' ? filterLowerBodyTags(combinedPrompt, lowerType) : combinedPrompt);
   const negative = String(style.negative || 'lowres, bad anatomy, bad hands, text, error').trim();
 
   let result;
@@ -126,7 +127,7 @@ export async function generateEntityPortrait(ctx, targetKey = '__protagonist__',
   const built = buildEntityPortraitPrompt(xeno, entity);
   const baseTags = String(customBaseTags || built.prompt).trim();
   const style = state.draw?.styles?.find(s => s.id === state.draw.activeStyle) || state.draw?.styles?.[0] || {artist: '', positive: '', negative: ''};
-  const prompt = [style.artist, style.positive, baseTags].map(s => String(s || '').trim()).filter(Boolean).join(', ');
+  const prompt = stripQualityDrawTags([style.artist, style.positive, baseTags].map(s => String(s || '').trim()).filter(Boolean).join(', '));
   const negative = String(style.negative || 'lowres, bad anatomy, bad hands, text, error').trim();
   const entityName = built.entityName || entity.name || (isProt ? '主角' : '角色');
 

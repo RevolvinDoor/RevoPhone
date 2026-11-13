@@ -297,10 +297,10 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
   }
 
   /** 3. 购物商城 AI 进货（支持上传图片 imageData 多模态识图 + 文字描述生成新货上架） */
-  function mallRestock({category = 'apparel', slot = 'outerwear', text = '', imageData = '', gender: requestedGender = ''} = {}) {
+  function mallRestock({category = 'apparel', slot = 'outerwear', text = '', imageData = '', gender: requestedGender = '', fanwork = false, cosplayCharacter = ''} = {}) {
     return run('restock', async ctx => {
       const cur = backend.cardState()?.xeno;
-      const {messages, xmlTag} = buildMallRestockRequest(cur, {category, slot, text, imageData, gender: requestedGender});
+      const {messages, xmlTag} = buildMallRestockRequest(cur, {category, slot, text, imageData, gender: requestedGender, fanwork, cosplayCharacter});
       const raw = await generateRestockText(ctx, messages);
       const cleaned = cleanTagged(raw);
       const completedDesign = cleaned.match(new RegExp(`<${xmlTag}\\b[^>]*>([\\s\\S]*?)<\\/${xmlTag}\\s*>`, 'i'));
@@ -340,7 +340,7 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
       const bodyBuild = pick('体型身材') || secBody || secBackward || '';
       const physiology = pick('生理特征') || secPhysio || secForward || secMech || '';
       const summary = (pick('简介') || secVisual || secRing || appearance || bodyBuild || '商城定制进货单品').replace(/\s+/g, ' ').slice(0, 90);
-      const drawPrompt = (secCharPrompt || pick('生图提示词') || secPrompt || '').replace(/^[(（]|[)）]$/g, '').trim();
+      const drawPrompt = (secCharPrompt || pick('生图提示词') || secPrompt || '').trim();
       const rawOrganPrompt = (secOrganPrompt || '').replace(/^[(（]|[)）]$/g, '').trim();
       const resolvedLowerBodyType = ({女: 'female', 男: 'male', 扶她: 'dual'})[requestedGender]
         || pickSection('下体类型') || pick('下体类型') || 'auto';
@@ -362,6 +362,9 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
         source: 'restock',
         effectKind: category === 'consumable' ? 'body' : '',
         gender,
+        fanwork,
+        cosplayCharacter: cosplayCharacter || pickSection('同人角色Tag') || pick('同人角色Tag')
+          || drawPrompt.match(/(?:^|,)\s*([^,]+?)\s+\(cosplay\)/i)?.[1] || '',
         lowerBodyMode: (pickSection('下体处理') || pick('下体处理')) === 'preserve' ? 'preserve' : 'replace',
         lowerBodyType: resolvedLowerBodyType,
         lowerBodyDescription: pickSection('下体设定') || pick('下体设定'),
@@ -379,6 +382,8 @@ export function createXenoHost({context, settings, backend, notice = () => {}}) 
         rawDesign: designMatch,
         imageData: imageData || ''
       });
+
+      if (newItem.fanwork && !newItem.cosplayCharacter) throw Error('未识别到同人角色，请填写角色英文 Tag 后重新进货');
 
       backend.saveXeno(xeno => {
         xeno.items = [newItem, ...xeno.items];

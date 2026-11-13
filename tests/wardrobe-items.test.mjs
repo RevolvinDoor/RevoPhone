@@ -10,6 +10,10 @@ import {createXenoHost} from '../host-xeno.js';
 import {createAssistantTools} from '../core/assistant-tools.js';
 import {itemStructureFields, openItemEditor} from '../ui/xeno-item-editor.js';
 import {generateItemPreview} from '../xeno-images.js';
+import {stripQualityDrawTags, normalizeCharacterDrawPrompt} from '../core/xeno-wear.js';
+import {mergeXenoSession} from '../core/xeno.js';
+import {wardrobeApp} from '../ui/wardrobe.js';
+import {mallApp} from '../ui/mall.js';
 
 const base = () => normalizeXeno({protagonist: {id: '__protagonist__', name: '旅人', gender: '男'}, cardKey: 'card:a'});
 const itemInput = {name: '星霜', category: 'skin_suit', gender: '女', abilities: '夜视：低光中看清道路',
@@ -30,6 +34,97 @@ function backendFixture() {
     }, persistActiveChatXeno: async () => {}, persistXenoImage: async () => {}});
   return b;
 }
+
+test('删除所有初始商品后序列化、重新载入及旧聊天快照均不会复活；清理穿戴、音色和待购买引用', () => {
+  const b = backendFixture(), builtinIds = b.settings.xeno.items.map(item => item.id);
+  const living = b.settings.xeno.items.find(item => item.category === 'skin_suit');
+  living.owned = true; living.voiceRole = 'bound:test';
+  b.settings.xeno = xenoEquipItem(b.settings.xeno, {itemId: living.id});
+  const session = extractXenoSession(b.settings.xeno);
+  b.settings.xeno.targetPool = [{...structuredClone(b.settings.xeno.protagonist), name: '候选'}];
+  b.settings.xeno.wardrobePending = {itemId: living.id};
+  const balance = b.settings.chat.wallet.balance;
+  for (const itemId of builtinIds) b.xenoAct('deleteItem', {itemId});
+  const reloaded = normalizeXeno(JSON.parse(JSON.stringify(b.settings.xeno)));
+  assert.deepEqual(reloaded.items, []);
+  assert.deepEqual(reloaded.protagonist.livingMount.layers, []);
+  assert.deepEqual(reloaded.targetPool[0].livingMount.layers, []);
+  assert.equal(reloaded.itemVoiceBindings[living.id], undefined);
+  assert.equal(reloaded.wardrobePending, null);
+  assert.equal(b.settings.chat.wallet.balance, balance);
+  const merged = mergeXenoSession(reloaded, session, 'card:a');
+  assert.deepEqual(merged.items, []); assert.deepEqual(merged.protagonist.livingMount.layers, []);
+  assert.equal(merged.itemVoiceBindings[living.id], undefined);
+});
+
+test('衣柜和商城初始商品均有删除入口；取消不改数据，确认后删除', async () => {
+  for (const [app, action] of [[wardrobeApp, 'delete-wardrobe-item'], [mallApp, 'delete-mall-item']]) {
+    const b = backendFixture(), listeners = new Map();
+    const item = b.settings.xeno.items.find(item => item.category === 'skin_suit');
+    item.owned = true;
+    const doc = {activeElement: null, addEventListener() {}, createElement: () => root};
+    const root = {dataset: {}, ownerDocument: doc, scrollTop: 0, contains: el => !!el,
+      querySelectorAll: () => [], querySelector: () => null,
+      addEventListener(type, handler) {if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(handler);}};
+    let confirmed = false;
+    const view = app({api: {getState: () => b.settings, subscribe: () => () => {},
+      xenoAct: (action, input) => b.xenoAct(action, input)}, doc, win: {AbortController},
+      confirm: async () => confirmed, notify() {}});
+    assert.ok(root.innerHTML.includes(`data-action="${action}" data-id="${item.id}"`));
+    const click = async () => {
+      const target = {dataset: {action, id: item.id}, matches: () => false,
+        closest: selector => selector === '[data-action]' ? target : null};
+      for (const fn of listeners.get('click')) fn({target, preventDefault() {}});
+      await new Promise(resolve => setImmediate(resolve));
+    };
+    await click(); assert.ok(b.settings.xeno.items.some(i => i.id === item.id));
+    confirmed = true; await click(); assert.equal(b.settings.xeno.items.some(i => i.id === item.id), false);
+    view.dispose();
+  }
+});
+
+test('删除自制服饰后清理穿戴；已删除的剧情制作记录不重复入柜', () => {
+  const b = backendFixture();
+  b.xenoAct('registerItem', {name: '旅行外套', id: 'coat:delete', category: 'apparel', slot: 'outerwear'});
+  b.settings.xeno = xenoEquipItem(b.settings.xeno, {itemId: 'coat:delete'});
+  b.xenoAct('deleteItem', {itemId: 'coat:delete'});
+  assert.equal(b.settings.xeno.protagonist.outfit.outerwearItemId, '');
+  assert.equal(b.settings.xeno.protagonist.outfit.outerwear, '无');
+  const first = applyWardrobeReply(b.settings.xeno, command(), {operationId: 'deleted:craft'});
+  b.settings.xeno = first.state;
+  const itemId = b.settings.xeno.items.find(item => item.name === '星霜').id;
+  b.xenoAct('deleteItem', {itemId});
+  const replay = applyWardrobeReply(b.settings.xeno, command(), {operationId: 'deleted:craft'});
+  assert.equal(replay.state.items.some(item => item.id === itemId), false);
+});
+
+test('同人Tag随商品导入保存，仅随有效身体输出；商品图与形态图去除质量词，保留cosplay括号', async () => {
+  const b = backendFixture();
+  b.xenoAct('stockItem', {...itemInput, category: 'flesh_ring', price: 800, id: 'fan:body',
+    fanwork: true, cosplayCharacter: 'hatsune_miku (cosplay)',
+    drawPrompt: 'masterpiece, best quality, silver hair, very aesthetic, absurdres'});
+  const item = b.settings.xeno.items.find(item => item.id === 'fan:body');
+  assert.equal(item.drawPrompt, 'hatsune miku (cosplay), silver hair');
+  b.xenoAct('importItems', {items: [JSON.parse(JSON.stringify(item))]});
+  b.settings.xeno.items.find(i => i.id === item.id).owned = true;
+  b.settings.xeno = xenoEquipItem(b.settings.xeno, {itemId: item.id, mode: 'forward'});
+  assert.doesNotMatch(buildEntityPortraitPrompt(b.settings.xeno, b.settings.xeno.protagonist).prompt, /cosplay/);
+  b.settings.xeno = xenoUpdateMountOption(b.settings.xeno, {itemId: item.id, patch: {fleshExtendMode: 'backward'}});
+  const portrait = buildEntityPortraitPrompt(b.settings.xeno, b.settings.xeno.protagonist).prompt;
+  assert.match(portrait, /hatsune miku \(cosplay\)/);
+  assert.doesNotMatch(portrait, /masterpiece|best quality|aesthetic|absurdres/);
+  assert.equal(normalizeCharacterDrawPrompt('1girl, hatsune miku (cosplay)'), '1girl, hatsune miku (cosplay)');
+  assert.equal(stripQualityDrawTags('{masterpiece}, 1.2::best quality::, detailed eyes, hatsune miku (cosplay)'), 'detailed eyes, hatsune miku (cosplay)');
+  let submitted;
+  b.settings.draw.styles = [{id: 'test', artist: 'artist:test', positive: 'masterpiece, best quality, soft lighting'}];
+  b.settings.draw.activeStyle = 'test';
+  const ctx = {api: {drawReady: () => true, getState: () => b.settings,
+    async generateImage(input) {submitted = input.prompt; throw Error('captured');}}};
+  await assert.rejects(generateItemPreview(ctx, item), /captured/);
+  assert.match(submitted, /artist:test, soft lighting/);
+  assert.match(submitted, /hatsune miku \(cosplay\)/);
+  assert.doesNotMatch(submitted, /masterpiece|best quality|high quality/);
+});
 
 test('自制装备直接入柜且不上架；属性经编辑、JSON导入及替换进货后保留', () => {
   const b = backendFixture(), balance = b.settings.chat.wallet.balance;
@@ -241,7 +336,7 @@ test('手动进货拒绝缺失或非法价格、分类、槽位、道具效果�
 test('手动录入表单校验后直接持久上架，取消不保存，全程不调用设计或绘图接口', () => {
   const b = backendFixture(), handlers = {}, errors = [], calls = [];
   let content, closed = false, saved;
-  const values = {...itemInput, price: '1800', category: 'skin_suit', slot: 'outerwear'};
+  const values = {...itemInput, price: '1800', category: 'skin_suit', slot: 'outerwear', fanwork: true, cosplayCharacter: 'hatsune_miku'};
   const effectBlock = {hidden: true};
   const api = new Proxy({getState: () => b.settings, xenoAct(action, value) {
     calls.push(action); return b.xenoAct(action, value);
@@ -254,6 +349,7 @@ test('手动录入表单校验后直接持久上架，取消不保存，全程�
     return {body: {addEventListener(type, handler) {handlers[type] = handler;},
       querySelector(selector) {
         if (selector === '[data-item-consumable]') return effectBlock;
+        if (selector === '[data-item-fanwork]') return {checked: values.fanwork};
         const key = selector.match(/data-item="([^"]+)"/)?.[1]; return {value: values[key] ?? ''};
       }}, close() {closed = true;}};
   }, notify(text, options) {if (options?.error) errors.push(text);}};

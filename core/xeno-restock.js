@@ -2,7 +2,7 @@ import {GENDERS, xenoPromptEntryText, xenoMallPosePromptText} from './xeno.js';
 
 // One recipe for actual restocking and previews. Missing built-ins are resolved
 // by xenoPromptEntryText; explicitly disabled or empty entries stay empty.
-export function buildMallRestockRequest(xeno, {category = 'apparel', slot = 'outerwear', text = '', imageData = '', gender = ''} = {}) {
+export function buildMallRestockRequest(xeno, {category = 'apparel', slot = 'outerwear', text = '', imageData = '', gender = '', fanwork = false, cosplayCharacter = ''} = {}) {
   const xmlTag = category === 'skin_suit' ? 'skin_suit_design' : category === 'flesh_ring' ? 'flesh_ring_design' : 'apparel_design';
   const workbenchId = category === 'skin_suit' ? 'skinWorkbench' : category === 'flesh_ring' ? 'ringWorkbench' : 'apparelWorkbench';
   const catTitle = {skin_suit: '活体皮躯', flesh_ring: '活体肉躯', apparel: '高定特殊服饰', consumable: '异构生物道具'}[category];
@@ -16,6 +16,9 @@ export function buildMallRestockRequest(xeno, {category = 'apparel', slot = 'out
     get('restockSysHeader'),
     get(workbenchId),
     metadataRule,
+    '【生图格式】使用 NovelAI 的英文逗号分隔 Tag，括号不加反斜杠转义。所有生图提示词禁止加入 masterpiece、best quality、high quality、very aesthetic、absurdres、highres、ultra-detailed 等质量词。',
+    fanwork && ['skin_suit', 'flesh_ring'].includes(category)
+      ? `【同人躯体】按参考角色还原身体，将 NovelAI 格式的「角色英文 Tag (cosplay)」放入角色／身体生图提示词，不放入肉棒提示词。${cosplayCharacter ? `指定角色 Tag：${cosplayCharacter}；` : '请从文字或参考图识别角色，'}另列 [同人角色Tag]：角色的英文 Tag（不含 cosplay 后缀，空格分词，保留作品消歧括号）。` : '',
     pose ? `【商品图固定姿势与构图 Tag 要求】：在生成 [角色生图提示词 (Character Prompt)] / [生图提示词 (Prompt)] 时，请包含或优先适配以下构图与姿势 Tag：${pose}` : '',
     '请额外在设计块外层附上简要上架元数据（价格：数字 200~3500；简称：4~8字），或直接严格输出上述 XML 设计块。',
     scale ? '【本次比例尺】以下是当前使用预设中已保存且启用的比例尺。设计正文和生图提示词须保持一致；模板中的示例、默认范围或默认风格与它冲突时，以这条比例尺为准。\n' + scale : ''

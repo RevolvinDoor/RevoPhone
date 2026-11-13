@@ -349,6 +349,7 @@ export function applyWardrobeReply(state, reply, {userText = '', previousReply =
         const receipt = {id: `${operationId || crypto.randomUUID()}:craft:${index}`.slice(0, 300),
           itemId: `crafted_${operationId || crypto.randomUUID()}_${index}`.slice(0, 120)};
         const existing = next.items.find(item => item.id === receipt.itemId);
+        if (next.deletedItemIds?.includes(receipt.itemId)) throw Error('这件自制装备已手动删除，不再重复入柜');
         if (existing && existing.storyCraftId !== receipt.id) throw Error('装备编号冲突，请核对衣柜');
         if (existing) existing.owned = true;
         else next = xenoRegisterItem(next, {...raw, id: receipt.itemId, storyCraftId: receipt.id});

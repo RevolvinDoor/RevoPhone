@@ -1251,8 +1251,25 @@ export class TTSBackend {
                     return xeno;
                 }
                 case 'deleteItem': {
+                    const item = xeno.items.find(i => i.id === p.itemId);
+                    if (!item) throw Error('找不到该单品');
+                    xeno.deletedItemIds = [...new Set([...(xeno.deletedItemIds || []), item.id])];
                     xeno.items = xeno.items.filter(i => i.id !== p.itemId);
+                    for (const ent of [xeno.protagonist, ...(xeno.targets || []), ...(xeno.targetPool || []), ...Object.values(xeno.cardProtagonists || {})]) {
+                        if (ent?.livingMount) {
+                            ent.livingMount.layers = ent.livingMount.layers.filter(layer => layer.itemId !== item.id);
+                            if (ent.livingMount.skinSuitId === item.id) ent.livingMount.skinSuitId = '';
+                            if (ent.livingMount.fleshRingId === item.id) ent.livingMount.fleshRingId = '';
+                        }
+                        for (const slot of ['outerwear', 'underwear', 'privacyCover', 'accessories']) {
+                            if (ent?.outfit?.[slot + 'ItemId'] !== item.id) continue;
+                            ent.outfit[slot + 'ItemId'] = '';
+                            ent.outfit[slot] = '无';
+                        }
+                    }
+                    if (xeno.wardrobePending?.itemId === item.id) xeno.wardrobePending = null;
                     if (xeno.itemVoiceBindings && p.itemId) delete xeno.itemVoiceBindings[p.itemId];
+                    xeno.pendingActionNote = `【衣柜／商城删除】已移除「${item.name}」，对应穿戴已解除；不退还购买费用。`;
                     if (p.itemId) this.persistXenoImage(`item:${p.itemId}`, '').catch(() => {});
                     return xeno;
                 }

@@ -31,13 +31,13 @@ export function readItemStructure(root) {
     .map(key => [key, root.querySelector(`[data-item="${key}"]`)?.value?.trim() || '']));
 }
 
-export function openItemEditor(ctx, {item = null, category = 'skin_suit', destination = 'wardrobe', slot = 'outerwear', gender, initialText = '', onSaved} = {}) {
+export function openItemEditor(ctx, {item = null, category = 'skin_suit', destination = 'wardrobe', slot = 'outerwear', gender, fanwork = false, cosplayCharacter = '', initialText = '', onSaved} = {}) {
   const creating = !item, stocking = creating && destination === 'mall', {api} = ctx;
   const initialParsed = creating && String(initialText || '').trim()
     ? parseItemTextBlock(initialText, {fallbackCategory: category})
     : {};
   const baseItem = item || {id: (stocking ? 'restock_' : 'crafted_') + crypto.randomUUID(), category, slot,
-    gender: gender ?? (stocking ? '' : '女'), lowerBodyMode: 'replace', lowerBodyType: 'auto'};
+    gender: gender ?? (stocking ? '' : '女'), fanwork, cosplayCharacter, lowerBodyMode: 'replace', lowerBodyType: 'auto'};
   const value = creating && Object.keys(initialParsed).length
     ? {...baseItem, ...initialParsed, category: initialParsed.category || category, slot: initialParsed.slot || slot,
       gender: gender || initialParsed.gender || (stocking ? '' : '女')}
@@ -69,6 +69,10 @@ export function openItemEditor(ctx, {item = null, category = 'skin_suit', destin
     ${field(value, 'appearance', '外貌特征', 1000)}
     ${field(value, 'bodyBuild', '体型身材', 1000)}
     ${field(value, 'physiology', '生理特征', 1000)}
+    ${living || creating ? `<div data-item-fanwork-fields ${!living ? 'hidden' : ''}>
+      <label class="xeno-field-inline"><span>同人皮躯／肉躯</span><input type="checkbox" data-item-fanwork ${value.fanwork ? 'checked' : ''}></label>
+      <label class="xeno-field-inline"><span>角色英文 Tag（同人商品必填，自动加入「角色名 (cosplay)」）</span><input class="xeno-input" data-item="cosplayCharacter" maxlength="160" value="${esc(value.cosplayCharacter || '')}" placeholder="hatsune miku"></label>
+    </div>` : ''}
     ${itemStructureFields(value)}
     ${living || creating ? `<div class="xeno-field-inline"><span>绑定音色</span>
       <p class="xeno-hint" data-item-voice-label>${esc(formatVoiceRoleLabel(currentVoice, api.getState().voicePool) || '未绑定，使用本体音色')}</p>
@@ -130,6 +134,8 @@ export function openItemEditor(ctx, {item = null, category = 'skin_suit', destin
     if (event.target?.dataset?.item === 'category') {
       const effects = d.body.querySelector('[data-item-consumable]');
       if (effects) effects.hidden = event.target.value !== 'consumable';
+      const fanworkFields = d.body.querySelector('[data-item-fanwork-fields]');
+      if (fanworkFields) fanworkFields.hidden = !['skin_suit', 'flesh_ring'].includes(event.target.value);
     }
     if (event.target?.dataset?.item !== 'gender') return;
     const mode = d.body.querySelector('[data-item="lowerBodyMode"]');
@@ -162,16 +168,21 @@ export function openItemEditor(ctx, {item = null, category = 'skin_suit', destin
       const name = read('name');
       if (!name || name.length > 160) throw Error('请填写 1–160 字的名称');
       const kind = creating ? read('category') : value.category;
+      const isFanwork = ['skin_suit', 'flesh_ring'].includes(kind) && d.body.querySelector('[data-item-fanwork]')?.checked === true;
+      if (isFanwork && !read('cosplayCharacter')) throw Error('请填写同人角色的英文 Tag');
       const structure = readItemStructure(d.body);
       const splitPrompts = splitItemDrawPrompts({
         category: kind,
         gender: structure.gender,
         lowerBodyMode: structure.lowerBodyMode,
         lowerBodyType: structure.lowerBodyType,
-        drawPrompt: read('drawPrompt'),
+        drawPrompt: value.fanwork && value.cosplayCharacter
+          ? read('drawPrompt').split(',').filter(tag => tag.trim().toLowerCase() !== `${value.cosplayCharacter} (cosplay)`.toLowerCase()).join(', ')
+          : read('drawPrompt'),
         organDrawPrompt: read('organDrawPrompt')
       });
       const patch = {...structure, id: value.id, name, shortName: read('shortName') || name.slice(0, 80),
+        fanwork: isFanwork, cosplayCharacter: isFanwork ? read('cosplayCharacter') : '',
         slot: ['skin_suit', 'flesh_ring', 'consumable'].includes(kind) ? kind : read('slot'),
         ...Object.fromEntries(['summary', 'appearance', 'bodyBuild', 'physiology', 'rawDesign'].map(key => [key, read(key)])),
         drawPrompt: normalizeCharacterDrawPrompt(splitPrompts.drawPrompt),

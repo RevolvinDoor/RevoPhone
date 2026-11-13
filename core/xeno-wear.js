@@ -5,6 +5,19 @@ const facial = /(?:hair|eyes?|eyebrows?|eyelashes?|face|facial|head|ears?|horns?
 const FUTA_TAG_RE = /^(?:[\d.]*::)?(?:\d*futanari|futa|hermaphrodite|futanari\s+female|female\s+futanari|扶她)(?:::)?$/i;
 const PENIS_TAG_RE = /(?:^|[\s(::])(?:\d*futanari\s+penis|penis|penises|phallus|dick|cock|erection|flaccid|glans|foreskin|phimosis|testicles?|scrotum|precum|pre-cum|semen|ejaculation|urethra|urethral|veiny\s+shaft|thick\s+shaft|veins\s+on\s+penis|crotch\s+bulge|pelvic\s+bulge|groin\s+bulge)(?:$|[\s)::'])|^(?:[\d.]*::)?(?:bulge|veins|prominent\s+veins|thick\s+veins|veiny|dripping\s+pre-?cum|excessive\s+semen)(?:::)?$|(?:肉棒|阴茎|阳具|巨根|龟头|冠状沟|马眼|阴囊|睾丸|玉囊|包皮|勃起|前列腺液)/i;
 
+/** Equipment and current-form prompts omit generic quality tags. */
+export function stripQualityDrawTags(value) {
+  return String(value || '').split(/[,，\n]+/).map(part => part.trim()).filter(part => {
+    const tag = part.replace(/[{}\[\]()]|[\\]/g, '').replace(/^[\d.]+::|::$|:[\d.]+$/g, '').trim();
+    return tag && !/^(?:masterpiece|(?:best|high|highest|great|amazing|perfect|excellent) quality|(?:very |highly detailed )?aesthetic|absurdres|highres|(?:ultra[- ]?|highly |hyper )detailed|[248]k)$/i.test(tag);
+  }).join(', ');
+}
+
+export function normalizeCosplayCharacter(value) {
+  return String(value || '').replace(/\\([()])/g, '$1').replace(/_/g, ' ')
+    .replace(/\s*\(cosplay\)\s*$/i, '').replace(/[,，\n]/g, ' ').trim().slice(0, 160);
+}
+
 export function isFutanariTag(tag) {
   return FUTA_TAG_RE.test(String(tag || '').trim());
 }
@@ -16,8 +29,8 @@ export function isPenisDrawTag(tag) {
 
 /** Normalizes character/body drawing prompt: NEVER includes `futanari` tag. */
 export function normalizeCharacterDrawPrompt(value, {stripPenis = false} = {}) {
-  const rawParts = String(value || '')
-    .replace(/^[(（\[【]|[)）】\]]$/g, '')
+  const rawParts = stripQualityDrawTags(String(value || '')
+    .replace(/^\(([^()]*)\)$/, '$1').replace(/^[（\[【]([\s\S]*)[）\]】]$/, '$1'))
     .split(/[,，]+/)
     .map(part => part.trim())
     .filter(Boolean);
@@ -35,8 +48,8 @@ export function normalizeCharacterDrawPrompt(value, {stripPenis = false} = {}) {
 
 /** Normalizes penis/organ drawing prompt: ALWAYS fixes `futanari` tag at the front when non-empty. */
 export function normalizeOrganDrawPrompt(value) {
-  const rawParts = String(value || '')
-    .replace(/^[(（\[【]|[)）】\]]$/g, '')
+  const rawParts = stripQualityDrawTags(String(value || '')
+    .replace(/^\(([^()]*)\)$/, '$1').replace(/^[（\[【]([\s\S]*)[）\]】]$/, '$1'))
     .split(/[,，\n]+/)
     .map(part => part.trim())
     .filter(Boolean);
@@ -82,7 +95,7 @@ export function splitItemDrawPrompts(rawDrawPrompt = '', rawOrganDrawPrompt = ''
   const isLiving = category === 'skin_suit' || category === 'flesh_ring';
 
   const rawTokens = charInput
-    .replace(/^[(（\[【]|[)）】\]]$/g, '')
+    .replace(/^\(([^()]*)\)$/, '$1').replace(/^[（\[【]([\s\S]*)[）\]】]$/, '$1')
     .split(/[,，]+/)
     .map(part => part.trim())
     .filter(Boolean);

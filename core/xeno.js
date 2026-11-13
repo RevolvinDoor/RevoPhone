@@ -6,6 +6,7 @@ import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS, XENO_PROMPT_DEFAULTS, XENO_TRIGGER_
 import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {encodeBoundVoiceRef, parseBoundVoiceRef} from './xeno-voice.js';
 import {lineEffect} from './voice-fx.js';
+import {stripQualityDrawTags, normalizeCosplayCharacter} from './xeno-wear.js';
 import {enforceStatusLocks, normalizeStatusLocks, statusLockText, normalizeOrgans, organRecordText, applyOrganUpdates, migrateLowerBody, lowerBodyStateValue, LEGACY_ORGAN_SYNC_RULE, ORGAN_SYNC_RULE} from './character-status.js';
 import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, wearDrawingAppearance, itemVoiceRef, extensionEnabled, extensionMode, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt, splitItemDrawPrompts, parseItemTextBlock} from './xeno-wear.js';
 export {wearLayers, resolveWear, itemOccupant, itemVoiceRef, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt, splitItemDrawPrompts, parseItemTextBlock};
@@ -248,11 +249,20 @@ export function normalizeCatalogItem(raw = {}) {
     drawPrompt: raw?.drawPrompt,
     organDrawPrompt: raw?.organDrawPrompt
   });
+  const fanwork = ['skin_suit', 'flesh_ring'].includes(category) && raw?.fanwork === true;
+  const cosplayCharacter = fanwork ? normalizeCosplayCharacter(raw?.cosplayCharacter) : '';
+  const cosplayTag = cosplayCharacter ? `${cosplayCharacter} (cosplay)` : '';
+  if (cosplayTag) {
+    prompts.drawPrompt = [cosplayTag, ...prompts.drawPrompt.split(',').map(tag => tag.trim())
+      .filter(tag => tag && !/\(cosplay\)$/i.test(tag))].join(', ');
+  }
   return {
     id: clip(raw?.id, 120) || ('item_' + crypto.randomUUID()),
     name: clip(raw?.name, 160) || '未命名单品',
     shortName: clip(raw?.shortName || raw?.name, 80) || '未命名',
     category,
+    fanwork,
+    cosplayCharacter,
     slot,
     price,
     owned: raw?.owned === true,
@@ -331,6 +341,7 @@ export function defaultXeno() {
       scions: []
     },
     items: INITIAL_MALL_ITEMS.map(item => normalizeCatalogItem(structuredClone(item))),
+    deletedItemIds: [],
     itemVoiceBindings: {},
     pendingActionNote: ''
   };
@@ -348,9 +359,11 @@ export function normalizeXeno(raw) {
   }
   const existingItems = Array.isArray(raw.items) ? raw.items.map(normalizeCatalogItem) : [];
   const byId = new Map(existingItems.map(i => [i.id, i]));
-  // Ensure all built-in catalog items exist while preserving their owned/edited state
+  const deletedItemIds = [...new Set((Array.isArray(raw.deletedItemIds) ? raw.deletedItemIds : [])
+    .map(id => clip(id, 120)).filter(Boolean))];
+  // Add newly shipped defaults, but respect explicit user deletions.
   for (const builtin of INITIAL_MALL_ITEMS) {
-    if (!byId.has(builtin.id)) {
+    if (!byId.has(builtin.id) && !deletedItemIds.includes(builtin.id)) {
       const normBuiltin = normalizeCatalogItem(structuredClone(builtin));
       existingItems.push(normBuiltin);
       byId.set(normBuiltin.id, normBuiltin);
@@ -401,8 +414,15 @@ export function normalizeXeno(raw) {
       } else occupied.add(itemId);
     }
   }
-  for (const ent of [protagonist, ...targets, ...poolMap.values()]) {
+  for (const ent of [protagonist, ...targets, ...poolMap.values(), ...Object.values(cardProtagonists)]) {
     if (!ent?.livingMount) continue;
+    ent.livingMount.layers = ent.livingMount.layers.filter(layer => byId.has(layer.itemId));
+    for (const slot of ['outerwear', 'underwear', 'privacyCover', 'accessories']) {
+      if (ent.outfit[slot + 'ItemId'] && !byId.has(ent.outfit[slot + 'ItemId'])) {
+        ent.outfit[slot + 'ItemId'] = '';
+        ent.outfit[slot] = '无';
+      }
+    }
     for (const layer of ent.livingMount.layers) {
       const item = byId.get(layer.itemId);
       const voice = clip(item?.voiceRoleExplicit ? item.voiceRole
@@ -437,7 +457,7 @@ export function normalizeXeno(raw) {
     enabled: raw.enabled !== false,
     autoUpdateTag: raw.autoUpdateTag !== false,
     autoWardrobe: raw.autoWardrobe !== false,
-    wardrobePending: raw.wardrobePending?.itemId ? {
+    wardrobePending: raw.wardrobePending?.itemId && byId.has(raw.wardrobePending.itemId) ? {
       itemId: clip(raw.wardrobePending.itemId, 120),
       targetKey: clip(raw.wardrobePending.targetKey, 120),
       price: Number.isFinite(Number(raw.wardrobePending.price)) ? Math.max(0, Math.round(Number(raw.wardrobePending.price) * 100) / 100) : 0,
@@ -501,6 +521,7 @@ export function normalizeXeno(raw) {
     },
     parasite: normalizeParasiteState(raw.parasite),
     items: existingItems.slice(0, 200),
+    deletedItemIds,
     itemVoiceBindings,
     pendingActionNote: clip(raw.pendingActionNote, 1000)
   };
@@ -2252,8 +2273,8 @@ export function buildEntityPortraitPrompt(xeno, entity) {
   const isFuta = view.gender === '扶她'
     || (state.possession?.active && state.possession.organSync && !(wear.lowerBodyMode === 'replace' && ['female', 'none'].includes(wear.lowerBodyType))
       && (e.id === '__protagonist__' || e.name === state.possession.targetName));
-  if (view.gender === '男') tags.push('1boy, solo, full body, masterpiece, best quality');
-  else tags.push('1girl, solo, full body, masterpiece, best quality');
+  if (view.gender === '男') tags.push('1boy, solo, full body');
+  else tags.push('1girl, solo, full body');
 
   const equipTags = xenoDrawTagsFor(state, e.id === '__protagonist__' ? '__protagonist__' : e.name);
   if (equipTags) tags.push(equipTags);
@@ -2273,7 +2294,7 @@ export function buildEntityPortraitPrompt(xeno, entity) {
   if (!e.outfit.underwearItemId && e.outfit.underwear && !/真空|无/.test(e.outfit.underwear)) tags.push(e.outfit.underwear);
 
   return {
-    prompt: [...new Set(tags.map(t => String(t || '').trim()).filter(Boolean))].join(', '),
+    prompt: stripQualityDrawTags([...new Set(tags.map(t => String(t || '').trim()).filter(Boolean))].join(', ')),
     summaryLabel: `${view.name || '角色'} · ${view.gender || '当前形态'}`
   };
 }

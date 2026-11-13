@@ -156,6 +156,7 @@ export function wardrobeApp(ctx) {
                   <div class="tb-info">
                     <div class="tb-title-row">
                       <strong class="tb-title">${esc(item.name)}</strong>
+                      <button type="button" class="tb-del-btn" data-action="delete-wardrobe-item" data-id="${esc(item.id)}" title="删除单品" aria-label="删除 ${esc(item.name)}">×</button>
                     </div>
                     <p class="tb-desc">${esc(item.summary)}</p>
                     ${occupied ? `<p class="tb-spec">使用中：${esc(occupied.entity.name || '主角')}${occupied.layer ? ` · 第 ${occupied.layer} 层` : ''}</p>` : ''}
@@ -226,6 +227,14 @@ export function wardrobeApp(ctx) {
 
     if (act === 'go-xeno') { ctx.open('xeno'); return; }
     if (act === 'go-mall') { ctx.open('mall'); return; }
+    if (act === 'delete-wardrobe-item') {
+      const item = xeno.items.find(i => i.id === el.dataset.id);
+      if (item && await ctx.confirm(`删除「${item.name}」？`, '将从衣柜与商城永久移除，同时解除对应穿戴；不退还购买费用。')) {
+        api.xenoAct('deleteItem', {itemId: item.id});
+        ctx.notify('单品已删除');
+      }
+      return;
+    }
     if (act === 'register-crafted') { openItemEditor(ctx, {category: activeTab}); return; }
     if (act === 'view-wearer-portrait') {
       openEntityPortraitDialog(ctx, targetKey);

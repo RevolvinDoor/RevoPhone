@@ -41,6 +41,8 @@ export function mallApp(ctx) {
   let restockCategory = 'apparel';
   let restockSlot = 'outerwear';
   let restockGender = '';
+  let restockFanwork = false;
+  let restockCosplayCharacter = '';
   let restockText = '';
   let restockImage = '';
   let restockAutoDraw = false;
@@ -114,6 +116,8 @@ export function mallApp(ctx) {
       slot: restockCategory === 'apparel' ? restockSlot : restockCategory,
       text: v.root.querySelector('#mall-restock-text')?.value || '',
       gender: ['skin_suit', 'flesh_ring'].includes(restockCategory) ? restockGender : '',
+      fanwork: ['skin_suit', 'flesh_ring'].includes(restockCategory) && restockFanwork,
+      cosplayCharacter: restockCosplayCharacter,
       imageData: restockImage
     };
   }
@@ -290,6 +294,10 @@ export function mallApp(ctx) {
             ` : ''}
             ${['skin_suit', 'flesh_ring'].includes(restockCategory) ? `<label class="xeno-field-inline"><span>身体类型</span><select class="xeno-select" data-change="restock-gender">${[['', '按输入／参考设定'], ['女', '女性'], ['男', '男性'], ['扶她', '扶她']].map(([key, title]) => `<option value="${key}" ${restockGender === key ? 'selected' : ''}>${title}</option>`).join('')}</select></label>` : ''}
           </div>
+          ${['skin_suit', 'flesh_ring'].includes(restockCategory) ? `<div class="xeno-field-inline">
+              <label><input type="checkbox" data-change="restock-fanwork" ${restockFanwork ? 'checked' : ''}> 同人皮躯／肉躯</label>
+              ${restockFanwork ? `<label>角色英文 Tag（可留空由 AI 识别）<input class="xeno-input" data-change="restock-cosplay" value="${esc(restockCosplayCharacter)}" maxlength="160" placeholder="例如：hatsune miku"></label><p class="xeno-hint">身体提示词会加入「hatsune miku (cosplay)」这样的 NovelAI Tag。</p>` : ''}
+          </div>` : ''}
           <div class="tb-restock-media">
             <div class="tb-img-box restock-preview">
               ${restockImage
@@ -431,7 +439,7 @@ export function mallApp(ctx) {
                 <div class="tb-info">
                   <div class="tb-title-row">
                     <strong class="tb-title">${esc(item.name)}</strong>
-                    ${item.source === 'restock' ? `<button type="button" class="tb-del-btn" data-action="delete-mall-item" data-id="${esc(item.id)}" title="下架删除">×</button>` : ''}
+                    <button type="button" class="tb-del-btn" data-action="delete-mall-item" data-id="${esc(item.id)}" title="下架删除" aria-label="删除 ${esc(item.name)}">×</button>
                   </div>
                   <p class="tb-desc">${esc(item.summary)}</p>
                   ${item.bodyBuild ? `<p class="tb-spec"><b>规格：</b>${esc(item.bodyBuild)}</p>` : ''}
@@ -496,7 +504,7 @@ export function mallApp(ctx) {
     }
     if (act === 'manual-restock') {
       restockText = v.root.querySelector('#mall-restock-text')?.value || '';
-      openItemEditor(ctx, {destination: 'mall', category: restockCategory, slot: restockSlot, gender: restockGender, initialText: restockText,
+      openItemEditor(ctx, {destination: 'mall', category: restockCategory, slot: restockSlot, gender: restockGender, fanwork: restockFanwork, cosplayCharacter: restockCosplayCharacter, initialText: restockText,
         onSaved({category}) {activeShelf = category; searchQuery = ''; apparelFilter = 'all'; v.refresh();}});
       return;
     }
@@ -704,7 +712,7 @@ export function mallApp(ctx) {
     }
     if (act === 'delete-mall-item') {
       const item = xeno.items.find(i => i.id === el.dataset.id);
-      if (item && await ctx.confirm(`下架删除「${item.name}」？`, '删除后将从商城与衣柜中移除。')) {
+      if (item && await ctx.confirm(`下架删除「${item.name}」？`, '将从商城与衣柜永久移除，同时解除对应穿戴；不退还购买费用。')) {
         api.xenoAct('deleteItem', {itemId: item.id});
       }
     }
@@ -732,6 +740,12 @@ export function mallApp(ctx) {
       return;
     }
     if (act === 'restock-gender') { restockGender = el.value; return; }
+    if (act === 'restock-fanwork') {
+      restockText = v.root.querySelector('#mall-restock-text')?.value || '';
+      restockFanwork = el.checked;
+      v.refresh(); return;
+    }
+    if (act === 'restock-cosplay') { restockCosplayCharacter = el.value; return; }
     if (act === 'restock-file') {
       restockText = v.root.querySelector('#mall-restock-text')?.value || restockText;
       const file = el.files?.[0];
