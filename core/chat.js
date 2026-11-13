@@ -184,7 +184,7 @@ export function normalizeAvatars(value) {
 }
 
 export function normalizeContact(c = {}) {
-  return {id: String(c.id || crypto.randomUUID()), name: text(c.name, 40).trim(), persona: text(c.persona, CHAT_LIMITS.persona), ...(c.space ? {space: text(c.space, 300)} : {})};
+  return {id: String(c.id || crypto.randomUUID()), name: text(c.name, 40).trim(), persona: text(c.persona, CHAT_LIMITS.persona), ...(c.space ? {space: text(c.space, 300)} : {}), ...(c.storyChatKey ? {storyChatKey: text(c.storyChatKey, 1024)} : {})};
 }
 
 // ---------- 表情包 ----------

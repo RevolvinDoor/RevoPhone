@@ -16,6 +16,7 @@ import {pictureInputs, photoTags, photoCast} from '../core/draw.js';
 import {chatScene, sceneArt, sceneDark, syncMotion} from './chat-scenes.js';
 import {PREMIUM, yuan} from '../core/wallet.js';
 import {fileTool, fileBody, showFile, filesToMessages} from './chat-files.js';
+import {soulPanel} from './soul.js';
 
 // Chat app, QQ style: 消息 (conversations, with search, 置顶 and 免打扰), 联系人 (特别关心, friends, groups, profile cards)
 // and 动态 (朋友圈, ui/moments.js). Tapping your own avatar opens 我: name, status, signature and 个性装扮 (chat bubble,
@@ -109,9 +110,12 @@ export function chatApp(ctx) {
   const moments = momentsPanel(ctx, {v, frame: html => frame(html), me: () => ({name: myName(), avatar: myAvatar}), visible: () => ctx.visible?.('chat') !== false && mode === 'list' && tab === 'moments'});
   /** A tab page with the tab bar under it. */
   function frame(html) {
-    const tabs = [['msgs', '消息', 'chat'], ['contacts', '联系人', 'person'], ['moments', '动态', 'moments']];
-    return `<div class="qq-page">${html}</div><nav class="qq-tabs" aria-label="聊天">${tabs.map(([k, l, g]) => `<button type="button" data-action="tab" data-tab="${k}" aria-pressed="${tab === k}"><span class="qq-tab-ico">${icon(g)}${k === 'msgs' && unreadTotal ? `<b class="badge">${unreadTotal > 99 ? '99+' : unreadTotal}</b>` : k === 'moments' && freshMoments && tab !== 'moments' ? '<b class="qq-dot-new" aria-label="有新动态"></b>' : ''}</span><span>${l}</span></button>`).join('')}</nav>`;
+    const tabs = [['msgs', '消息', 'chat'], ...(api.getSoul ? [['discover', '发现', 'star']] : []), ['contacts', '联系人', 'person'], ['moments', '动态', 'moments']];
+    return `<div class="qq-page">${html}</div><nav class="qq-tabs" aria-label="Soul">${tabs.map(([k, l, g]) => `<button type="button" data-action="tab" data-tab="${k}" aria-pressed="${tab === k}"><span class="qq-tab-ico">${icon(g)}${k === 'msgs' && unreadTotal ? `<b class="badge">${unreadTotal > 99 ? '99+' : unreadTotal}</b>` : k === 'moments' && freshMoments && tab !== 'moments' ? '<b class="qq-dot-new" aria-label="有新动态"></b>' : ''}</span><span>${l}</span></button>`).join('')}</nav>`;
   }
+  const soul = api.getSoul ? soulPanel(ctx, {v, frame, render, open}) : null;
+  let soulChatKey = api.getSoul?.().chatKey || '';
+  const stopSoul = api.subscribe?.(event => {if (event.type === 'soul') render();});
   async function counts() {
     unreadTotal = await api.chatUnread().catch(() => 0);
     freshMoments = momentsNew(await api.listMoments().catch(() => []), momentsSeen(ctx.win));
@@ -289,6 +293,7 @@ export function chatApp(ctx) {
   function renderMe() {
     const p = profile(), w = api.wallet();
     v.draw(heading('我', '', 'Me')
+      + (soul ? '<div class="group"><button type="button" class="list-row" data-soul="profile"><span><strong>公开交友主页与模板</strong><small>只向新朋友展示这里填写的资料</small></span></button></div>' : '')
       + `<div class="qq-card me" data-bubble="${esc(p.bubble)}"><span class="qq-card-cover" aria-hidden="true"></span><button type="button" class="me-pic" data-action="avatar-pick" data-key="me" aria-label="换头像（${esc(avatarState('me'))}）">${myAvatar(84)}<span class="me-pic-edit" aria-hidden="true">${icon('image')}</span></button><h2>${esc(myName())}</h2><p>${esc(p.signature || '还没有个性签名')}</p><div class="qq-card-tags"><span class="chip">${statusLine()}</span></div></div>`
       + `<div class="group pad">${field('名字', input('me-name', p.name, 'text', `maxlength="40" placeholder="${esc(api.userName?.() || '我')}（跟随酒馆里的用户名）"`))}${field('个性签名', input('me-signature', p.signature, 'text', 'maxlength="80" placeholder="写一句话"'))}</div>
         <div class="group"><button class="list-row" data-action="me-status"><span><strong>状态</strong><small>${statusLine()}</small></span>${icon('next')}</button></div>`
@@ -589,6 +594,11 @@ export function chatApp(ctx) {
   // Leaving a list (消息 or 联系人) for a chat, a profile or a form remembers where it was; coming back to the same tab puts it there again.
   let shownMode = 'list', left = null;
   function render() {
+    const currentSoulKey = api.getSoul?.().chatKey || '';
+    if (currentSoulKey !== soulChatKey) {
+      soulChatKey = currentSoulKey; mode = 'list'; threadId = null; thread = null; selecting = null; panel = null; quote = null;
+      soul?.reset();
+    }
     const ticket = ++epoch;
     if (shownMode === 'list' && mode !== 'list') left = {tab, top: v.root.scrollTop};
     const back = shownMode !== 'list' && mode === 'list' && left?.tab === tab ? left.top : null;
@@ -600,6 +610,7 @@ export function chatApp(ctx) {
     if (mode === 'me') return renderMe();
     if (mode === 'contact-edit') return renderContactForm();
     if (mode === 'friends') return renderFriends(ticket);
+    if (tab === 'discover' && soul) return soul.render();
     const done = tab === 'contacts' ? renderContactsTab(ticket) : tab === 'moments' ? counts().then(() => { if (ticket === epoch) return moments.render(); }) : renderMessages(ticket);
     return back === null ? done : Promise.resolve(done).then(() => { if (ticket === epoch) v.root.scrollTop = back; });
   }
@@ -1561,7 +1572,7 @@ export function chatApp(ctx) {
   /** 动态, from the tavern page's 动态小窗. */
   v.showMoments = () => { mode = 'list'; tab = 'moments'; threadId = null; search = ''; moments.only(''); v.root.scrollTop = 0; render(); };
   const dispose = v.dispose;
-  v.dispose = () => { ctx.win.clearTimeout(pace.timer); moments.dispose(); for (const url of photoURLs.values()) if (url) ctx.win.URL.revokeObjectURL(url); photoURLs.clear(); dispose(); };
+  v.dispose = () => { stopSoul?.(); soul?.dispose(); ctx.win.clearTimeout(pace.timer); moments.dispose(); for (const url of photoURLs.values()) if (url) ctx.win.URL.revokeObjectURL(url); photoURLs.clear(); dispose(); };
   render();
   return v;
 }

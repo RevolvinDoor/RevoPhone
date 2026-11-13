@@ -16,7 +16,7 @@ export const APPS = {
   listen: {name: '听取', eyebrow: 'Now Playing', colors: ['#ffa3c3', '#e9588e', '#fff09a']},
   settings: {name: '设置', eyebrow: 'Settings', colors: ['#e4e8f0', '#98a2b6', '#ffd36a']},
   draw: {name: '绘图', eyebrow: 'NovelAI', colors: ['#c3c3ff', '#6d6ff0', '#ffd46a']},
-  chat: {name: '聊天', eyebrow: 'Messages', colors: ['#8fd8ff', '#3d8ff0', '#ff9dbb']},
+  chat: {name: 'Soul', eyebrow: 'Soul', colors: ['#d0baff', '#7763d5', '#a5eee3']},
   forum: {name: '论坛', eyebrow: 'Forum', colors: ['#b8f0d0', '#38b07a', '#ffd36a']},
   peek: {name: '查手机', eyebrow: 'Peek', colors: ['#ffc6e0', '#c85a9a', '#9fe0ff']},
   sounds: {name: '音效', eyebrow: 'Ambience', colors: ['#a8e6e0', '#2f9e95', '#ffe08a']},

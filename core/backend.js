@@ -40,6 +40,7 @@ import { AudioCache } from './cache.js';
 import {FishOAuth, FishTokenStore} from './fish-oauth.js';
 import {FishMCP, fishSubscription, MCP_MODEL} from './fish-mcp.js';
 import { installDrawSettings } from './backend-draw.js';
+import {installSoulBackend} from './backend-soul.js';
 import { createStorageBudget } from './storage-budget.js';
 import { DialoguePlayer } from './player.js';
 import { LocalLibrary, PHONE_APPS, PHONE_WALLPAPERS, PHONE_GLYPHS, PHONE_SKINS } from './library.js';
@@ -434,7 +435,13 @@ export class TTSBackend {
     routesHere(key = this.cardKey()) { return clone(cardRoutes(this.settings.routes, key)); }
     cardState() {
         const state = this.getState(), routes = this.routesHere();
-        return { ...state, routes, xeno: this.hydrateXenoImages(syncXenoWithRoutes(state.xeno, routes, this.cardKey())) };
+        const soul = this.getSoul(), avatars = {...state.chat.avatars};
+        if (soul.profile.photoId) avatars.me = {kind: 'photo', photoId: soul.profile.photoId};
+        for (const person of soul.candidates) if (person.accepted && person.photoId && !avatars[person.name]) avatars[person.name] = {kind: 'photo', photoId: person.photoId};
+        return { ...state, routes, chat: {...state.chat,
+            contacts: state.chat.contacts.filter(c => c.storyChatKey === this.activeChatKey || !this.activeChatKey && !c.storyChatKey),
+            profile: {...state.chat.profile, ...(soul.profile.nickname ? {name: soul.profile.nickname} : {}), signature: soul.profile.signature}, avatars},
+            xeno: this.hydrateXenoImages(syncXenoWithRoutes(state.xeno, routes, this.cardKey())) };
     }
     getSnapshot() { return { state: this.getState(), revision: this.revision }; }
     save(next, expectedRevision) {
@@ -816,6 +823,8 @@ export class TTSBackend {
             version: 2, sessionId: previous?.sessionId || crypto.randomUUID(), chatKey: key,
             ref: this.xenoChatStores?.get(key)?.ref || previous?.ref || null,
             session: extractXenoSession(this.settings.xeno),
+            soul: this.getSoul(),
+            soulContacts: clone(this.settings.chat.contacts.filter(c => c.storyChatKey === key)),
             roles: this.routesHere().filter(route => routeCard(route) === this.cardKey()),
             floors: clone(this.pruneChatFloors(this.getChatFloors(key))), updatedAt: Date.now()
         } : clone(previous);
@@ -825,6 +834,7 @@ export class TTSBackend {
         const pending = (this.xenoChatWrites.get(key) || Promise.resolve()).catch(() => {}).then(async () => {
             if (this.closed || this.deletedXenoChats?.has(key)) return;
             const peeks = await this.apps.list('peek').catch(() => null);
+            await this.soulSnapshot(payload);
             if (peeks) payload.peeks = peeks.filter(doc => doc.chatKey === key);
             else if (Array.isArray(previous?.peeks)) payload.peeks = clone(previous.peeks);
             this.xenoChatRecords.set(key, clone(payload));
@@ -851,12 +861,14 @@ export class TTSBackend {
         if (this.closed) return Promise.resolve(null);
         const epoch = (this.xenoChatEpoch || 0) + 1;
         this.xenoChatEpoch = epoch;
+        this.soulNavigating = true;
         const outgoing = this.activeChatKey && this.activeChatKey !== nextKey ? this.persistActiveChatXeno() : Promise.resolve();
         const pending = (this.xenoChatNavigation || Promise.resolve()).catch(() => {}).then(async () => {
             await outgoing;
             if (this.closed || epoch !== this.xenoChatEpoch) return null;
             if (!nextKey) {
                 this.activeChatKey = '';
+                this.soulSession = null;
                 this.setSpace(options.space || {key: '', name: '', members: []}, {syncRoles: false});
                 this.emit('peek', {});
                 return null;
@@ -867,7 +879,9 @@ export class TTSBackend {
             finally { this.xenoChatLoads.delete(nextKey); }
         });
         this.xenoChatNavigation = pending;
-        return pending;
+        return pending.finally(() => {
+            if (epoch === this.xenoChatEpoch) { this.soulNavigating = false; this.emit('soul', {}); }
+        });
     }
     async loadChatXeno(nextKey, {hasHistory = false, space = null, userName = '', narratorName = '', storage = null} = {}, epoch = this.xenoChatEpoch) {
         this.xenoChatRecords ||= new Map();
@@ -954,15 +968,24 @@ export class TTSBackend {
             }
         }
         next.routes = [...next.routes.filter(route => !routeForCard(route, cardKey) || routeCard(route) !== cardKey), ...roles];
+        if (Array.isArray(record?.soulContacts)) {
+            next.chat.contacts = [...next.chat.contacts.filter(c => c.storyChatKey !== nextKey),
+                ...record.soulContacts.filter(c => c.storyChatKey === nextKey)];
+        } else if (!record?.soul && hasHistory) {
+            for (const contact of next.chat.contacts) if (!contact.storyChatKey && (!contact.space || contact.space === cardKey)) contact.storyChatKey = nextKey;
+        }
         next.xeno.cardProtagonists = {...next.xeno.cardProtagonists};
         delete next.xeno.cardProtagonists[cardKey];
         next.xeno = syncXenoWithRoutes(mergeXenoSession(next.xeno, sessionToApply, cardKey), cardRoutes(next.routes, cardKey), cardKey);
+        await this.loadSoulSnapshot(record, nextKey, {hasHistory, current: () => !this.closed && epoch === this.xenoChatEpoch && !this.deletedXenoChats?.has(nextKey)});
+        if (this.closed || epoch !== this.xenoChatEpoch || this.deletedXenoChats?.has(nextKey)) return null;
         this.save(next);
         this.roleInitContext = {key: cardKey, userName, narratorName};
         if (!record) this.initializeCardRoles(userName, narratorName, {force: true});
         await this.persistActiveChatXeno(nextKey);
         this.emit('xeno', { xeno: clone(this.cardState().xeno) });
         this.emit('peek', {});
+        this.emit('soul', {chatKey: nextKey}); this.emit('chat', {});
         return {fresh: !record};
     }
     async deleteChatXenoFile(fileName, {cardKey = this.cardKey(), group = false} = {}) {
@@ -993,9 +1016,15 @@ export class TTSBackend {
             this.xenoSessions.delete(key);
             this.xenoFloors.delete(key);
             await this.apps.removeMany(peeks.filter(doc => doc.chatKey === key).map(doc => doc.id));
+            for (const thread of await this.chats?.list?.() || []) if (thread.storyChatKey === key) await this.chats.remove(thread.id);
+            this.settings.chat.contacts = this.settings.chat.contacts.filter(c => c.storyChatKey !== key);
             const images = await this.apps.list('xeno-image');
             const imageKeys = new Set([...images.map(image => image.key), ...(this.xenoImages?.keys() || [])]);
             for (const imageKey of imageKeys) if (imageKey?.startsWith(`portrait:${key}:`)) await this.persistXenoImage(imageKey, '');
+        }
+        if (keys.size) {
+            if (keys.has(this.activeChatKey)) this.soulSession = null;
+            this.save(this.getState()); this.emit('soul', {}); this.emit('chat', {});
         }
         this.emit('peek', {});
     }
@@ -2178,7 +2207,8 @@ export class TTSBackend {
     }
     saveContact(value) {
         const next = this.getState(), contact = validateContact(normalizeContact(clone(value || {})), this.routesHere());
-        if (next.chat.contacts.some(c => c.name === contact.name && c.id !== contact.id)) throw Error('已经有同名的联系人');
+        contact.storyChatKey = this.activeChatKey || '';
+        if (next.chat.contacts.some(c => c.name === contact.name && c.id !== contact.id && (c.storyChatKey || '') === contact.storyChatKey)) throw Error('已经有同名的联系人');
         const index = next.chat.contacts.findIndex(c => c.id === contact.id);
         if (index < 0 && this.cardKey()) contact.space = this.cardKey();
         if (index >= 0 && next.chat.contacts[index].space) contact.space = next.chat.contacts[index].space;
@@ -2209,7 +2239,10 @@ export class TTSBackend {
         }
         // avatars: {name: choice | null}; null goes back to the tavern's avatar (or the first letter).
         if (patch?.avatars && typeof patch.avatars === 'object') { const merged = { ...next.chat.avatars }; for (const [name, a] of Object.entries(patch.avatars)) { if (a) merged[name] = a; else delete merged[name]; } next.chat.avatars = normalizeAvatars(merged); }
-        return this.save(next).chat;
+        const publicChanged = this.syncSoulPublicProfile(patch || {});
+        const result = this.save(next).chat;
+        if (publicChanged) this.persistActiveChatXeno().catch(error => this.notify(error.message));
+        return result;
     }
     deleteContact(id) {
         const next = this.getState(), gone = next.chat.contacts.find(c => c.id === id);
@@ -2638,7 +2671,7 @@ export class TTSBackend {
         return changed;
     }
     /** Contacts of the card open now (all of them when 分区 is off). */
-    contacts() { return chatContacts(this.settings, this.here()); }
+    contacts() { return chatContacts(this.cardState(), this.here()); }
     /** Who 论坛 and 朋友圈 write about. With 分区 on: the open card's own people (its characters, roles met in its
      *  story or added to it, contacts added under it), not the roles no story has met yet, which can be added from
      *  联系人 →「＋」. All contacts when that leaves no one. */
@@ -2649,7 +2682,8 @@ export class TTSBackend {
         return own.length ? own : all;
     }
     /** Phone chats of the card open now. */
-    async threads() { const here = this.here(); return (await this.chats.list()).filter(t => inSpace(t, here)); }
+    async threads() { const here = this.here(); return (await this.chats.list()).filter(t => inSpace(t, here)
+        && (this.activeChatKey ? t.storyChatKey === this.activeChatKey : !t.storyChatKey)); }
     /** Removes what was made under the open card (or everything, with 分区 off). */
     async clearHere(list, remove, clearAll) {
         const here = this.here();
@@ -2729,9 +2763,12 @@ export class TTSBackend {
         this.emit('moments', {});
         return result;
     }
-    async chatMutate(threadId, task) {
+    async chatMutate(threadId, task, {allowOtherChat = false} = {}) {
         this.assertOpen();
+        const thread = threadId ? await (allowOtherChat ? this.chats.get(threadId) : this.soulThread(threadId)) : null;
+        const scope = thread?.storyChatKey || this.activeChatKey;
         const result = await task();
+        if (scope) await this.persistActiveChatXeno(scope);
         this.emit('chat', { threadId });
         return result;
     }
@@ -2739,7 +2776,7 @@ export class TTSBackend {
     /** The private chat with `name` on this card (made when there is none yet). */
     async dmThread(name) {
         const here = currentDm(await this.threads(), name);
-        return here || this.chats.create({ type: 'dm', members: [name], space: this.cardKey() });
+        return here || this.chats.create({ type: 'dm', members: [name], space: this.cardKey(), storyChatKey: this.activeChatKey });
     }
     /** The user deletes a contact: the chat is put away (kept), and what they send meanwhile becomes 好友申请. */
     async unfriend(name) {
@@ -2835,7 +2872,7 @@ export class TTSBackend {
                     await this.chats.updateMessage(thread.id, m.id, {photoId, imageVersions, imageState: photoId ? 'done' : 'failed', imageNote: photoId ? '' : '图片已清理'});
                 }
                 if (hit.length) this.emit('chat', { threadId: thread.id });
-            });
+            }, {allowOtherChat: true});
         }
         const snaps = (await this.apps.list('peek')).filter(doc => [...(doc.photos || []), doc.wallpaper].some(p => p && gone.has(p.photoId)));
         const strip = p => { if (!p || !gone.has(p.photoId)) return p; const { photoId, state, note, ...rest } = p; return rest; };
@@ -3188,9 +3225,13 @@ export class TTSBackend {
             saveXeno: patch => this.saveXeno(patch), xenoAct: (action, payload) => this.xenoAct(action, payload), buyXenoItem: (itemId, options) => this.buyXenoItem(itemId, clone(options || {})),
             saveXenoPreset: preset => this.saveXenoPreset(preset), deleteXenoPreset: id => this.deleteXenoPreset(id), selectXenoPreset: id => this.selectXenoPreset(id), previewXenoPrompt: preset => this.previewXenoPrompt(preset),
             sendPaid: (threadId, message) => this.sendPaid(threadId, message), takeSent: (threadId, messageId, accept) => this.takeSent(threadId, messageId, accept !== false),
-            shopCatalog: () => clone({ premium: PREMIUM, kinds: DECOR_KINDS, gifts: shopGifts(this.settings.chat.wallet), ledgerKinds: LEDGER_KINDS }), saveContact: contact => this.saveContact(contact), deleteContact: id => this.deleteContact(id), chatContacts: all => clone(all ? chatContacts(this.settings) : this.contacts()), addRoleContact: name => this.addRoleContact(name),
-            listThreads: () => this.threads(), getThread: id => this.chats.get(id), chatUnread: async () => (await this.threads()).reduce((n, t) => n + (t.muted ? 0 : t.unread), 0),
-            createThread: value => this.chatMutate(null, () => this.chats.create({ ...clone(value), space: this.cardKey() })),
+            shopCatalog: () => clone({ premium: PREMIUM, kinds: DECOR_KINDS, gifts: shopGifts(this.settings.chat.wallet), ledgerKinds: LEDGER_KINDS }), saveContact: contact => this.saveContact(contact), deleteContact: id => this.deleteContact(id), chatContacts: all => clone(all ? chatContacts(this.cardState()) : this.contacts()), addRoleContact: name => this.addRoleContact(name),
+            listThreads: () => this.threads(), getThread: id => this.soulThread(id), chatUnread: async () => (await this.threads()).reduce((n, t) => n + (t.muted ? 0 : t.unread), 0),
+            createThread: value => this.chatMutate(null, () => this.chats.create({ ...clone(value), space: this.cardKey(), storyChatKey: this.activeChatKey })),
+            getSoul: () => this.getSoul(), saveSoul: patch => this.saveSoul(clone(patch || {})),
+            saveSoulProfile: (profile, options) => this.saveSoulProfile(clone(profile), clone(options || {})),
+            soulClearHistory: () => this.soulClearHistory(), legacySoulThreads: () => this.legacySoulThreads(),
+            importLegacySoulThread: (id, options) => this.importLegacySoulThread(id, clone(options || {})),
             updateThread: (id, patch) => this.chatMutate(id, () => this.chats.update(id, clone(patch))),
             deleteThread: id => this.chatMutate(id, async () => { const done = await this.chats.remove(id); this.noteGone('chats', [id]); await this.memoryForget(id).catch(() => {}); return done; }),
             // 记忆: what a chat remembers; a summary can be corrected or deleted (what it covered is used again).
@@ -3233,3 +3274,4 @@ export class TTSBackend {
     }
 }
 installDrawSettings(TTSBackend);
+installSoulBackend(TTSBackend);

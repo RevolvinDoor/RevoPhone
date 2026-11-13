@@ -6,6 +6,7 @@ import {currentDm} from './core/chats.js';
 import {buildCallRequest, parseCallReply, CALL_LIMITS} from './core/call.js';
 import {chatContacts, activeChatPreset, messageLine, cleanTagged, isCallForbiddenRole} from './core/chat.js';
 import {worldInfoFor, loreOptions} from './host-lore.js';
+import {publicSoulProfile, soulChatPersona} from './core/soul.js';
 import {storyLines} from './core/moments.js';
 import {modelRules} from './core/state.js';
 
@@ -62,7 +63,7 @@ export function createCallHost({context, settings, backend, notice, ringing = ()
 
   async function dmThread(name) {
     const existing = currentDm(await backend.threads(), name);
-    return existing || backend.chats.create({type: 'dm', members: [name], space: backend.spaceKey()});
+    return existing || backend.chats.create({type: 'dm', members: [name], space: backend.cardKey(), storyChatKey: backend.activeChatKey});
   }
   /** Keeps the finished call in the private chat. A missed incoming call counts as unread. */
   async function keep(c, voicemail = []) {
@@ -147,10 +148,15 @@ export function createCallHost({context, settings, backend, notice, ringing = ()
 
   async function ask(mode, c) {
     const ctx = context();
-    const s = settings(), preset = activeChatPreset(s.chat), user = userName(), thread = currentDm(await backend.threads(), c.name);
+    c.storyChatKey ||= backend.activeChatKey;
+    if (c.storyChatKey && c.storyChatKey !== backend.activeChatKey) throw Error('正文聊天已切换，请重新发起通话');
+    const s = settings(), preset = activeChatPreset(s.chat), person = backend.soulPerson?.(c.name), soul = person && backend.getSoul();
+    const user = person ? soul.profile.nickname || '新朋友' : userName(), thread = currentDm(await backend.threads(), c.name);
+    const publicPersona = person ? JSON.stringify(publicSoulProfile(soul.profile)) : userPersona();
+    if (person) c.contact = {...c.contact, persona: backend.soulPersonaFor?.(c.name) || soulChatPersona({...person, persona: c.contact.persona || person.persona}, soul), card: ''};
     const history = thread ? (await backend.chats.get(thread.id)).messages.filter(m => m.kind !== 'system' && m.kind !== 'call').slice(-CALL_LIMITS.history) : [];
-    const voiceFormat = backend.voiceFormat(), story = storyLines(ctx.chat || [], preset, user);
-    const lore = preset.lore === false ? '' : await worldInfoFor(context, {...loreOptions(preset), report: (...args) => backend.reportDiagnostic?.(...args), persona: userPersona(), characters: c.contact.persona || c.contact.card || '',
+    const voiceFormat = backend.voiceFormat(), story = person ? [] : storyLines(ctx.chat || [], preset, user);
+    const lore = person || preset.lore === false ? '' : await worldInfoFor(context, {...loreOptions(preset), report: (...args) => backend.reportDiagnostic?.(...args), persona: userPersona(), characters: c.contact.persona || c.contact.card || '',
       texts: [c.name, c.reason, ...story.map(r => `${r.name}: ${r.text}`), ...history.map(m => messageLine(m, user)), ...c.lines.map(l => `${l.from === 'me' ? user : c.name}: ${l.translation || l.text}`)]});
     // 记忆: looked up on the call's first turn (with why the call was made and the last chat) and kept for the call.
     if (c.memory === undefined && memory && thread) {
@@ -158,12 +164,13 @@ export function createCallHost({context, settings, backend, notice, ringing = ()
       c.memory = (await memory.contextFor(full, {query: [c.reason, ...history.slice(-4).map(m => messageLine(m, user))].filter(Boolean).join('\n')}).catch(() => ({text: ''}))).text;
     }
     const callQuery = [c.name, c.reason, ...c.lines.slice(-4).map(l => l.translation || l.text)].filter(Boolean).join(' ');
-    const earlierStory = memory?.recallStory
+    const earlierStory = person ? '' : memory?.recallStory
       ? await memory.recallStory(callQuery, {recentCount: preset.context})
       : (memory?.storyMemory() || '');
-    const prompt = buildCallRequest({prompts: settings().promptRules, preset, mode, contact: c.contact, lines: c.lines, history, story, user, userPersona: userPersona(),
+    const prompt = buildCallRequest({prompts: settings().promptRules, preset, mode, contact: c.contact, lines: c.lines, history, story, user, userPersona: publicPersona,
       voiceFormat, voiceRules: c.voiced ? modelRules(s, [c.name]) : '', reason: c.reason, lore, memory: c.memory || '', earlier: earlierStory});
     const text = cleanTagged(await backend.generateText(ctx, {prompt, trimNames: false}), preset.cleanTags);
+    if (c.storyChatKey && c.storyChatKey !== backend.activeChatKey) throw Error('正文聊天已切换，本次通话回复未写入');
     return parseCallReply(text, {name: c.name, user, voiceFormat, voiced: c.voiced});
   }
 
@@ -223,7 +230,7 @@ export function createCallHost({context, settings, backend, notice, ringing = ()
     try { const saved = JSON.parse(localStorage.getItem(DAY_KEY) || 'null'); if (saved?.day === day.day) day = saved; } catch { /* no storage: count this session only */ }
     if (day.n >= o.dailyMax) return;
     const space = backend.here?.() || null;
-    const callers = backend.contacts().filter(c => c.source === 'role' && c.voice && !isCallForbiddenRole(c.name, settings(), space) && c.name !== userName()), now = context()?.name2;
+    const callers = backend.contacts().filter(c => c.source === 'role' && c.voice && !backend.soulPerson?.(c.name) && !isCallForbiddenRole(c.name, settings(), space) && c.name !== userName()), now = context()?.name2;
     const name = callers.find(c => c.name === now)?.name || callers[Math.floor(Math.random() * callers.length)]?.name;
     if (!name) return;
     try {

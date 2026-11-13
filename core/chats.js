@@ -161,12 +161,12 @@ export class ChatStore {
   async get(id) {
     return this.#tx('readonly', (store, done) => this.#get(store, id, row => done(this.#public(row))));
   }
-  async create({type = 'dm', name = '', members = [], space = '', windowOf = ''} = {}) {
+  async create({type = 'dm', name = '', members = [], space = '', windowOf = '', storyChatKey = ''} = {}) {
     const list = [...new Set((Array.isArray(members) ? members : []).map(m => clip(m, 40).trim()).filter(Boolean))];
     if (!list.length) throw fail('请选择聊天对象');
     if (list.length > CHAT_STORE_LIMITS.members) throw fail('群聊最多 20 人');
     if (type === 'group' && list.length < 2) throw fail('群聊至少要选两个人');
-    const now = this.#now(), row = {scope: this.#scope, id: this.#id(), type: type === 'group' ? 'group' : 'dm', name: clip(name, 40).trim() || (type === 'group' ? list.join('、').slice(0, 40) : list[0]), members: type === 'group' ? list : [list[0]], unread: 0, createdAt: now, updatedAt: now, messages: [], ...(space ? {space: clip(space, 300)} : {}), ...(type === 'group' && windowOf ? {windowOf: clip(windowOf, 512)} : {})};
+    const now = this.#now(), row = {scope: this.#scope, id: this.#id(), type: type === 'group' ? 'group' : 'dm', name: clip(name, 40).trim() || (type === 'group' ? list.join('、').slice(0, 40) : list[0]), members: type === 'group' ? list : [list[0]], unread: 0, createdAt: now, updatedAt: now, messages: [], ...(space ? {space: clip(space, 300)} : {}), ...(storyChatKey ? {storyChatKey: clip(storyChatKey, 1024)} : {}), ...(type === 'group' && windowOf ? {windowOf: clip(windowOf, 512)} : {})};
     await this.#tx('readwrite', (store, done) => { store.put(row); done(); });
     return this.#public(row);
   }
@@ -179,8 +179,9 @@ export class ChatStore {
       done(this.#public(row));
     }));
   }
-  async update(id, {name, members, pinned, muted, friend, story, open, label} = {}) {
+  async update(id, {name, members, pinned, muted, friend, story, open, label, storyChatKey} = {}) {
     return this.#change(id, row => {
+      if (storyChatKey !== undefined) row.storyChatKey = clip(storyChatKey, 1024);
       // 聊天窗口: a private chat can have several; the one opened last is the one the list shows and replies go to.
       if (open === true) row.openedAt = this.#now();
       if (label !== undefined) { const text = clip(label, 40).trim(); if (text) row.label = text; else delete row.label; }
@@ -275,7 +276,7 @@ export class ChatStore {
       if (!members.length) throw fail('备份里有一段聊天没有聊天对象');
       const messages = (Array.isArray(t.messages) ? t.messages : []).slice(-CHAT_STORE_LIMITS.messages).map(m => cleanMessage(m, clip(m?.id || this.#id(), 512), Number.isFinite(m?.at) ? m.at : now));
       return {scope: this.#scope, id: clip(t.id, 512), type: t.type === 'group' ? 'group' : 'dm', name: clip(t.name, 40).trim() || members.join('、').slice(0, 40), members: t.type === 'group' ? members : [members[0]], pinned: t.pinned === true, muted: t.muted === true, ...(t.story === true ? {story: true} : {}), ...(Number.isFinite(t.openedAt) ? {openedAt: t.openedAt} : {}), ...(typeof t.label === 'string' && t.label.trim() ? {label: clip(t.label, 40).trim()} : {}), ...(t.type === 'group' && t.windowOf ? {windowOf: clip(t.windowOf, 512)} : {}),
-        unread: Math.max(0, Math.min(CHAT_STORE_LIMITS.messages, Math.round(Number(t.unread)) || 0)), createdAt: Number.isFinite(t.createdAt) ? t.createdAt : now, updatedAt: Number.isFinite(t.updatedAt) ? t.updatedAt : now, messages, ...(t.space ? {space: clip(t.space, 300)} : {}), ...(t.type !== 'group' && cleanFriend(t.friend) ? {friend: cleanFriend(t.friend)} : {})};
+        unread: Math.max(0, Math.min(CHAT_STORE_LIMITS.messages, Math.round(Number(t.unread)) || 0)), createdAt: Number.isFinite(t.createdAt) ? t.createdAt : now, updatedAt: Number.isFinite(t.updatedAt) ? t.updatedAt : now, messages, ...(t.space ? {space: clip(t.space, 300)} : {}), ...(t.storyChatKey ? {storyChatKey: clip(t.storyChatKey, 1024)} : {}), ...(t.type !== 'group' && cleanFriend(t.friend) ? {friend: cleanFriend(t.friend)} : {})};
     });
     const rows = prepare(threads);
     return this.#tx('readwrite', (store, done, abort) => {

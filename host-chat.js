@@ -5,6 +5,7 @@
 import {currentDm, currentWindow} from './core/chats.js';
 import {buildChatRequest, parseChatReply, bringText, plainStory, activeChatPreset, messageLine, cleanTagged, chatContacts, storyTextRule, phoneAfterRule, phoneParts, inSpace, isCallForbiddenRole} from './core/chat.js';
 import {worldInfoFor, loreOptions} from './host-lore.js';
+import {publicSoulProfile, soulChatPersona} from './core/soul.js';
 import {pictureInputs, photoCast, photoTags, tagTextRequest, tagTextAnswer} from './core/draw.js';
 import {storyLines} from './core/moments.js';
 import {forumContext} from './core/forum.js';
@@ -105,28 +106,40 @@ export function createChatHost({context, settings, backend, notice, memory = nul
       const ctx = context();
       const thread = await backend.chats.get(threadId);
       if (!thread) throw Error('这段聊天已不存在');
+      if (thread.storyChatKey && thread.storyChatKey !== backend.activeChatKey) throw Error('这段私聊属于另一段正文聊天');
       if (thread.friend?.by === 'me') throw Error(`你已经删除了${thread.members[0]}，在「联系人 → 新的朋友」里加回来才能聊天`);
       if (thread.friend?.by === 'them') throw Error(`${thread.members[0]}已经把你删了，先发送好友申请`);
-      const s = settings(), preset = activeChatPreset(s.chat), people = members(thread), voiceFormat = backend.voiceFormat(), user = userName();
+      const s = settings(), preset = activeChatPreset(s.chat), people = members(thread), voiceFormat = backend.voiceFormat();
+      const soul = backend.getSoul?.(), strangers = people.some(p => backend.soulPerson?.(p.name));
+      const user = strangers ? soul.profile.nickname || '新朋友' : userName();
+      const publicPersona = strangers ? JSON.stringify(publicSoulProfile(soul.profile)) : userPersona();
+      if (strangers) for (const p of people) {
+        const person = backend.soulPerson?.(p.name);
+        p.persona = person ? backend.soulPersonaFor?.(p.name) || soulChatPersona({...person, persona: p.persona || person.persona}, soul) : '仅根据本群已公开的聊天内容发言。';
+        p.card = '';
+      }
       // Voice switched off: nobody sends voice messages.
       if (s.general.voiceEnabled === false) for (const p of people) p.voice = false;
       if (!nudge) backend.emit('chat', {threadId, typing: true});
-      const recent = story(preset), forumSpace = s.chat.partition === 'card' ? {key: thread.space || backend.cardKey()} : null;
+      const recent = strangers ? [] : story(preset), forumSpace = s.chat.partition === 'card' ? {key: thread.space || backend.cardKey()} : null;
       let forum = '';
-      if (promptOn(s.promptRules, 'chat-forum')) {
+      if (!strangers && promptOn(s.promptRules, 'chat-forum')) {
         try { forum = forumContext((await backend.apps.list('forum')).filter(p => inSpace(p, forumSpace)), user, s.chat.netNames); }
         catch (error) { backend.reportDiagnostic?.('聊天 · 论坛读取', error, 'warn'); }
       }
       // 世界书: scanned over who is in the chat, the recent story and the chat itself, as the story's own request would be.
-      const lore = preset.lore === false ? '' : await worldInfoFor(context, {...loreOptions(preset), report: (...args) => backend.reportDiagnostic?.(...args), persona: userPersona(), characters: people.map(p => p.persona || p.card).join('\n'),
+      const lore = strangers || preset.lore === false ? '' : await worldInfoFor(context, {...loreOptions(preset), report: (...args) => backend.reportDiagnostic?.(...args), persona: userPersona(), characters: people.map(p => p.persona || p.card).join('\n'),
         texts: [forum, people.map(p => p.name).join('、'), ...recent.map(r => `${r.name}: ${r.text}`), ...thread.messages.slice(-preset.history).map(m => messageLine(m, user))]});
       // 记忆: the written-up older chat, and older messages that match the latest ones.
       const query = thread.messages.filter(m => m.kind !== 'system').slice(-6).map(m => messageLine(m, user)).join('\n');
       const remembered = memory ? (await memory.contextFor(thread, {query}).catch(() => ({text: ''}))).text : '';
-      const earlierStory = memory?.recallStory
+      const earlierStory = strangers ? '' : memory?.recallStory
         ? await memory.recallStory([people.map(p => p.name).join(' '), query].filter(Boolean).join(' '), {recentCount: preset.context})
         : (memory?.storyMemory() || '');
-      const request = pics => buildChatRequest({prompts: settings().promptRules, preset, thread, members: people, story: recent, user, userPersona: userPersona(), voiceFormat, lore, forum, memory: remembered, earlier: earlierStory, images: !!backend.drawReady?.(), stickers: settings().chat.stickers || [], nudge, pictures: pics});
+      const request = pics => {
+        if (thread.storyChatKey && thread.storyChatKey !== backend.activeChatKey) throw Error('正文聊天已切换，本次回复已取消');
+        return buildChatRequest({prompts: settings().promptRules, preset, thread, members: people, story: recent, user, userPersona: publicPersona, voiceFormat, lore, forum, memory: remembered, earlier: earlierStory, images: !!backend.drawReady?.(), stickers: settings().chat.stickers || [], nudge, pictures: pics});
+      };
       const answer = cleanTagged(await answerFor(ctx, request, await pictures(ctx, thread, preset)), preset.cleanTags);
       // 「[不发]」 (also as 「名字：[不发]」) is a no, not a message.
       const text = nudge ? answer.split('\n').filter(line => !/\[不发\]/.test(line)).join('\n') : answer;
@@ -134,6 +147,7 @@ export function createChatHost({context, settings, backend, notice, memory = nul
       if (!items.length && nudge) return null;
       if (!items.length) throw Error('这次没有收到消息，可以再试一次');
       const before = new Set((await backend.chats.get(threadId))?.messages.map(m => m.id) || []);
+      if (thread.storyChatKey && thread.storyChatKey !== backend.activeChatKey) throw Error('正文聊天已切换，本次回复未写入');
       const saved = await backend.chatMutate(threadId, () => settle(threadId, items));
       memory?.after(threadId);
       // The new photos with tags are drawn when the free tier covers them; the others wait for 画出来.
@@ -268,20 +282,25 @@ export function createChatHost({context, settings, backend, notice, memory = nul
   function askFriend(threadId, text) {
     if (busy.has(threadId)) return busy.get(threadId);
     const job = (async () => {
-      const ctx = context(), said = String(text || '').trim().slice(0, 100) || `我是${userName()}`;
+      const ctx = context();
       const thread = await backend.chats.get(threadId);
       if (!thread) throw Error('这段聊天已不存在');
       if (thread.friend?.by !== 'them') throw Error('TA 还是你的好友');
-      const name = thread.members[0], s = settings(), preset = activeChatPreset(s.chat), people = members(thread), user = userName();
+      const name = thread.members[0], s = settings(), preset = activeChatPreset(s.chat), people = members(thread);
+      const person = backend.soulPerson?.(name), soul = person && backend.getSoul(), user = person ? soul.profile.nickname || '新朋友' : userName();
+      const publicPersona = person ? JSON.stringify(publicSoulProfile(soul.profile)) : userPersona();
+      if (person) for (const p of people) {p.persona = backend.soulPersonaFor?.(p.name) || soulChatPersona({...person, persona: p.persona || person.persona}, soul); p.card = '';}
+      const said = String(text || '').trim().slice(0, 100) || `我是${user}`;
       await backend.chatMutate(threadId, () => backend.chats.append(threadId, [{from: 'me', kind: 'system', text: `你发送了好友申请：「${said}」`}], {read: true}));
       backend.emit('chat', {threadId, typing: true});
-      const recent = story(preset);
+      const recent = person ? [] : story(preset);
       const remembered = memory ? (await memory.contextFor(thread, {query: said}).catch(() => ({text: ''}))).text : '';
-      const earlierStory = memory?.recallStory
+      const earlierStory = person ? '' : memory?.recallStory
         ? await memory.recallStory(`${name} ${said}`, {recentCount: preset.context})
         : (memory?.storyMemory() || '');
-      const prompt = buildChatRequest({prompts: settings().promptRules, preset, thread, members: people, story: recent, user, userPersona: userPersona(), voiceFormat: '', memory: remembered, earlier: earlierStory, images: !!backend.drawReady?.(), stickers: s.chat.stickers || [], asking: said});
+      const prompt = buildChatRequest({prompts: settings().promptRules, preset, thread, members: people, story: recent, user, userPersona: publicPersona, voiceFormat: '', memory: remembered, earlier: earlierStory, images: !!backend.drawReady?.(), stickers: s.chat.stickers || [], asking: said});
       const reply = cleanTagged(await backend.generateText(ctx, {prompt, trimNames: false}), preset.cleanTags);
+      if (thread.storyChatKey && thread.storyChatKey !== backend.activeChatKey) throw Error('正文聊天已切换，好友申请结果未写入');
       const items = parseChatReply(reply, {members: people.map(p => ({...p, voice: false})), user, voiceFormat: '', voiceNames: [], stickers: s.chat.stickers || []});
       const yes = items.findIndex(i => i.kind === 'befriend'), no = items.find(i => i.kind === 'refuse');
       if (yes < 0 || (no && items.indexOf(no) < yes)) {
@@ -359,7 +378,7 @@ export function createChatHost({context, settings, backend, notice, memory = nul
   /** The private chat with `name` here (this card, with 分区), made when there is none yet. */
   async function dmWith(name) {
     const here = currentDm(await backend.threads(), name);
-    return here || backend.chatMutate(null, () => backend.chats.create({type: 'dm', members: [name], space: backend.cardKey()}));
+    return here || backend.chatMutate(null, () => backend.chats.create({type: 'dm', members: [name], space: backend.cardKey(), storyChatKey: backend.activeChatKey}));
   }
   /** Messages that came to the phone: kept unread, said on the island, and photos drawn when that costs nothing. */
   async function arrive(threadId, items, from = null) {
@@ -478,7 +497,7 @@ export function createChatHost({context, settings, backend, notice, memory = nul
     // The card's own character first, else someone from the 角色 App.
     // Not someone who is not friends with the user right now (either way).
     const apart = new Set((await backend.threads()).filter(t => t.type === 'dm' && t.friend).map(t => t.members[0]));
-    const roles = backend.contacts().filter(c => c.source === 'role' && !apart.has(c.name)), now = ctx?.name2;
+    const roles = backend.contacts().filter(c => c.source === 'role' && !apart.has(c.name) && !backend.soulPerson?.(c.name)), now = ctx?.name2;
     const name = roles.find(c => c.name === now)?.name || roles[Math.floor(Math.random() * roles.length)]?.name;
     if (!name) return;
     try {

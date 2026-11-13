@@ -881,6 +881,7 @@ export function createPhoneApp({window: win, api, mount = win.document.getElemen
       if (!event.busy) lastSyncAt = event.lastAt;
     }
     if (event.type === 'settings') run(() => views.get('chat')?.onChat?.({}));
+    if (event.type === 'soul') run(refreshAvatars);
   });
 
   // Unread chat messages, shown as a badge on the chat icon.

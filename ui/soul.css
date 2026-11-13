@@ -1,0 +1,52 @@
+.soul-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 18px}
+.soul-heading p{font-size:10px;letter-spacing:.18em;color:var(--ink2);margin:0 0 5px}
+.soul-heading h1{font-size:25px;letter-spacing:-.04em;margin:0}
+.soul-discover-controls{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
+.soul-query,.soul-profile-form>label{display:flex;flex-direction:column;gap:7px;font-size:12px;min-width:0}
+.soul-query textarea,.soul-profile-form input:not([type=checkbox]),.soul-profile-form select,.soul-profile-form textarea{width:100%;box-sizing:border-box;min-width:0;border:1px solid var(--line);border-radius:13px;padding:11px;background:var(--card);color:var(--ink);font:inherit;resize:vertical}
+.soul-control-row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.soul-nsfw{display:flex;align-items:center;gap:7px;font-size:12px}
+.soul-nsfw input,.soul-check input{accent-color:#8770d6}
+.soul-main-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.soul-main-actions button,.soul-card-actions button{min-height:42px;white-space:normal}
+.soul-sections{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.soul-sections button{flex:1;min-width:0;background:none;border:0;border-bottom:2px solid transparent;padding:11px 4px;color:var(--ink2);font:inherit;font-size:12px;cursor:pointer}
+.soul-sections button[aria-pressed=true]{color:var(--ink);border-color:#9b86d5;font-weight:750}
+.soul-cards{display:grid;grid-template-columns:minmax(0,1fr);gap:18px}
+.soul-card{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:21px;background:var(--card)}
+.soul-photo{position:relative;aspect-ratio:3/4;overflow:hidden;background:linear-gradient(145deg,#c8b9db55,#9ecfc344);max-height:540px}
+.soul-photo img{display:block;width:100%;height:100%;object-fit:contain}
+.soul-photo img[hidden]{display:none}
+.soul-photo-empty{height:100%;min-height:250px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--ink2);font-size:12px}
+.soul-photo-empty>svg{width:56px;height:56px;opacity:.45}
+.soul-photo-label{position:absolute;bottom:0;left:0;right:0;display:flex;justify-content:space-between;gap:8px;background:linear-gradient(transparent,#161423a8);padding:30px 14px 12px;color:#fff;font-size:11px;pointer-events:none}
+.soul-card-body{padding:16px;overflow-wrap:anywhere}
+.soul-card-body h2{font-size:20px;margin:0 0 4px}
+.soul-card-body h2 small{font-size:11px;font-weight:500;color:var(--ink2)}
+.soul-occupation{font-size:12px;color:var(--ink2);margin:0 0 12px}
+.soul-signature{font-size:14px;line-height:1.65;margin:10px 0}
+.soul-tags{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.soul-tags span{border-radius:20px;background:#a68bcd20;padding:5px 9px;font-size:10px}
+.soul-card details{font-size:12px;line-height:1.65;margin:12px 0}
+.soul-card summary{cursor:pointer;color:var(--ink2);padding:4px 0}
+.soul-card dl{margin:8px 0}
+.soul-card dl>div{margin:10px 0}
+.soul-card dt{font-size:10px;color:var(--ink2)}
+.soul-card dd{margin:3px 0}
+.soul-card blockquote{margin:12px 0;padding:12px;border-left:3px solid #ab96dc;background:#a68bcd14;border-radius:0 10px 10px 0;font-size:13px;line-height:1.6}
+.soul-card blockquote span{display:block;font-size:10px;color:var(--ink2);margin-bottom:4px}
+.soul-card-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px}
+.soul-card-actions .primary{flex:1}
+.soul-error{font-size:11px;color:var(--danger);line-height:1.5}
+.soul-empty{text-align:center;padding:42px 16px;color:var(--ink2)}
+.soul-empty>svg{width:40px;height:40px;opacity:.5}
+.soul-empty h2{font-size:17px;color:var(--ink)}
+.soul-empty p{font-size:12px;line-height:1.7}
+.soul-clear{display:block;margin:15px auto}
+.soul-profile-form{display:flex;flex-direction:column;gap:13px}
+.soul-profile-form .soul-check{flex-direction:row;align-items:center}
+.soul-profile-form .actions{display:flex;flex-wrap:wrap;gap:8px}
+.soul-profile-form .actions button{flex:1;min-height:42px}
+.soul-main-actions button:focus-visible,.soul-card button:focus-visible,.soul-sections button:focus-visible{outline:2px solid #a795dc;outline-offset:3px}
+@media(max-width:340px){.soul-main-actions{grid-template-columns:1fr}.soul-card-body{padding:12px}.soul-card-body h2 small{display:block;margin-top:5px}}
+@media(prefers-reduced-motion:reduce){.soul-card,.soul-photo{animation:none;transition:none}}
