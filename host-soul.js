@@ -25,11 +25,11 @@ export function createSoulHost({context, backend, thumbnail = blob => blobToData
     return work;
   }
   // Public world background for authoring: never pass the player's persona or story transcript.
-  async function worldBackground(scope) {
+  async function worldBackground(scope, query) {
     const ctx = context(), card = ctx?.characters?.[ctx?.characterId];
     const scenario = String(card?.scenario || card?.data?.scenario || '');
     const description = String(card?.description || card?.data?.description || '');
-    const lore = await worldInfoFor(() => ctx, {texts: [scenario, card?.name || ''], max: 9000,
+    const lore = await worldInfoFor(() => ctx, {texts: [scenario, card?.name || '', query], max: 9000,
       report: (...args) => backend.reportDiagnostic?.(...args)});
     backend.assertSoulScope(scope);
     const world = [scenario, description, lore].filter(Boolean).join('\n\n').slice(0, 18000);
@@ -52,11 +52,12 @@ export function createSoulHost({context, backend, thumbnail = blob => blobToData
         if (!backend.drawReady()) throw Error('请先在「引擎／绘图」配置绘图连接，再点击补画');
         const draw = backend.cardState().draw;
         const style = draw.styles.find(s => s.id === draw.activeStyle) || draw.styles[0] || {};
-        const prompt = stripQualityDrawTags([style.artist, style.positive, person.drawPrompt,
-          'solo, full body, standing, fully clothed, casual portrait, everyday scene'].filter(Boolean).join(', '));
+        const prompt = stripQualityDrawTags([style.artist, style.positive, person.drawPrompt, 'adult, solo, full body',
+          person.nsfw ? 'glamour portrait, fashion photoshoot, confident pose'
+            : 'standing, fully clothed, casual portrait, everyday scene'].filter(Boolean).join(', '));
         const made = await backend.generateImage({prompt, negative: style.negative || '',
           params: {...draw.params, width: 768, height: 1024},
-          name: `Soul-${person.name}`, key, label: `Soul 生活照 · ${person.name}`, allowPaid});
+          name: `Soul-${person.name}`, key, label: `Soul ${person.nsfw ? '写真' : '生活照'} · ${person.name}`, allowPaid});
         backend.assertSoulScope(scope);
         const imageData = made.blob ? await thumbnail(made.blob) : '';
         backend.assertSoulScope(scope);
@@ -69,19 +70,21 @@ export function createSoulHost({context, backend, thumbnail = blob => blobToData
       } finally {signal.removeEventListener('abort', stop);}
     });
   }
-  function discover({query = '', incoming = false} = {}) {
+  function discover({query, incoming = false} = {}) {
     return run(incoming ? 'incoming' : 'discovery', async (scope, signal) => {
       const state = backend.getSoul(), count = incoming ? 1 : 3;
       if (state.candidates.length + count > SOUL_LIMIT) throw Error('发现记录已满，请先清理未认识的历史记录');
-      const world = await worldBackground(scope);
+      const requirements = typeof query === 'string' ? query.trim().slice(0, 1000) : state.query;
+      await backend.saveSoul({query: requirements}, scope);
+      const world = await worldBackground(scope, requirements);
       const excluded = [...new Set([...state.candidates.map(c => c.name), ...backend.contacts().map(c => c.name),
         ...backend.routesHere().map(r => r.name), context()?.characters?.[context()?.characterId]?.name].filter(Boolean))];
-      const prompt = soulDiscoveryRequest({world, profile: state.profile, query, nsfw: state.nsfw, incoming, excluded});
+      const prompt = soulDiscoveryRequest({world, profile: state.profile, query: requirements, nsfw: state.nsfw, incoming, excluded});
       const output = parseSoulJson(await backend.generateText(context(), {prompt, responseLength: incoming ? 1600 : 3800, trimNames: false, signal}));
       backend.assertSoulScope(scope);
       if (!Array.isArray(output.people) || output.people.length !== count) throw Error(`发现回复应包含 ${count} 人，本次未添加，请重试`);
       const candidates = output.people.map(raw => {
-        const person = normalizeSoulCandidate({...raw, id: crypto.randomUUID(), incoming, at: Date.now(),
+        const person = normalizeSoulCandidate({...raw, id: crypto.randomUUID(), incoming, nsfw: state.nsfw, requirements, at: Date.now(),
           accepted: false, ignored: false, persona: '', threadId: '', photoId: '', imageData: '', imageState: 'waiting'});
         if (!isValidRoleName(person.name) || !Number.isInteger(person.age) || person.age < 18 || person.age > 100000
           || !['男', '女', '扶她'].includes(person.gender) || !person.appearance || !person.bodyBuild || !person.outfit || !person.drawPrompt
@@ -92,7 +95,6 @@ export function createSoulHost({context, backend, thumbnail = blob => blobToData
         return person;
       });
       await backend.soulAddCandidates(candidates, {incoming, scope});
-      await backend.saveSoul({query}, scope);
       // Each candidate gets one image request. A failed/paid image stays as a visible retry card.
       for (const person of candidates) {
         backend.assertSoulScope(scope);

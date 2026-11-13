@@ -236,3 +236,72 @@ test('生图期间切换聊天会保留原简单档案，不把迟到照片或�
   assert.equal(b.getSoul().candidates.length, 3);
   assert.ok(b.getSoul().candidates.every(c => !c.photoId && !c.accepted));
 });
+
+test('发现要求逐人优先，按原文扫描世界书，保存后在喜欢扩写时继续使用', async () => {
+  const {b, host, ctx, requests} = fixture(), file = storage('a'); await open(b, 'a', file);
+  const query = '王都的成年精灵女药剂师，银发，性格安静，不要旅行者';
+  let scanned;
+  ctx.getWorldInfoPrompt = async scan => {scanned = scan; return {worldInfoBefore: '王都精灵药剂师协会'};};
+  await host.discover({query});
+  assert.ok(scanned.includes(query));
+  const prompt = requests[0].prompt;
+  assert.equal(JSON.parse(prompt[1].content).requirements, query);
+  assert.match(prompt[0].content, /每一位.*必须.*requirements/);
+  assert.match(prompt[0].content, /多样性.*未指定/);
+  assert.match(prompt[0].content, /逐项核对/);
+  const person = b.getSoul().candidates[0];
+  assert.equal(person.requirements, query);
+  assert.equal(file.saved().soul.candidates[0].requirements, query);
+  await b.saveSoul({query: '另一个筛选要求'});
+  await host.accept(person.id);
+  assert.equal(JSON.parse(requests[1].prompt[1].content).requirements, query);
+  assert.doesNotMatch(b.soulPersonaFor(person.name), /另一个筛选要求|不要旅行者/);
+});
+
+test('NSFW 使用成人写真创作者风格，日常模式不同；模式随人物保存且补画和扩写不随开关漂移', async () => {
+  const {b, host, requests, images} = fixture(), file = storage('a'); await open(b, 'a', file);
+  b.generateImage = async input => {images.push(input); throw Error('先保存资料，稍后补画');};
+  await b.saveSoul({nsfw: true});
+  await host.discover({query: '成年女药剂师，兼职写真博主'});
+  const person = b.getSoul().candidates[0];
+  assert.equal(person.nsfw, true); assert.equal(file.saved().soul.candidates[0].nsfw, true);
+  assert.match(requests[0].prompt[0].content, /成人.*创作者/);
+  assert.match(requests[0].prompt[0].content, /签名.*介绍.*交友目的/);
+  assert.match(images[0].prompt, /glamour portrait/);
+  assert.doesNotMatch(images[0].prompt, /fully clothed|casual portrait|everyday scene/);
+  const {b: restored} = fixture(); await open(restored, 'a', file);
+  assert.equal(restored.getSoul().candidates[0].nsfw, true);
+  await b.saveSoul({nsfw: false});
+  b.generateImage = async input => {images.push(input); return {photoId: 'retry-photo'};};
+  await host.picture(person.id);
+  assert.match(images.at(-1).prompt, /glamour portrait/);
+  await host.accept(person.id);
+  assert.match(requests.at(-1).prompt[0].content, /成人.*创作者/);
+  assert.match(b.soulPersonaFor(person.name), /成人.*创作者/);
+  assert.doesNotMatch(b.soulPersonaFor(person.name), /requirements|参考 X/);
+  await host.discover({query: ''});
+  const daily = b.getSoul().candidates[0];
+  assert.equal(daily.nsfw, false); assert.match(images.at(-1).prompt, /fully clothed, casual portrait/);
+  assert.doesNotMatch(requests.at(-1).prompt[0].content, /成人写真创作者/);
+  await b.saveSoul({nsfw: true});
+  await host.accept(daily.id);
+  assert.doesNotMatch(requests.at(-1).prompt[0].content, /成人写真创作者/);
+  assert.doesNotMatch(b.soulPersonaFor(daily.name), /成人写真创作者/);
+});
+
+test('发现失败也保留要求，重开后可用于来信；主动清空输入才恢复随机发现', async () => {
+  const {b, host, requests} = fixture(), file = storage('a'); await open(b, 'a', file);
+  const generate = b.generateText, query = '成年银发精灵，安静的药剂师';
+  b.generateText = async () => 'invalid';
+  await assert.rejects(host.discover({query}), /格式不完整/);
+  assert.equal(b.getSoul().query, query); assert.equal(file.saved().soul.query, query);
+  const {b: restored} = fixture(); await open(restored, 'a', file);
+  assert.equal(restored.getSoul().query, query);
+  b.generateText = generate;
+  await host.discover({incoming: true});
+  assert.equal(JSON.parse(requests.at(-1).prompt[1].content).requirements, query);
+  assert.equal(b.getSoul().candidates[0].requirements, query);
+  await host.discover({query: ''});
+  assert.equal(b.getSoul().query, '');
+  assert.match(JSON.parse(requests.at(-1).prompt[1].content).requirements, /随机发现/);
+});

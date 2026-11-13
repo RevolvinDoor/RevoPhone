@@ -26,12 +26,13 @@ export function soulPanel(ctx, {v, frame, render, open}) {
   }
   function card(person) {
     const available = !!(person.imageData || person.photoId), working = busy();
+    const photo = person.nsfw ? '写真' : '生活照';
     const label = person.accepted ? '继续聊天' : person.incoming ? '认识 TA' : '喜欢，打个招呼';
     return `<article class="soul-card" data-soul-person="${esc(person.id)}">
       <div class="soul-photo">
-        ${person.imageData ? `<img src="${esc(person.imageData)}" alt="${esc(person.nickname || person.name)}的全身生活照">`
-          : person.photoId ? `<img data-soul-photo="${esc(person.photoId)}" alt="${esc(person.nickname || person.name)}的生活照" hidden>`
-          : `<div class="soul-photo-empty">${icon('person')}<span>${working ? '正在准备生活照…' : '生活照尚未完成'}</span></div>`}
+        ${person.imageData ? `<img src="${esc(person.imageData)}" alt="${esc(person.nickname || person.name)}的全身${photo}">`
+          : person.photoId ? `<img data-soul-photo="${esc(person.photoId)}" alt="${esc(person.nickname || person.name)}的${photo}" hidden>`
+          : `<div class="soul-photo-empty">${icon('person')}<span>${working ? `正在准备${photo}…` : `${photo}尚未完成`}</span></div>`}
         <div class="soul-photo-label"><span>${esc(person.region || '同一片世界')}</span><span>${person.incoming ? '陌生人来信' : person.accepted ? '已经认识' : '初次遇见'}</span></div>
       </div>
       <div class="soul-card-body">
@@ -63,11 +64,11 @@ export function soulPanel(ctx, {v, frame, render, open}) {
       <button type="button" class="round-button" data-soul="profile" aria-label="编辑我的公开主页">${icon('person')}</button></header>
       <section class="soul-discover-controls">
         <label class="soul-query"><span>这次想认识什么样的人？</span><textarea id="soul-query" rows="2" maxlength="1000" placeholder="例如：同城、爱旅行、开朗的药剂师；留空随机发现" ${working ? 'disabled' : ''}>${esc(query)}</textarea></label>
-        <div class="soul-control-row"><label class="soul-nsfw"><input type="checkbox" data-soul-nsfw ${soul.nsfw ? 'checked' : ''} ${working ? 'disabled' : ''}> NSFW · 成人交友</label>
+        <div class="soul-control-row"><label class="soul-nsfw"><input type="checkbox" data-soul-nsfw ${soul.nsfw ? 'checked' : ''} ${working ? 'disabled' : ''}> NSFW · 成人写真</label>
           <button type="button" class="text-button" data-soul="profile">${esc(soul.profile.nickname || '填写一次公开主页')}</button></div>
         <div class="soul-main-actions"><button type="button" class="primary" data-soul="discover" ${working ? 'disabled' : ''}>${working ? '正在寻找新朋友…' : '刷新发现 · 3 人'}</button>
           <button type="button" class="secondary" data-soul="incoming" ${working ? 'disabled' : ''}>陌生人来信 · 1 人</button></div>
-        <p class="hint">刷新会发现三位新朋友并生成三张生活照。来信按钮会带来一位热情的新朋友。${soul.nsfw ? '当前为成年人的交友与关系话题取向。' : ''}</p>
+        <p class="hint">上方要求应用于每一位新人物，留空随机。${soul.nsfw ? '当前为成年写真创作者风格：性感穿搭、暧昧签名与粉丝互动。' : '当前为日常交友与生活照。'}刷新后生效，已有资料和照片保留。来信按钮一次带来一位热情的新朋友。</p>
       </section>
       <nav class="soul-sections" aria-label="发现记录">${[['batch', '本次发现'], ['incoming', `新的朋友${incoming.length ? ` · ${incoming.length}` : ''}`], ['history', '浏览记录']].map(([key, label]) => `<button type="button" data-soul="section" data-section="${key}" aria-pressed="${section === key}">${label}</button>`).join('')}</nav>
       ${rows.length ? `<div class="soul-cards">${rows.map(card).join('')}</div>` : `<div class="soul-empty">${icon('person')}<h2>${section === 'incoming' ? '还没有陌生人来信' : '下一位朋友，会是谁？'}</h2><p>可以写下要求，也可以留空，遇见这个世界里的新面孔。</p></div>`}

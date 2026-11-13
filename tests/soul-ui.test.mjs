@@ -47,6 +47,10 @@ test('发现页渲染公开资料并转义模型文字；按钮正确调用三�
     ['discover', {query: '爱旅行的药剂师', incoming: false}], ['discover', {query: '爱旅行的药剂师', incoming: true}]]);
   await f.handlers.get('change:[data-soul-nsfw]')({checked: true});
   assert.ok(f.calls.some(c => c[0] === 'saveSoul' && c[1].nsfw));
+  assert.match(f.v.html, /NSFW · 成人写真/);
+  assert.match(f.v.html, /创作者.*性感穿搭/);
+  assert.match(f.v.html, /刷新.*生效/);
+  assert.match(f.v.html, /已有.*保留/);
   await f.click('accept', {id: 'one'}); assert.equal(f.opened(), 'private:one');
   assert.deepEqual(f.errors, []); f.panel.dispose();
 });
