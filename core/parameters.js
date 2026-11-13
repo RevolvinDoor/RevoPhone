@@ -102,8 +102,14 @@ export const FISH_API='https://api.fish.audio';
 let fishCompat=new Set(['s2.1-pro','s2.1-pro-free','s2-pro','s1']);
 /** The compat endpoint's catalog as read (ids like fish-audio/s1); true when it changed what goes where. */
 export function setFishCompat(ids){const next=new Set((ids||[]).map(id=>String(id).replace(/^fish-audio\//,'')).filter(Boolean));if(!next.size)return false;const changed=catalogs.fish.models.some(m=>next.has(m)!==fishCompat.has(m));fishCompat=next;return changed;}
+/** A saved MCP default follows the API connection after switching access; concrete role models stay explicit. */
+export function fishModel(c,override){
+ const model=override||c?.model;
+ if(fishSubscription(c)||model!==MCP_MODEL)return model;
+ return [c?.model,c?.apiModel,fish.model].find(id=>id!==MCP_MODEL&&fish.models.includes(id));
+}
 /** Whether this connection's model is sent to Fish's own /v1/tts (an OpenAI-form relay takes every model its own way). */
-export const fishNative=c=>!fishSubscription(c)&&!fishOpenAI(c)&&!fishCompat.has(c?.model);
+export const fishNative=c=>!fishSubscription(c)&&!fishOpenAI(c)&&!fishCompat.has(fishModel(c));
 /** A /v1/tts request without a relay goes through the tavern's proxy: what to do when that is off. */
 export const FISH_PROXY_NOTE='这个模型现在只在 Fish 自己的接口上，网页不能直接调用，要借酒馆转发：在酒馆的 config.yaml 里把 enableCorsProxy 改成 true，然后重启酒馆。用中转的不用改。';
 /** TauriTavern (the tavern as a phone and desktop app, Rust instead of Node) has no /proxy/ yet, and gives extensions
@@ -118,7 +124,7 @@ export const fishBase=c=>typeof c?.relay==='string'&&(proxyAddress(c.relay)||/^h
 export const fishOpenAI=c=>!!(c?.relay&&c.relayApi==='openai');
 /** The speech address of an OpenAI-form relay. Its address is often written up to /v1 (as OpenAI services are): not twice. */
 export const openaiSpeech=base=>String(base).replace(/\/v1$/i,'')+'/v1/audio/speech';
-function normalize(key,c){if(key==='fish'){c.access=fishSubscription(c)?'subscription':'api';c.mcpArguments=typeof c.mcpArguments==='string'?c.mcpArguments:'{}';c.relay=typeof c.relay==='string'?c.relay.trim().replace(/\/+$/,''):'';c.relayApi=c.relayApi==='openai'?'openai':'fish';}for(const f of catalogs[key].groups.flatMap(g=>g.fields)){if(f.type==='select'){const opts=allowed(key,f,c);if(!opts.some(([v])=>v===c.params[f.key]))c.params[f.key]=opts.find(([v])=>v===f.value)?.[0]??opts[0]?.[0];}}if(key==='mini'&&c.params['voice_setting.latex_read'])c.params.language_boost='Chinese';}
+function normalize(key,c){if(key==='fish'){c.access=fishSubscription(c)?'subscription':'api';c.model=fishModel(c);c.mcpArguments=typeof c.mcpArguments==='string'?c.mcpArguments:'{}';c.relay=typeof c.relay==='string'?c.relay.trim().replace(/\/+$/,''):'';c.relayApi=c.relayApi==='openai'?'openai':'fish';}for(const f of catalogs[key].groups.flatMap(g=>g.fields)){if(f.type==='select'){const opts=allowed(key,f,c);if(!opts.some(([v])=>v===c.params[f.key]))c.params[f.key]=opts.find(([v])=>v===f.value)?.[0]??opts[0]?.[0];}}if(key==='mini'&&c.params['voice_setting.latex_read'])c.params.language_boost='Chinese';}
 function activeParameters(key,c){const out={};for(const f of catalogs[key].groups.flatMap(g=>g.fields)){if(unavailable(key,f,c))continue;const v=c.params[f.key];if(v===''||v===undefined||Array.isArray(v)&&!v.length)continue;out[f.key]=structuredClone(v);}return out;}
 function setPath(target,key,value){const parts=key.split('.');let node=target;for(const part of parts.slice(0,-1))node=node[part]??=( {} );node[parts.at(-1)]=value;}
 /** Parses Fish Audio's per-line "语速,表现力" (e.g. "1,0.7") from the 情绪 field; null when not in that form. */
@@ -126,7 +132,7 @@ export function fishProsody(emotion){const m=String(emotion||'').trim().match(/^
 // ElevenLabs defaults are left out of requests: a model may reject a field it does not know even when it holds the default
 // (eleven_v4 rejects apply_language_text_normalization:false).
 const ELEVEN_DEFAULTS={apply_text_normalization:'auto',apply_language_text_normalization:false,use_pvc_as_ivc:false,enable_logging:true};
-function requestPreview(key,c,voice='角色音色 ID',text='雨还没停。再坐一会儿吧。',model=c.model,emotion=''){c=structuredClone(c);c.model=model;normalize(key,c);const values=activeParameters(key,c);let body={},query={};for(let [k,v] of Object.entries(values)){if(['dictionary_mode','inline_dictionary'].includes(k))continue;if(key==='eleven'&&Object.hasOwn(ELEVEN_DEFAULTS,k)&&ELEVEN_DEFAULTS[k]===v)continue;if(key==='eleven'&&['output_format','enable_logging','optimize_streaming_latency'].includes(k)){query[k]=v;continue;}const f=catalogs[key].groups.flatMap(g=>g.fields).find(f=>f.key===k);if(f?.type==='lines')v=String(v).split('\n').map(x=>x.trim()).filter(Boolean);setPath(body,k,v);}
+function requestPreview(key,c,voice='角色音色 ID',text='雨还没停。再坐一会儿吧。',model=c.model,emotion=''){if(key==='fish')model=fishModel(c,model);c=structuredClone(c);c.model=model;normalize(key,c);const values=activeParameters(key,c);let body={},query={};for(let [k,v] of Object.entries(values)){if(['dictionary_mode','inline_dictionary'].includes(k))continue;if(key==='eleven'&&Object.hasOwn(ELEVEN_DEFAULTS,k)&&ELEVEN_DEFAULTS[k]===v)continue;if(key==='eleven'&&['output_format','enable_logging','optimize_streaming_latency'].includes(k)){query[k]=v;continue;}const f=catalogs[key].groups.flatMap(g=>g.fields).find(f=>f.key===k);if(f?.type==='lines')v=String(v).split('\n').map(x=>x.trim()).filter(Boolean);setPath(body,k,v);}
  if(key==='doubao')return buildDoubaoRequest(c,{voice},{text});
  if(key==='fish'){const prosody=fishProsody(emotion)||{speed:1,temperature:.7};body.prosody={...body.prosody,speed:prosody.speed};body.temperature=prosody.temperature;if(c.params.dictionary_mode==='inline'&&c.params.inline_dictionary.length)body.pronunciation_dictionary=[{items:c.params.inline_dictionary}];if(body.references)body.references=body.references.map(r=>({audio:'[本地参考音频：'+r.audio+']',text:r.text}));const format=body.format;delete body.format;const compat={url:fishBase(c)+'/compat/v1/audio/speech',body:{model:'fish-audio/'+model,input:text,voice:body.references?'':voice,response_format:format,provider:{options:{'fish-audio':structuredClone(body)}}}};
  // Fish's own /v1/tts: the model in a header, the same fields at the top (the compat request is kept for the cache).
@@ -184,4 +190,4 @@ function emotionTag(key,model,emotion,text){let word=String(emotion||'').trim();
  if(key==='fish'&&fishS1(model)){const w=word.toLowerCase();return FISH_S1_EMOTIONS.includes(w)||FISH_S1_TONES.includes(w)?`(${w}) ${text}`:text;}
  if(key==='fish'||key==='eleven'&&elevenTagged(model))return /^[a-z][a-z ,'-]{1,40}$/i.test(word)?`[${word.toLowerCase()}] ${text}`:text;
  return text;}
-export const TTSParameters={fishBase,fishOpenAI,fishNative,openaiSpeech,fishProsody,catalogs,defaults,allowed,unavailable,normalize,activeParameters,requestPreview,validate,tags,tagNote,miniEmotion,emotionTag,vocab:{FISH_DRAMA_PAIRS,FISH_DRAMA_SOUNDS,FISH_S1_EMOTIONS,FISH_S2_TONES,FISH_S2_SOUNDS,FISH_S1_TONES,FISH_S1_SOUNDS,MINI_SOUNDS,ELEVEN_TAGS,MIMO_STYLES,MIMO_SOUNDS,MIMO_VOICES},mimoMode};
+export const TTSParameters={fishBase,fishOpenAI,fishModel,fishNative,openaiSpeech,fishProsody,catalogs,defaults,allowed,unavailable,normalize,activeParameters,requestPreview,validate,tags,tagNote,miniEmotion,emotionTag,vocab:{FISH_DRAMA_PAIRS,FISH_DRAMA_SOUNDS,FISH_S1_EMOTIONS,FISH_S2_TONES,FISH_S2_SOUNDS,FISH_S1_TONES,FISH_S1_SOUNDS,MINI_SOUNDS,ELEVEN_TAGS,MIMO_STYLES,MIMO_SOUNDS,MIMO_VOICES},mimoMode};

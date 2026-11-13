@@ -7,7 +7,7 @@ import {Providers, buildRequest} from '../core/providers.js';
 import {TTSParameters} from '../core/parameters.js';
 import {requestHash} from '../core/cache.js';
 import {TTSBackend} from '../core/backend.js';
-import {freshState} from '../core/state.js';
+import {freshState, normalizeSettings} from '../core/state.js';
 import {enginesApp} from '../ui/engines.js';
 import {DialoguePlayer} from '../core/player.js';
 
@@ -415,6 +415,79 @@ test('Fish API and relay keep old cache identity; MCP and authorized accounts ha
   assert.notEqual(await requestHash(api), await requestHash(f.request()));
   assert.notEqual(await requestHash(f.request()), await requestHash({...f.request(), account: 'different-account'}));
   f.client.close();
+});
+
+test('Fish voices saved with the MCP default use the active API model and API key after switching access', async () => {
+  const calls = [], providers = new Providers(async (url, init) => {
+    calls.push({url, init});
+    return new Response(new Uint8Array([73, 68, 51]), {headers: {'Content-Type': 'audio/mpeg'}});
+  });
+  providers.setKey('fish', 'saved-api-key');
+  providers.fish = new Proxy({}, {get() {assert.fail('API synthesis must not access MCP or OAuth');}});
+  const connection = {access: 'api', model: 's2.1-pro', params: TTSParameters.defaults('fish')};
+  const line = {text: 'hello', emotion: '1,0.7'}, route = {voice: 'saved-voice', model: MCP_MODEL};
+  for (const relay of [{}, {relay: 'https://relay.example'}, {relay: 'https://relay.example/v1', relayApi: 'openai'}]) {
+    const current = {...connection, ...relay}, request = buildRequest('fish', current, route, line);
+    assert.notEqual(request.transport, 'mcp');
+    assert.equal(await requestHash(request), await requestHash(buildRequest('fish', current, {...route, model: ''}, line)));
+    const audio = await providers.synthesize(request);
+    assert.equal(audio.size, 3);
+    const {url, init} = calls.at(-1), body = JSON.parse(init.body);
+    assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer saved-api-key');
+    assert.equal(body.voice, 'saved-voice');
+    assert.equal(body.model, relay.relayApi === 'openai' ? 's2.1-pro' : 'fish-audio/s2.1-pro');
+    assert.equal(url, relay.relayApi === 'openai' ? 'https://relay.example/v1/audio/speech' : (relay.relay || 'https://api.fish.audio') + '/compat/v1/audio/speech');
+    assert.doesNotMatch(init.body, /mcp-default/);
+  }
+  const explicit = buildRequest('fish', connection, {...route, model: 's1'}, line);
+  assert.equal(explicit.body.model, 'fish-audio/s1');
+  assert.throws(() => buildRequest('fish', connection, {...route, model: 'unsupported'}, line), /请选择当前引擎支持的模型/);
+  assert.equal(connection.model, 's2.1-pro'); assert.equal(route.model, MCP_MODEL);
+});
+
+test('Old Fish API settings recover a real API model without changing subscription models or saved voices', () => {
+  for (const apiModel of ['s2-pro', MCP_MODEL, undefined]) {
+    const input = freshState();
+    input.connections.fish = {...input.connections.fish, access: 'api', model: MCP_MODEL, apiModel};
+    const expected = apiModel === 's2-pro' ? apiModel : 's2.1-pro';
+    const state = normalizeSettings(input);
+    assert.equal(state.connections.fish.access, 'api');
+    assert.equal(state.connections.fish.model, expected);
+    const request = buildRequest('fish', input.connections.fish, {voice: 'saved-voice'}, {text: 'hello'});
+    assert.equal(request.body.model, 'fish-audio/' + expected);
+    const preview = TTSParameters.requestPreview('fish', input.connections.fish, 'saved-voice', 'hello');
+    assert.equal(preview.body.model, 'fish-audio/' + expected);
+    assert.equal(input.connections.fish.model, MCP_MODEL);
+  }
+  const input = freshState();
+  input.connections.fish = {...input.connections.fish, access: 'subscription', model: MCP_MODEL, apiModel: 's1'};
+  const state = normalizeSettings(input);
+  assert.equal(state.connections.fish.model, MCP_MODEL);
+  assert.equal(state.connections.fish.apiModel, 's1');
+  assert.equal(buildRequest('fish', state.connections.fish, {voice: 'saved-voice'}, {text: 'hello'}).transport, 'mcp');
+});
+
+test('Fish API balance remains available when the host MCP server is not registered', async t => {
+  const f = speechFixture(), providers = new Providers(); providers.fish = f.client;
+  providers.setKey('fish', 'saved-api-key');
+  const backend = new TTSBackend({settings: freshState(), providers, indexedDB: null}); t.after(() => backend.close());
+  const api = {...backend.api()}; let html = '', balances = 0, mcpChecks = 0;
+  api.fishStatus = () => {mcpChecks++; return {configured: true, nativeRequired: true, nativeRegistered: false};};
+  api.fishCatalog = async () => false;
+  api.voiceBalance = async () => {balances++; return {kind: 'credit', credit: 8.5, free: false};};
+  const doc = {activeElement: null, addEventListener() {}, createElement: () => root};
+  const root = {dataset: {}, ownerDocument: doc, scrollTop: 0, contains: () => true, querySelectorAll: () => [], querySelector: () => null,
+    addEventListener() {}, set innerHTML(value) {html = value;}, get innerHTML() {return html;}};
+  const view = enginesApp({api, doc, win: {AbortController, setTimeout}, notify(message) {assert.fail(message);}});
+  t.after(() => view.dispose()); view.edit('fish');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(balances, 1); assert.equal(mcpChecks, 0);
+  assert.match(html, /API 余额<\/span><strong>\$8\.50/);
+  assert.doesNotMatch(html, /先接入 TT 自带 MCP/);
+  api.saveConnection('fish', {access: 'subscription'});
+  view.onBalance({engine: 'fish', stale: true});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(balances, 1); assert.ok(mcpChecks > 0);
 });
 
 test('Engine UI switches only Fish access, shows OAuth controls and credits, and never exports tokens as settings', async t => {

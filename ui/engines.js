@@ -44,7 +44,7 @@ export function enginesApp(ctx) {
   async function loadBalance(id, refresh = false) {
     const request = (balanceLoads.get(id) || 0) + 1; balanceLoads.set(id, request);
     if (!PRICED.includes(id) || !api.keyStatus(id)) return;
-    const fish = id === 'fish' ? api.fishStatus?.() : null;
+    const fish = id === 'fish' && fishSubscription(api.getState().connections.fish) ? api.fishStatus?.() : null;
     if (fish?.nativeRequired && !fish.nativeRegistered) { balances.delete(id); return; }
     const entry = balances.get(id) || {};
     balances.set(id, {...entry, loading: true});

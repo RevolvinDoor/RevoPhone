@@ -6,7 +6,7 @@ import { TTSParameters as P, FISH_PROXY_NOTE, FISH_NATIVE_REFS, FISH_API, FISH_T
 import { speakable } from './voice-fx.js';
 import { buildCustomRequest, customInit, readCustomAnswer, customVoices, readVoiceList } from './custom-voice.js';
 import { unpacked, audioKind } from './audio-bytes.js';
-import {fishSubscription, MCP_MODEL} from './fish-mcp.js';
+import {fishSubscription} from './fish-mcp.js';
 import {FISH_MCP} from './fish-oauth.js';
 const names={fish:'Fish Audio',mini:'MiniMax',eleven:'ElevenLabs',mimo:'小米 MiMo',doubao:'豆包语音',custom:'自己的接口'};
 export const miniBase=c=>'https://'+(c.region==='cn'?'api.minimaxi.com':c.region==='uw'?'api-uw.minimax.io':'api.minimax.io');
@@ -17,7 +17,7 @@ function checkedConnection(engine,connection,route,line,references){
  if(!object(route)||route.voice!==undefined&&typeof route.voice!=='string'||route.model!==undefined&&typeof route.model!=='string'||route.language!==undefined&&typeof route.language!=='string')throw Error('角色配音设置无效');
  if(!object(line)||typeof line.text!=='string'||!line.text.trim())throw Error('朗读文本不能为空');
  if(!references||typeof references.get!=='function')throw Error('参考音频数据无效，请重新选择文件');
- const model=route.model||connection.model;
+ const model=engine==='fish'?P.fishModel(connection,route.model):route.model||connection.model;
  if(typeof model!=='string'||!P.catalogs[engine].models.includes(model))throw Error('请选择当前引擎支持的模型');
  let c;try{c=structuredClone(connection);}catch{throw Error('引擎设置格式无效，请重新保存引擎设置');}
  c.model=model;c.params={...P.defaults(engine),...c.params};
@@ -48,7 +48,6 @@ export function buildRequest(engine,connection,route,line,references=new Map(),a
   if(!object(args))throw Error('MCP 附加参数必须是 JSON 对象');
   return {engine:'fish',transport:'mcp',url:FISH_MCP,account,body:{text:P.emotionTag('fish',model,line.emotion,line.text),voice:route.voice.trim(),model,prosody:P.fishProsody(line.emotion),arguments:args}};
  }
- if(engine==='fish'&&(route.model||connection.model)===MCP_MODEL)throw Error('官方 MCP 默认模型只能在“订阅积分”接入方式下使用');
  // 自己的接口: the user's templates (core/custom-voice.js).
  if(engine==='custom'){if(!object(connection)||!object(connection.params))throw Error('引擎设置格式无效，请重新保存引擎设置');return buildCustomRequest({...connection,params:{...P.defaults('custom'),...connection.params}},route,line);}
  const c=checkedConnection(engine,connection,route,line,references);
