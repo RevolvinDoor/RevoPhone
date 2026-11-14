@@ -381,14 +381,19 @@ export function createChatHost({context, settings, backend, notice, memory = nul
     return here || backend.chatMutate(null, () => backend.chats.create({type: 'dm', members: [name], space: backend.cardKey(), storyChatKey: backend.activeChatKey}));
   }
   /** Messages that came to the phone: kept unread, said on the island, and photos drawn when that costs nothing. */
-  async function arrive(threadId, items, from = null) {
-    const before = new Set((await backend.chats.get(threadId))?.messages.map(m => m.id) || []);
+  async function arrive(threadId, items, from = null, restore = false) {
+    const existing = (await backend.chats.get(threadId))?.messages || [];
+    if (restore && existing.some(m => m.story === from?.story && m.storyVer === from?.ver)) return 0;
+    const before = new Set(existing.map(m => m.id));
     if (from) items = items.map(item => ({...item, story: from.story, storyVer: from.ver}));
-    const saved = await backend.chatMutate(threadId, () => settle(threadId, items));
+    // Revisiting a story version restores its visible messages, not its calls,
+    // posts, friend changes or money-claim actions. Do not regenerate its photos.
+    if (restore) items = items.filter(item => !['claim','call','moment','unfriend','befriend','refuse'].includes(item.kind));
+    const saved = await backend.chatMutate(threadId, () => restore ? backend.chats.append(threadId, items, {read: true}) : settle(threadId, items));
     const fresh = (saved?.messages || []).filter(m => !before.has(m.id) && m.from !== 'me');
-    for (const m of fresh) if (m.kind === 'photo' && !m.photoId && (m.imageTags || backend.drawReady?.())) drawPhoto(threadId, m.id).catch(() => {});
+    for (const m of fresh) if (!restore && m.kind === 'photo' && !m.photoId && (m.imageTags || backend.drawReady?.())) drawPhoto(threadId, m.id).catch(() => {});
     const last = fresh.at(-1);
-    if (last) backend.emit('chat', {threadId, incoming: {from: last.from, text: last.text || '', kind: last.kind, count: fresh.length}});
+    if (last) backend.emit('chat', restore ? {threadId} : {threadId, incoming: {from: last.from, text: last.text || '', kind: last.kind, count: fresh.length}});
     return fresh.length;
   }
   // How often the phone reaches out, whoever does it (the story writing <phone>, or someone asked by nudge): with
@@ -425,7 +430,18 @@ export function createChatHost({context, settings, backend, notice, memory = nul
    * What a story reply sent to the phone (<phone>) arrives, once per version of the reply: private messages (and
    * photos, money, calls, 朋友圈…) to each sender's chat, <phone group="…"> to that group. Returns how many arrived.
    */
-  async function deliver(id) {
+  let deliveryTail = Promise.resolve();
+  function deliver(id, options) {
+    const ctx = context(), index = Number.isInteger(Number(id)) ? Number(id) : (ctx?.chat?.length || 0) - 1;
+    const message = ctx?.chat?.[index], raw = message?.mes, swipe = message?.swipe_id,
+      key = ctx?.getCurrentChatId?.() || ctx?.chatId || '';
+    const current = () => { const now = context(); return now?.chat?.[index] === message && message?.mes === raw
+      && message?.swipe_id === swipe && (now?.getCurrentChatId?.() || now?.chatId || '') === key; };
+    const work = deliveryTail.then(() => current() ? deliverCurrent(index, options, current) : 0);
+    deliveryTail = work.catch(() => {});
+    return work;
+  }
+  async function deliverCurrent(id, {restore = false} = {}, current) {
     const ctx = context(), s = settings();
     if (!s.chat.proactive?.on) return 0;
     const index = Number.isInteger(Number(id)) ? Number(id) : (ctx?.chat?.length || 0) - 1, m = ctx?.chat?.[index];
@@ -436,8 +452,9 @@ export function createChatHost({context, settings, backend, notice, memory = nul
       const key = story + '|' + ver, from = {story, ver};
       // Rolled again (重 roll, a new swipe): what the earlier version sent goes; this one sends its own.
       const gone = await withdraw(story, ver).catch(() => 0);
+      if (!current()) return 0;
       if (gone && !parts.length) notice(`重新生成了这条回复，之前发到手机上的 ${gone} 条消息撤回了`);
-      if (parts.length && !sentBefore(key)) {
+      if (parts.length && (!sentBefore(key) || restore)) {
         const contacts = backend.contacts(), people = contacts.map(c => ({name: c.name, voice: false}));
         // A line from someone who is not in the phone (a passer-by, the user) is left out, not given to the one before.
         const known = new Set(contacts.map(c => c.name)), named = line => line.match(/^\s*(?:\*\*)?[[【]?([^\]】:：\n]{1,40}?)[\]】]?(?:\*\*)?\s*[:：]/)?.[1]?.trim();
@@ -445,12 +462,13 @@ export function createChatHost({context, settings, backend, notice, memory = nul
         // A group's part goes to the group (the window in use), from its members.
         if (grouped.length) {
           const threads = await backend.threads();
+          if (!current()) return sent;
           for (const part of grouped) {
             const first = threads.find(t => t.type === 'group' && t.name === part.group), thread = first && currentWindow(threads, first);
             if (!thread) continue;
             const members = new Set(thread.members.filter(n => known.has(n)));
             const items = parseChatReply(kept(part.text, members), {members: [...members].map(name => ({name, voice: false})), user: userName(), voiceFormat: '', voiceNames: [], stickers: s.chat.stickers || []});
-            try { const n = items.length ? await arrive(thread.id, items, from) : 0; if (n) { sent += n; notice(`群「${thread.name}」有 ${n} 条新消息`); } } catch { /* not worth interrupting the story */ }
+            try { const n = items.length && current() ? await arrive(thread.id, items, from, restore) : 0; if (n) { sent += n; if (!restore) notice(`群「${thread.name}」有 ${n} 条新消息`); } } catch { /* not worth interrupting the story */ }
           }
         }
         const items = blocks.flatMap(b => parseChatReply(kept(b), {members: people, user: userName(), voiceFormat: '', voiceNames: [], stickers: s.chat.stickers || []}));
@@ -459,6 +477,8 @@ export function createChatHost({context, settings, backend, notice, memory = nul
         for (const [name, list] of byName) {
           try {
             const thread = await dmWith(name);
+            if (!current()) return sent;
+            if (restore) { sent += await arrive(thread.id, list, from, true); continue; }
             // Deleted by the user: what they send waits as 好友申请.
             if (thread.friend?.by === 'me') {
               const texts = list.filter(i => ['text', 'voice'].includes(i.kind)).map(i => i.translation || i.text).filter(Boolean);

@@ -52,8 +52,16 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
     message.extra.sttts_pics ??= {};
     message.extra.sttts_pics[hash] = list.length ? {versions: list, index: Math.min(list.length - 1, Math.max(0, index))} : {removed: true, versions: [], at: Date.now()};
   }
-  const jobKey = (id, tag) => `pic:${context()?.chatId ?? ''}:${id}:${tag.hash}`;
+  const jobKey = (id, tag) => `pic:${context()?.getCurrentChatId?.() ?? context()?.chatId ?? ''}:${id}:${context()?.chat?.[id]?.swipe_id ?? 0}:${tag.hash}`;
   const saveSoon = () => (context().saveChatDebounced || context().saveChat)?.();
+  // Native swipes reuse the message object. A request belongs to its original
+  // chat, swipe AND text; checking object identity alone can overwrite a rewrite.
+  function revision(id) {
+    const ctx = context(), message = ctx.chat[id], key = ctx.getCurrentChatId?.() ?? ctx.chatId,
+      swipe = message?.swipe_id, raw = message?.mes;
+    return () => { const now = context(); return now.chat[id] === message
+      && (now.getCurrentChatId?.() ?? now.chatId) === key && message?.swipe_id === swipe && message?.mes === raw; };
+  }
 
   // The queue changes often (positions, retry countdowns): redraw the placeholders when it does.
   backend.subscribe?.(event => { if (event.type === 'draw' && event.queue) scheduleRender(); });
@@ -91,18 +99,20 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
   /** Queues one picture. Redrawing adds a version; the earlier versions stay. */
   async function generate(id, tag, {interactive = false, permission = null} = {}) {
     const ctx = context(), message = ctx.chat[id], key = jobKey(id, tag);
+    const current = revision(id);
     if (!message || jobs.get(key)?.state === 'generating') return;
     permission ??= await allowed(interactive);
-    if (!permission) return;
+    if (!permission || !current()) return;
     jobs.set(key, {state: 'generating'});
     scheduleRender();
     try {
       const inputs = pictureInputs(settings(), tag, message.mes);
       const result = await backend.generateImage({...inputs, allowPaid: permission === 'paid', name: 'chat', key, label: '正文图片 · ' + tag.prompt.slice(0, 24)});
+      if (!current()) { jobs.delete(key); return; }
       const url = await upload(result.blob, 'st-iphonie-' + Date.now());
       // Only store the picture when the same message is still there with this tag.
       const now = context().chat[id];
-      if (now === message && parsePictures(now.mes).some(t => t.hash === tag.hash)) {
+      if (current() && parsePictures(now.mes).some(t => t.hash === tag.hash)) {
         const list = versionsOf(stored(now, tag.hash));
         list.push({url, seed: result.seed, width: result.params.width, height: result.params.height, model: result.params.model, steps: result.params.steps, prompt: tag.prompt, characters: inputs.names, at: Date.now()});
         keep(now, tag.hash, list, list.length - 1);
@@ -116,7 +126,7 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
     scheduleRender();
   }
 
-  const planning = new Set();
+  const planning = new Map();
   /** Who the rules may name: the open card's people and who speaks now (core/draw.js drawCast). */
   const castNow = () => backend.drawCast?.(speakers()) ?? null;
   /** 世界书 for planning pictures: what the tavern would turn on for this story, through the phone's choice of books. */
@@ -159,14 +169,15 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
    */
   async function planPictures(id, {force = false} = {}) {
     const ctx = context(), message = ctx.chat[id];
-    if (!message || message.is_user || message.is_system || planning.has(id)) return false;
+    const current = revision(id);
+    if (!message || message.is_user || message.is_system || planning.get(id)?.()) return false;
     if (!force && parsePictures(message.mes).length) return false;
-    planning.add(id);
+    planning.set(id, current);
     notice('正在给这条回复挑画面……');
     try {
       const source = force ? withoutPictures(message.mes) : message.mes;
       const {text, count} = await planOnce(id, source);
-      if (context().chat[id] !== message) return false;
+      if (!current()) return false;
       if (!count) throw Error('这次没有挑出画面（试了两次），可以点这层楼右边的小手机工具按钮「给这层楼生图」再试；模型具体回了什么可以在小手机的「日志」App 里看');
       message.mes = text;
       if (Array.isArray(message.swipes)) message.swipes[message.swipe_id ?? 0] = text;
@@ -174,7 +185,7 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
       redrawMessage(id, message);
       scheduleRender();
       return true;
-    } finally { planning.delete(id); }
+    } finally { if (planning.get(id) === current) planning.delete(id); }
   }
   /**
    * 回复后单独配音, and with 回复后单独配图 on too, both in one request: voices the lines of a reply (and puts its
@@ -182,8 +193,9 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
    */
   async function planReply(id, {voiced: wantVoice, pictured: wantPictures, force = false, phoned = false}) {
     const ctx = context(), s = settings(), message = ctx.chat[id];
-    if (!message || message.is_user || message.is_system || planning.has(id) || (!wantVoice && !wantPictures)) return {voiced: 0, pictured: 0};
-    planning.add(id);
+    const current = revision(id), stale = {voiced: 0, pictured: 0, stale: true};
+    if (!message || message.is_user || message.is_system || planning.get(id)?.() || (!wantVoice && !wantPictures)) return {voiced: 0, pictured: 0};
+    planning.set(id, current);
     notice(wantVoice && wantPictures ? '正在给这条回复配音、挑画面……' : wantVoice ? '正在给这条回复配音……' : '正在给这条回复挑画面……');
     try {
       const source = force && wantPictures ? withoutPictures(message.mes) : message.mes, format = voice?.format();
@@ -193,10 +205,11 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
         : wantVoice ? voicePlanRequest({rules: voice.rules(), format, message: source, before: before(id)}) : pictures;
       // 正文联动手机: what happens on the phone is asked for at the end of the same request (【手机】).
       const phoneRule = phoned && phone?.wanted() ? await phone.rule() : '';
+      if (!current()) return stale;
       const prompt = withXiaoci(s.promptRules, [...(wantVoice ? ['voice'] : []), ...(wantPictures ? ['draw-story'] : [])], withPhone(asked, phoneRule));
       const length = (wantVoice ? Math.min(3000, 400 + source.length * 2) : 0) + (wantPictures ? planLength(s, preset.count) : 0) + (phoneRule ? 500 : 0);
       const answer = await backend.generateText(ctx, {prompt, trimNames: false, responseLength: Math.min(10000, length)});
-      if (context().chat[id] !== message) return {voiced: 0, pictured: 0};
+      if (!current()) return stale;
       const {rest: reply, phone: sent} = phoneRule ? phoneSection(answer) : {rest: answer, phone: ''};
       let text = source, pictured = 0, voiced = 0;
       if (wantPictures) ({text, count: pictured} = insertPlanned(text, reply));
@@ -205,7 +218,7 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
       if (wantPictures && !pictured) {
         backend.reportDiagnostic?.('正文出图', {message: '和配音一起请求时没有挑出画面，单独再请求一次', reply: String(reply ?? '').slice(0, 2000)}, 'warn');
         ({text, count: pictured} = await planOnce(id, text));
-        if (context().chat[id] !== message) return {voiced: 0, pictured: 0};
+        if (!current()) return stale;
       }
       // The phone part is kept at the end of the reply like the story's own <phone> (shown as a note), then delivered.
       if (sent) {
@@ -229,7 +242,7 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
       if (wantVoice && !voiced) notice('画面挑好了，台词这次没配上，可以在「设置 → 正文」里点「给最新回复配音」');
       if (wantPictures && !pictured) notice('台词配好了，画面这次没挑出来，可以在「设置 → 正文」里点「给最新回复配图」');
       return {voiced, pictured};
-    } finally { planning.delete(id); }
+    } finally { if (planning.get(id) === current) planning.delete(id); }
   }
   /** Saves 新外貌 lines of a reply to the 角色 App: new named characters, or roles that have no appearance yet. */
   function registerAppearances(message) {
@@ -259,6 +272,7 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
     if (wantVoice || wantPictures) {
       let done;
       try { done = await planReply(id, {voiced: wantVoice, pictured: wantPictures, phoned: true}); } catch (error) { notice(error.message); return; }
+      if (done.stale) return;
       if (wantPictures && !done.pictured) return;
       message = context().chat[id];
     }
@@ -267,7 +281,9 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
     if (!s.draw.auto) return;
     const tags = parsePictures(message.mes).filter(tag => !stored(message, tag.hash));
     if (!tags.length) return;
+    const current = revision(id);
     const permission = await allowed(false);
+    if (!current()) return;
     if (!permission) { backend.reportDiagnostic?.('正文出图', {message:'自动出图未执行，当前设置无法确认免费额度',engine:s.draw.engine,relay:!!s.draw.relay.url}, 'warn');scheduleRender(); return; }
     await Promise.all(tags.map(tag => generate(id, tag, {permission})));
   }
