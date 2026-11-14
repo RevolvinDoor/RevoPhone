@@ -304,9 +304,9 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
   }
 
   function frame(inner) { return `<span class="sttts-pic-frame">${inner}</span>`; }
-  function fill(el, id, message, tag) {
+  function fill(el, id, message, tag, snapshot) {
     const record = stored(message, tag.hash), pic = shown(message, tag.hash), key = jobKey(id, tag), job = jobs.get(key);
-    const s = settings(), folded = folds.get(id + ':' + tag.hash) ?? s.draw.fold;
+    const s = snapshot, folded = folds.get(id + ':' + tag.hash) ?? s.draw.fold;
     const state = job?.state || (pic ? 'done' : record?.removed ? 'removed' : 'idle');
     const waiting = state === 'generating' ? queueText(key) : '';
     const signature = [state, pic?.url, pic?.count, folded, waiting, job?.message].join('|');
@@ -335,17 +335,20 @@ export function createPictureHost({context, redrawMessage = (id, message) => con
 
   /** Fills every picture placeholder in the rendered chat. The tavern's sanitizer renames classes in messages
    *  (sttts-pic becomes custom-sttts-pic), so placeholders are found by their data attributes. */
-  function decorate(currentMessage) {
+  function decorate(currentMessage, {getState = settings, only = null} = {}) {
+    let snapshot;
     for (const element of document.querySelectorAll('#chat .mes[mesid]')) {
+      const id = Number(element.getAttribute('mesid'));
+      if (only && !only.has(id)) continue;
       const placeholders = element.querySelectorAll('[data-sttts-pic]');
       if (!placeholders.length) continue;
-      const id = Number(element.getAttribute('mesid')), message = context().chat[id];
+      const message = context().chat[id];
       if (!message || !currentMessage(id)) continue;
       const tags = parsePictures(message.mes);
       for (const el of placeholders) {
         if (el.dataset.stttsToken !== marker) continue;
         const tag = tags.find(t => t.hash === el.dataset.stttsHash);
-        if (tag) fill(el, id, message, tag);
+        if (tag) fill(el, id, message, tag, snapshot ??= getState());
       }
     }
   }
