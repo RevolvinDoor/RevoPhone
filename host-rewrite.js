@@ -3,6 +3,32 @@
 const RUNTIME = Symbol.for('st.auto-rewrite.standalone');
 const keyOf = ctx => `${ctx.groupId ?? ''}|${ctx.characterId ?? ''}|${ctx.getCurrentChatId?.() ?? ctx.chatId ?? ''}`;
 
+export function createStoryRewriteControl(runtime = () => globalThis[RUNTIME]) {
+  const watches = new Set();
+  const control = () => {
+    const api = runtime()?.control;
+    return api?.version === 1 && typeof api.getState === 'function' && typeof api.setAuto === 'function' ? api : null;
+  };
+  function status() {
+    const state = control()?.getState();
+    return {available: Boolean(state?.available), auto: Boolean(state?.available && state.auto)};
+  }
+  function requireControl() {
+    if (!status().available) throw Error('请安装或启用 Auto-Rewrite 3.1.4 或更新版');
+    return control();
+  }
+  return {status,
+    setAuto(value) { requireControl().setAuto(Boolean(value)); return status(); },
+    openSettings() { const api = requireControl(); if (typeof api.openSettings !== 'function') throw Error('请更新正文重写扩展'); api.openSettings(); },
+    subscribe(listener) {
+      const stop = control()?.subscribe?.(listener) ?? (() => {});
+      const off = () => { if (watches.delete(off)) stop(); };
+      watches.add(off); return off;
+    },
+    dispose() { for (const off of watches) off(); },
+  };
+}
+
 export const hasRewriteVersions = message => Boolean(message?.extra?.auto_rewrite_revision
   || message?.swipe_info?.some(info => info?.extra?.auto_rewrite_revision));
 

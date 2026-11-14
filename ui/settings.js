@@ -234,7 +234,7 @@ export function settingsApp(ctx) {
     if (storage) { await renderStorage(ticket); return; }
     const [phone, cache, library] = await Promise.all([api.getPhone(), api.cacheStats(), api.libraryStats().catch(() => null)]);
     if (v.disposed || ticket !== epoch) return;
-    const s = api.getState(), space = api.phoneSpace?.() || {};
+    const s = api.getState(), space = api.phoneSpace?.() || {}, rewrite = api.storyRewriteStatus?.() || {available:false,auto:false};
     const wallName = phone.wallpaper.kind === 'builtin' ? wallpapers[phone.wallpaper.key]?.name : '自己的照片';
     const used = library ? size(library.bytes + (cache.available ? cache.bytes : 0)) : '';
     v.draw(heading('设置', '', 'Settings')
@@ -248,6 +248,8 @@ export function settingsApp(ctx) {
         </div>`
       + groupTitle('正文')
       + `<div class="group pad">${languageField('defaultLanguage', s.general.defaultLanguage, false, typedLanguages(api.getState()))}
+          ${toggle('storyRewrite', '正文自动重写', rewrite.auto, '只对酒馆正文自动重写一次；电话、Soul 私聊、朋友圈、助手和配音／配图后台请求不参与。与 Auto-Rewrite 的自动开关同步。').replace('type="checkbox"', `type="checkbox" ${rewrite.available ? '' : 'disabled'}`)}
+          ${rewrite.available ? `<div class="actions">${btn('story-rewrite-settings', '修改意见与重写设置', 'text-button')}</div>` : '<p class="hint">安装或启用 Auto-Rewrite 3.1.4 或更新版后可用，其他手机功能照常。</p>'}
           ${toggle('voiceEnabled', '正文语音', s.general.voiceEnabled !== false, '关掉后，聊天请求里不再加入语音规则，模型只写普通对白；正文里已有的语音标签只显示中文译文，不显示声波；手机聊天里的联系人也只发文字。打开后恢复。')}
           ${s.general.voiceEnabled !== false ? `<div class="field"><span>配音方式${help('正文里顺手写：把配音规则加进正文请求，模型写故事时顺手把台词写成配音格式。只要一次请求，但规则较长，有时会影响正文，或者和破限、文风预设打架、漏写格式。\n\n回复后单独配音：正文模型只管写故事，不带任何配音规则；回复写完后，插件用同一个模型再单独请求一次，把正文里的台词配上音（声波稍等一会儿才出来）。格式更稳，不挤占正文，每条回复多一次请求。\n\n绘图里也选了「回复后单独配图」的话，配音和配图合成一次请求，不会多发两次。')}</span><div class="segmented" style="margin:0">${[['inline', '正文里顺手写'], ['separate', '回复后单独配音']].map(([k, l]) => `<button data-action="voice-mode" data-value="${k}" aria-pressed="${(s.general.voiceMode || 'inline') === k}">${l}</button>`).join('')}</div>${s.general.voiceMode === 'separate' && api.planLatestVoice ? `<div class="actions" style="margin:6px 0 0">${btn('voice-latest', icon('wave') + '给最新回复配音', 'text-button')}</div>` : ''}</div>` : ''}
           ${s.general.voiceEnabled !== false ? toggle('pregenerate', '提前生成语音', s.general.pregenerate === true, '打开后，每条新回复写完，插件就在后台按顺序把里面的台词都生成好、存进缓存，不会自己播放；点声波时直接就能听，不用再等。\n\n会多花语音额度：没去听的回复、重 roll 掉的那一版也会生成。要先打开下面「更多」里的「保存语音缓存」。\n\n不开也没关系：点「整条播放」时，播这一句的同时就在做下一句，句子之间不用等。') : ''}
@@ -284,6 +286,7 @@ export function settingsApp(ctx) {
   v.on('input', '[data-field=volume]', el => { el.previousElementSibling.querySelector('output').textContent = el.value + '%'; });
   v.on('change', '[data-field]', async el => {
     const key = el.dataset.field;
+    if (key === 'storyRewrite') { try { api.setStoryRewriteAuto(el.checked); } finally { await render(); } return; }
     if (appearance) {
       if (key === 'iconStyle') appearance.iconStyle = el.value;
       if (key === 'glyph') appearance.icons[el.dataset.iconApp] = el.value === 'default' ? null : {kind: 'glyph', key: el.value};
@@ -348,6 +351,7 @@ export function settingsApp(ctx) {
   v.on('click', '[data-action]', async el => {
     switch (el.dataset.action) {
       case 'theme': await api.savePhone({theme: el.dataset.value}); await render(); break;
+      case 'story-rewrite-settings': api.openStoryRewriteSettings(); break;
       case 'draw-mode': api.saveDraw({mode: el.dataset.value}); await render(); ctx.notify(el.dataset.value === 'separate' ? '以后回复写完再单独配图' : '以后模型写正文时顺手写出图块'); break;
       case 'draw-latest': await v.busy(el, () => api.planLatestPictures()); break;
       case 'narration': narrationSheet(); break;
@@ -428,6 +432,9 @@ export function settingsApp(ctx) {
       case 'about': ctx.help('ST-iPhonie\n酒馆里的小手机：聊天、角色配音、听取、绘图（NovelAI、GPT 生图、ComfyUI）、收藏、相册和备忘录。\n\n密钥和本地资料保存在当前浏览器与酒馆地址。状态栏的信号和电量是装饰。语音只在你点击播放或试听后生成。'); break;
     }
   });
+  const stopRewriteWatch = api.watchStoryRewrite?.(() => { if (!v.disposed) render().catch(e => ctx.notify(e.message)); });
+  const disposeView = v.dispose.bind(v);
+  v.dispose = () => { stopRewriteWatch?.(); disposeView(); };
   render().catch(e => ctx.notify(e.message));
   return v;
 }

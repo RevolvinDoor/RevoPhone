@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createRewriteGate,hasRewriteVersions} from '../host-rewrite.js';
+import {createRewriteGate,createStoryRewriteControl,hasRewriteVersions} from '../host-rewrite.js';
 
 function fixture(runtime) {
   const message = {mes: 'original', swipe_id: 0};
@@ -56,4 +56,25 @@ test('切回原稿时仍可从其他 swipe 识别重写关系，不把普通翻�
   assert.equal(hasRewriteVersions({extra:{}}),false);
   assert.equal(hasRewriteVersions({extra:{auto_rewrite_revision:{id:'r'}}}),true);
   assert.equal(hasRewriteVersions({extra:{},swipe_info:[{}, {extra:{auto_rewrite_revision:{id:'r'}}}]}),true);
+});
+
+test('正文开关只读写重写插件同一个设置，并能打开设置、取消订阅', () => {
+  const state={available:true,auto:false},listeners=new Set();let opened=0;
+  const control={version:1,getState:()=>({...state}),setAuto:value=>{state.auto=value;for(const fn of listeners)fn();},
+    openSettings:()=>opened++,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}};
+  const bridge=createStoryRewriteControl(()=>({control})), seen=[];
+  const stop=bridge.subscribe(()=>seen.push(bridge.status().auto));
+  assert.deepEqual(bridge.status(),{available:true,auto:false});
+  bridge.setAuto(true);assert.equal(state.auto,true);control.setAuto(false);
+  assert.deepEqual(seen,[true,false]);bridge.openSettings();assert.equal(opened,1);
+  stop();assert.equal(listeners.size,0);
+  bridge.subscribe(()=>{});assert.equal(listeners.size,1);bridge.dispose();assert.equal(listeners.size,0);
+});
+
+test('没安装、旧版本或禁用重写插件时开关不可用，不创建私有设置', () => {
+  for(const runtime of [undefined,{}, {control:{version:0}}, {control:{version:1,getState:()=>({available:false,auto:true}),setAuto(){throw Error('must not set');}}}]) {
+    const bridge=createStoryRewriteControl(()=>runtime);
+    assert.deepEqual(bridge.status(),{available:false,auto:false});
+    assert.throws(()=>bridge.setAuto(true),/安装或启用/);assert.doesNotThrow(()=>bridge.subscribe(()=>{})());
+  }
 });

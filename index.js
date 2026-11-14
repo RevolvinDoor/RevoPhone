@@ -36,13 +36,14 @@ import { createXenoHost } from './host-xeno.js';
 import {createSoulHost} from './host-soul.js';
 import { getActiveChatKey, findLastChatMessage, captureXenoChatStorage } from './host-tt.js';
 import {prependStoryXiaoci} from './core/prompt-rules.js';
-import {createRewriteGate,hasRewriteVersions} from './host-rewrite.js';
+import {createRewriteGate,createStoryRewriteControl,hasRewriteVersions} from './host-rewrite.js';
 const base=new URL('.',import.meta.url),marker=globalThis.crypto?.randomUUID?.()||'unavailable';
 let stopDiagnostics=null;
 let active=false,hooked=false,settings,cache,player,panel,frame,observer,renderTimer,floating,lineRaf,lineMedia,playbackMessage,selectedMessage,backend,enabling;
 let voiceIsland=null,pendingApp=null,renderEpoch=0,pictures=null,chats=null,momentsHost=null,appsHost=null,assistantHost=null,callHost=null,callIsland=null,msgIsland=null,pendingThread=null,memoryHost=null,voiceHost=null,soundHost=null,xenoHost=null,soulHost=null,pendingDraw=null,legacy=false;
 let voiceWindowMessage=null,voiceWindowTail=null;
 let rewriteGate=null;
+const storyRewriteControl=createStoryRewriteControl();
 let dialogueMessage=null,dialogueRevision=0,speech=null,noteIsland=null,momentsWatch=null,storyTools=null;
 const listeners=[],prompts=new Set();
 // Every copy of the plugin that loads adds its folder here, so the self-check can tell when it is installed twice.
@@ -441,6 +442,10 @@ function connect(source){
   save:(next,revision)=>{check();return api.save({...next,floating:settings.floating},revision);},
   previewXenoPrompt:preset=>{check();return owner.previewXenoPrompt(preset,{chat:context()?.chat,input:document.querySelector('#send_textarea')?.value||''});},
   close:()=>{check();panel?.close();},
+  storyRewriteStatus:()=>{check();return storyRewriteControl.status();},
+  setStoryRewriteAuto:value=>{check();return storyRewriteControl.setAuto(value);},
+  openStoryRewriteSettings:()=>{check();return storyRewriteControl.openSettings();},
+  watchStoryRewrite:listener=>{check();return storyRewriteControl.subscribe(listener);},
   latest:()=>{check();const snap=latestMessage();return {id:snap?.id??-1,lines:snap?parsed(snap.raw).lines:[]};},
   currentDialogue:()=>{check();return currentDialogue();},
   listDialogueReplies:()=>{check();return listDialogueReplies();},
@@ -601,6 +606,6 @@ if(!ctx?.setExtensionPrompt||!ctx.generateRaw||!(ctx.messageFormatter?.addHook||
  dialogue:openVoiceWindow,draw:id=>pictures.drawMessage(id),play:id=>{if(!voiceOn())throw Error('请先打开正文语音');if(!messageLines(currentMessage(id)).length)throw Error('这层楼还没有配音台词');return playMessage(id);}}});
  document.addEventListener('click',click,true);document.addEventListener('keydown',keyUnlock,true);mountEntry();mountWand();syncFloating();observer=new MutationObserver(chatChanged);const chat=document.querySelector('#chat');if(chat)observer.observe(chat,{childList:true,subtree:true});inject();rerender();}
 export function enable(){if(enabling)return enabling;enabling=enableInternal().finally(()=>{enabling=null;});return enabling;}
-export async function disable(){if(enabling)await enabling;stopDiagnostics?.();stopDiagnostics=null;if(!active)return;active=false;rewriteGate?.dispose();rewriteGate=null;renderEpoch++;cancelAnimationFrame(lineRaf);lineMedia?.removeEventListener('change',animateLines);document.removeEventListener('visibilitychange',animateLines);voiceWindowMessage=voiceWindowTail=null;playbackMessage=selectedMessage=dialogueMessage=null;dialogueRevision++;dialogueChoices.clear();healed.clear();player.stop();clearPrompts();for(const [source,event,fn] of listeners)source.removeListener(event,fn);listeners.length=0;observer?.disconnect();clearTimeout(renderTimer);renderTimer=0;document.removeEventListener('click',click,true);document.removeEventListener('keydown',keyUnlock,true);document.removeEventListener('visibilitychange',flushSync);watchPanelLayout(false);document.querySelector('#sttts-extension-entry')?.remove();document.querySelector('#sttts-wand-entry')?.remove();floating?.destroy();floating=null;document.querySelectorAll('[data-sttts-owned="toolbar"]').forEach(el=>el.remove());panel?.remove();panel=frame=null;delete globalThis.__stIphoniePanelBridge;storyTools?.dispose();storyTools=null;pictures=null;chats=null;momentsHost=null;appsHost=null;xenoHost=null;assistantHost?.close();assistantHost=null;voiceIsland?.dispose();voiceIsland=null;momentsWatch?.dispose();momentsWatch=null;noteIsland?.dispose();noteIsland=null;callHost?.dispose();callHost=null;soulHost?.dispose();soulHost=null;memoryHost?.close();memoryHost=null;voiceHost=null;soundHost?.close();soundHost=null;pendingDraw=null;await backend.close();rerender();}
+export async function disable(){if(enabling)await enabling;stopDiagnostics?.();stopDiagnostics=null;if(!active)return;active=false;storyRewriteControl.dispose();rewriteGate?.dispose();rewriteGate=null;renderEpoch++;cancelAnimationFrame(lineRaf);lineMedia?.removeEventListener('change',animateLines);document.removeEventListener('visibilitychange',animateLines);voiceWindowMessage=voiceWindowTail=null;playbackMessage=selectedMessage=dialogueMessage=null;dialogueRevision++;dialogueChoices.clear();healed.clear();player.stop();clearPrompts();for(const [source,event,fn] of listeners)source.removeListener(event,fn);listeners.length=0;observer?.disconnect();clearTimeout(renderTimer);renderTimer=0;document.removeEventListener('click',click,true);document.removeEventListener('keydown',keyUnlock,true);document.removeEventListener('visibilitychange',flushSync);watchPanelLayout(false);document.querySelector('#sttts-extension-entry')?.remove();document.querySelector('#sttts-wand-entry')?.remove();floating?.destroy();floating=null;document.querySelectorAll('[data-sttts-owned="toolbar"]').forEach(el=>el.remove());panel?.remove();panel=frame=null;delete globalThis.__stIphoniePanelBridge;storyTools?.dispose();storyTools=null;pictures=null;chats=null;momentsHost=null;appsHost=null;xenoHost=null;assistantHost?.close();assistantHost=null;voiceIsland?.dispose();voiceIsland=null;momentsWatch?.dispose();momentsWatch=null;noteIsland?.dispose();noteIsland=null;callHost?.dispose();callHost=null;soulHost?.dispose();soulHost=null;memoryHost?.close();memoryHost=null;voiceHost=null;soundHost?.close();soundHost=null;pendingDraw=null;await backend.close();rerender();}
 export const dispose=disable;
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>enable().catch(e=>notice(e.message)),{once:true});else enable().catch(e=>notice(e.message));
