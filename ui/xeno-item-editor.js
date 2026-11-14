@@ -43,7 +43,7 @@ export function openItemEditor(ctx, {item = null, category = 'skin_suit', destin
       gender: gender || initialParsed.gender || (stocking ? '' : '女')}
     : baseItem;
   const living = ['skin_suit', 'flesh_ring'].includes(value.category);
-  let currentVoice = creating ? '' : itemVoiceRef(api.getState().xeno, value), voiceChanged = false;
+  let currentVoice = creating ? '' : itemVoiceRef(api.getState().xeno, value), voiceChanged = false, fanworkChanged = false;
   const d = ctx.dialog(stocking ? '手动录入商品' : creating ? '登记自制装备' : `编辑 · ${value.name}`, `<div class="xeno-sheet-form">
     ${stocking ? '<p class="xeno-hint">完全手动填写，直接上架为未购买商品，不调用文字模型或自动绘图，不扣钱包。无需编写 XML；上架后可在商品卡上传图片，也可另行选择生图。</p>'
       : creating ? '<p class="xeno-hint">将剧情中自制、获赠或已获得的装备直接收入衣柜，不扣钱包、不自动上架商店，也不会自动穿戴。普通字段即可保存，无需编写 XML。</p>' : ''}
@@ -111,12 +111,16 @@ export function openItemEditor(ctx, {item = null, category = 'skin_suit', destin
       if (writeField('category', parsed.category, overwrite)) count++;
       const effects = d.body.querySelector('[data-item-consumable]');
       if (effects) effects.hidden = parsed.category !== 'consumable';
+      const fanworkFields = d.body.querySelector('[data-item-fanwork-fields]');
+      if (fanworkFields) fanworkFields.hidden = !['skin_suit', 'flesh_ring'].includes(parsed.category);
     }
     for (const key of ['name', 'shortName', 'slot', 'effectKind', 'summary', 'appearance', 'bodyBuild', 'physiology',
       'gender', 'lowerBodyMode', 'lowerBodyType', 'lowerBodyDescription', 'abilities', 'abilityConditions',
-      'ringAppearance', 'forwardExtension', 'backwardExtension', 'drawPrompt', 'organDrawPrompt', 'rawDesign']) {
+      'ringAppearance', 'forwardExtension', 'backwardExtension', 'drawPrompt', 'organDrawPrompt', 'rawDesign', 'cosplayCharacter']) {
       if (parsed[key] !== undefined && parsed[key] !== '' && writeField(key, parsed[key], overwrite)) count++;
     }
+    const fanworkBox = d.body.querySelector('[data-item-fanwork]');
+    if (fanworkBox && typeof parsed.fanwork === 'boolean' && (overwrite || !fanworkChanged)) {fanworkBox.checked = parsed.fanwork; count++;}
     if (parsed.price !== undefined && (!creating || stocking)) {
       if (writeField('price', parsed.price, overwrite)) count++;
     }
@@ -131,6 +135,7 @@ export function openItemEditor(ctx, {item = null, category = 'skin_suit', destin
     }
   });
   d.body.addEventListener('change', event => {
+    if (event.target?.dataset?.itemFanwork !== undefined) {fanworkChanged = true; return;}
     if (event.target?.dataset?.item === 'category') {
       const effects = d.body.querySelector('[data-item-consumable]');
       if (effects) effects.hidden = event.target.value !== 'consumable';
@@ -176,9 +181,7 @@ export function openItemEditor(ctx, {item = null, category = 'skin_suit', destin
         gender: structure.gender,
         lowerBodyMode: structure.lowerBodyMode,
         lowerBodyType: structure.lowerBodyType,
-        drawPrompt: value.fanwork && value.cosplayCharacter
-          ? read('drawPrompt').split(',').filter(tag => tag.trim().toLowerCase() !== `${value.cosplayCharacter} (cosplay)`.toLowerCase()).join(', ')
-          : read('drawPrompt'),
+        drawPrompt: read('drawPrompt').split(',').filter(tag => !/\(cosplay\)\s*(?:[}\]]|::)*\s*$/i.test(tag)).join(', '),
         organDrawPrompt: read('organDrawPrompt')
       });
       const patch = {...structure, id: value.id, name, shortName: read('shortName') || name.slice(0, 80),

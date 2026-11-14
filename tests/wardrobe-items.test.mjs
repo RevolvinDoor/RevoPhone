@@ -9,11 +9,95 @@ import {applyWardrobeReply, wardrobeActionPlan, matchWardrobeItems} from '../cor
 import {createXenoHost} from '../host-xeno.js';
 import {createAssistantTools} from '../core/assistant-tools.js';
 import {itemStructureFields, openItemEditor} from '../ui/xeno-item-editor.js';
-import {generateItemPreview} from '../xeno-images.js';
+import {generateItemPreview, generateEntityPortrait} from '../xeno-images.js';
 import {stripQualityDrawTags, normalizeCharacterDrawPrompt} from '../core/xeno-wear.js';
 import {mergeXenoSession} from '../core/xeno.js';
 import {wardrobeApp} from '../ui/wardrobe.js';
 import {mallApp} from '../ui/mall.js';
+
+test('文本进货识别同人字段和已有cosplay Tag，支持XML及JSON且保留作品消歧', () => {
+  for (const [category, xml] of [['skin_suit', 'skin_suit_design'], ['flesh_ring', 'flesh_ring_design']]) {
+    for (const content of [
+      `<${xml} name="同人测试">\n[同人角色Tag]：hatsune_miku (vocaloid)\n[角色生图提示词]：aqua hair\n</${xml}>`,
+      JSON.stringify({name: '同人测试', category, fanwork: true, cosplayCharacter: 'hatsune_miku (vocaloid)', drawPrompt: 'aqua hair'}),
+      `<${xml} name="同人测试">\n[角色生图提示词]：hatsune_miku (vocaloid) (cosplay), aqua hair\n</${xml}>`,
+      `[分类]：${category}\n[同人卡]：是 [同人角色Tag]：hatsune_miku (vocaloid) [角色生图提示词]：aqua hair`
+    ]) {
+      const parsed = parseItemTextBlock(content);
+      assert.equal(parsed.fanwork, true); assert.equal(parsed.cosplayCharacter, 'hatsune miku (vocaloid)');
+      const item = normalizeCatalogItem(parsed);
+      assert.equal(item.drawPrompt, 'hatsune miku (vocaloid) (cosplay), aqua hair');
+    }
+  }
+});
+
+test('文本进货不把原创或服饰误判为同人，明确取消同人时不自动恢复', () => {
+  const original = parseItemTextBlock('[名称]：原创测试\n[角色生图提示词]：silver hair, blue eyes');
+  assert.notEqual(original.fanwork, true);
+  const disabled = parseItemTextBlock(JSON.stringify({category: 'skin_suit', fanwork: false, cosplayCharacter: 'hatsune_miku', drawPrompt: 'aqua hair'}));
+  assert.equal(disabled.fanwork, false);
+  const apparel = parseItemTextBlock('[分类]：apparel\n[同人角色Tag]：hatsune_miku\n[生图提示词]：blue coat');
+  assert.notEqual(apparel.fanwork, true);
+  assert.equal(parseItemTextBlock(JSON.stringify({category: 'apparel', fanwork: true, cosplayCharacter: 'hatsune_miku'})).fanwork, false);
+  assert.equal(parseItemTextBlock('[生图提示词]：blue coat', {fallbackCategory: 'apparel'}).category, 'apparel');
+});
+
+test('智能识别与直接保存都自动勾选同人并填Tag，手动取消后保持取消且不调用模型', () => {
+  for (const mode of ['parse', 'save', 'disable']) {
+    const b = backendFixture(), handlers = {}, fields = {category: 'skin_suit', price: '0',
+      smartInput: '<skin_suit_design name="同人测试">\n[同人角色Tag]：hatsune_miku\n[角色生图提示词]：hatsune miku (cosplay), aqua hair\n</skin_suit_design>'};
+    const checkbox = {checked: false}, fanFields = {hidden: true}, errors = [];
+    const ctx = {api: new Proxy({getState: () => b.settings, xenoAct: b.xenoAct.bind(b)}, {get(target, key) {
+      if (key in target) return target[key]; throw Error('不应调用模型或绘图接口');
+    }}), dialog() {return {body: {addEventListener(type, fn) {handlers[type] = fn;}, querySelector(selector) {
+      if (selector === '[data-item-fanwork]') return checkbox;
+      if (selector === '[data-item-fanwork-fields]') return fanFields;
+      if (selector === '[data-item-consumable]') return {hidden: true};
+      const key = selector.match(/data-item="([^"]+)"/)?.[1]; if (!key) return null;
+      return {get value() {return fields[key] || '';}, set value(v) {fields[key] = String(v);}};
+    }}, close() {}};}, notify(message, options) {if (options?.error) errors.push(message);}};
+    const click = selector => handlers.click({target: {closest: s => s === selector ? {} : null}});
+    openItemEditor(ctx, {destination: 'mall'});
+    if (mode !== 'save') {
+      click('[data-editor-smart-parse]');
+      assert.equal(checkbox.checked, true); assert.equal(fields.cosplayCharacter, 'hatsune miku'); assert.equal(fanFields.hidden, false);
+    }
+    if (mode === 'disable') {checkbox.checked = false; handlers.change({target: {dataset: {itemFanwork: ''}, checked: false}});}
+    click('[data-editor-save]');
+    assert.deepEqual(errors, []);
+    const item = b.settings.xeno.items.find(i => i.name === '同人测试'); assert.ok(item);
+    assert.equal(item.fanwork, mode !== 'disable');
+    if (mode === 'disable') assert.doesNotMatch(item.drawPrompt, /cosplay/);
+    else assert.equal(item.cosplayCharacter, 'hatsune miku');
+  }
+});
+
+test('商城和衣柜商品图统一状态Tag格式，女性结构使用female且不替服饰猜测身体', async () => {
+  const state = freshState(); let prompt;
+  const ctx = {api: {getState: () => state, drawReady: () => true, async generateImage(input) {prompt = input.prompt; throw Error('captured');}}};
+  for (const category of ['skin_suit', 'flesh_ring']) {
+    const item = normalizeCatalogItem({name: '状态测试', category, gender: '扶她', lowerBodyMode: 'replace', lowerBodyType: 'dual',
+      drawPrompt: 'silver hair', organDrawPrompt: 'futanari, erection'});
+    await assert.rejects(generateItemPreview(ctx, item), /captured/);
+    assert.match(prompt, /erect/); assert.doesNotMatch(prompt, /erection/);
+    item.lowerBodyType = 'female';
+    await assert.rejects(generateItemPreview(ctx, item), /captured/);
+    assert.match(prompt, /female/); assert.doesNotMatch(prompt, /erect|flaccid|futanari/);
+    item.lowerBodyMode = 'preserve';
+    await assert.rejects(generateItemPreview(ctx, item), /captured/);
+    assert.match(prompt, /futanari, erect/); assert.doesNotMatch(prompt, /female/);
+  }
+  await assert.rejects(generateItemPreview(ctx, normalizeCatalogItem({name: '外套', category: 'apparel', drawPrompt: 'blue coat'})), /captured/);
+  assert.doesNotMatch(prompt, /female/);
+  state.xeno = normalizeXeno({protagonist: {name: '旅人', gender: '扶她', lowerBodyState: '勃起'}});
+  state.draw.styles[0].positive = 'flaccid, masterpiece';
+  await assert.rejects(generateEntityPortrait(ctx, '__protagonist__', 'silver hair'), /captured/);
+  assert.match(prompt, /erect/); assert.doesNotMatch(prompt, /flaccid|masterpiece/);
+  state.xeno.protagonist.lowerBodyState = '缩回';
+  state.draw.styles[0].positive = '{futanari}, erect';
+  await assert.rejects(generateEntityPortrait(ctx), /captured/);
+  assert.match(prompt, /female/); assert.doesNotMatch(prompt, /erect|futanari/);
+});
 
 const base = () => normalizeXeno({protagonist: {id: '__protagonist__', name: '旅人', gender: '男'}, cardKey: 'card:a'});
 const itemInput = {name: '星霜', category: 'skin_suit', gender: '女', abilities: '夜视：低光中看清道路',

@@ -3,7 +3,7 @@ const kinds = ['skin_suit', 'flesh_ring'];
 const last = (list, predicate) => list.slice().reverse().find(predicate);
 const facial = /(?:hair|eyes?|eyebrows?|eyelashes?|face|facial|head|ears?|horns?|bangs|braid|ponytail|pigtails|beard|lipstick|lips|makeup|mouth|teeth|fangs|头发|发色|瞳|眼睛|脸|面容|面貌|耳朵|[黑白红蓝绿金银紫粉棕灰长短]发)/i;
 const FUTA_TAG_RE = /^(?:[\d.]*::)?(?:\d*futanari|futa|hermaphrodite|futanari\s+female|female\s+futanari|扶她)(?:::)?$/i;
-const PENIS_TAG_RE = /(?:^|[\s(::])(?:\d*futanari\s+penis|penis|penises|phallus|dick|cock|erection|flaccid|glans|foreskin|phimosis|testicles?|scrotum|precum|pre-cum|semen|ejaculation|urethra|urethral|veiny\s+shaft|thick\s+shaft|veins\s+on\s+penis|crotch\s+bulge|pelvic\s+bulge|groin\s+bulge)(?:$|[\s)::'])|^(?:[\d.]*::)?(?:bulge|veins|prominent\s+veins|thick\s+veins|veiny|dripping\s+pre-?cum|excessive\s+semen)(?:::)?$|(?:肉棒|阴茎|阳具|巨根|龟头|冠状沟|马眼|阴囊|睾丸|玉囊|包皮|勃起|前列腺液)/i;
+const PENIS_TAG_RE = /(?:^|[\s(::])(?:\d*futanari\s+penis|penis|penises|phallus|dick|cock|erect|erection|flaccid|glans|foreskin|phimosis|testicles?|scrotum|precum|pre-cum|semen|ejaculation|urethra|urethral|veiny\s+shaft|thick\s+shaft|veins\s+on\s+penis|crotch\s+bulge|pelvic\s+bulge|groin\s+bulge)(?:$|[\s)::'])|^(?:[\d.]*::)?(?:bulge|veins|prominent\s+veins|thick\s+veins|veiny|dripping\s+pre-?cum|excessive\s+semen)(?:::)?$|(?:肉棒|阴茎|阳具|巨根|龟头|冠状沟|马眼|阴囊|睾丸|玉囊|包皮|勃起|前列腺液)/i;
 
 /** Equipment and current-form prompts omit generic quality tags. */
 export function stripQualityDrawTags(value) {
@@ -25,6 +25,31 @@ export function isFutanariTag(tag) {
 export function isPenisDrawTag(tag) {
   const s = String(tag || '').trim();
   return Boolean(s) && (FUTA_TAG_RE.test(s) || PENIS_TAG_RE.test(s));
+}
+
+/** Apply a validated current state after combining stored prompts and style tags. */
+export function applyLowerBodyDrawState(value, state = '') {
+  const target = ({勃起: 'erect', 疲软: 'flaccid', 缩回: 'female', 无: 'female'})[state];
+  const key = tag => tag.replace(/[{}\[\]]/g, '').replace(/^-?[\d.]+::|::$/g, '').trim();
+  const parts = stripQualityDrawTags(value).split(',').map(t => t.trim().replace(/\berection\b/gi, 'erect')).filter(Boolean);
+  const kept = !target ? parts : parts.filter(tag => {
+    const plain = key(tag);
+    return !/\b(?:erect|flaccid)\b/i.test(plain) && plain.toLowerCase() !== 'female'
+      && (target !== 'female' || !isPenisDrawTag(plain));
+  });
+  return [...new Set([...kept, ...(target ? [target] : [])])].join(', ');
+}
+
+function itemFanworkFields(value, category) {
+  if (!kinds.includes(category)) return {fanwork: false, cosplayCharacter: ''};
+  const embedded = String(value.drawPrompt || '').replace(/\\([()])/g, '$1').split(/[,，\n]+/)
+    .map(tag => tag.trim().match(/^(?:[\d.]+::)?[{\[]*(.+?)\s*\(cosplay\)[}\]]*(?:::)?$/i)?.[1]).find(Boolean);
+  const character = normalizeCosplayCharacter(value.cosplayCharacter || embedded || '');
+  const flag = typeof value.fanwork === 'boolean' ? value.fanwork
+    : /^(?:true|yes|1|是|同人|勾选)$/i.test(String(value.fanwork || '').trim()) ? true
+      : /^(?:false|no|0|否|非同人|原创|不勾选)$/i.test(String(value.fanwork || '').trim()) ? false : undefined;
+  return {...(flag !== undefined ? {fanwork: flag} : character ? {fanwork: true} : {}),
+    ...(character ? {cosplayCharacter: character} : {})};
 }
 
 /** Normalizes character/body drawing prompt: NEVER includes `futanari` tag. */
@@ -117,6 +142,8 @@ export function splitItemDrawPrompts(rawDrawPrompt = '', rawOrganDrawPrompt = ''
 }
 
 const FIELD_LABEL_RULES = [
+  ['fanwork', /^(?:同人(?:卡|角色|皮躯|肉躯|商品)?|是否同人(?:卡|角色)?|fanwork|is\s*fanwork)$/i],
+  ['cosplayCharacter', /^(?:同人角色\s*Tag|同人(?:角色)?英文\s*Tag|角色英文\s*Tag|同人角色标签|cosplay\s*character|cosplaycharacter|character\s*tag)$/i],
   ['name', /^(?:商品名称|装备名称|单品名称|名称|品名|名字|标题|name|title)$/i],
   ['shortName', /^(?:商品简称|装备简称|单品简称|简称|短名称|别名|short\s*name|shortname|alias)$/i],
   ['category', /^(?:商品分类|装备分类|进货大类|大类|分类|类别|category)$/i],
@@ -169,6 +196,7 @@ function isLikelyDanbooruLine(line) {
  * into structured catalog item fields with separated `drawPrompt` (character) and `organDrawPrompt` (penis).
  */
 export function parseItemTextBlock(rawText = '', defaults = {}) {
+  defaults = {...defaults, category: defaults.category || defaults.fallbackCategory};
   const source = String(rawText ?? '').replace(/^\uFEFF/, '').trim();
   if (!source) return {};
 
@@ -191,7 +219,8 @@ export function parseItemTextBlock(rawText = '', defaults = {}) {
           ...obj,
           category,
           drawPrompt: prompts.drawPrompt,
-          organDrawPrompt: prompts.organDrawPrompt
+          organDrawPrompt: prompts.organDrawPrompt,
+          ...itemFanworkFields({...obj, drawPrompt: prompts.drawPrompt}, category)
         };
       }
     } catch {}
@@ -199,7 +228,7 @@ export function parseItemTextBlock(rawText = '', defaults = {}) {
 
   const out = {};
   const buckets = {
-    name: [], shortName: [], category: [], slot: [], price: [], gender: [],
+    name: [], shortName: [], category: [], slot: [], price: [], gender: [], fanwork: [], cosplayCharacter: [],
     lowerBodyMode: [], lowerBodyType: [], lowerBodyDescription: [],
     abilities: [], abilityConditions: [], effectKind: [], summary: [],
     appearance: [], bodyBuild: [], physiology: [], mechanics: [],
@@ -233,7 +262,7 @@ export function parseItemTextBlock(rawText = '', defaults = {}) {
 
   // Pre-split inline prompt markers on the same line (e.g. "角色提示词：... 肉棒提示词：...")
   const expandedText = unfenced
-    .replace(/([^\n])\s*(?=(?:\[|【)(?:角色(?:生图)?提示词|肉棒(?:生图)?提示词|器官(?:生图)?提示词|前方延展(?:设定|提示词)?|后方延展(?:设定|提示词)?|生图提示词|特殊能力|能力生效条件|外貌特征|体型身材|生理特征))/g, '$1\n')
+    .replace(/([^\n])\s*(?=(?:\[|【)(?:同人(?:卡|角色Tag|角色英文Tag)?|角色英文Tag|角色(?:生图)?提示词|肉棒(?:生图)?提示词|器官(?:生图)?提示词|前方延展(?:设定|提示词)?|后方延展(?:设定|提示词)?|生图提示词|特殊能力|能力生效条件|外貌特征|体型身材|生理特征))/g, '$1\n')
     .replace(/([^\n])\s+(?=(?:角色(?:生图)?提示词|肉棒(?:生图)?提示词|器官(?:生图)?提示词|阳具(?:生图)?提示词|前方延展提示词|后方延展提示词|character\s*prompt|penis\s*prompt|organ\s*prompt)\s*[:：])/gi, '$1\n');
 
   const rawLines = expandedText.split(/\r?\n/);
@@ -485,6 +514,7 @@ export function parseItemTextBlock(rawText = '', defaults = {}) {
   }
   const openPrompt = joinBucket('drawPromptOpen', ', ');
   if (openPrompt) out.drawPromptOpen = normalizeCharacterDrawPrompt(openPrompt);
+  Object.assign(out, itemFanworkFields({...out, fanwork: joinBucket('fanwork'), cosplayCharacter: joinBucket('cosplayCharacter', ' ')}, category));
 
   if (defaults.generateFallbackName && !out.name) {
     const catSuffix = {skin_suit: '皮躯', flesh_ring: '肉躯', apparel: '高定服饰', consumable: '异构道具'}[category] || '单品';
@@ -502,7 +532,7 @@ export function itemLowerBodyType(item) {
 }
 const lowerLabel = type => ({female: '女性结构', male: '男性结构', dual: '双性结构', none: '无独立下体结构', custom: '自定义结构'})[type] || '未设定';
 export function filterLowerBodyTags(value, type) {
-  const incompatible = ['female', 'none'].includes(type) ? /futanari|penis|erection|testicles|scrotum|阴茎|肉棒|玉囊/i : null;
+  const incompatible = ['female', 'none'].includes(type) ? /futanari|penis|erect|erection|flaccid|testicles|scrotum|阴茎|肉棒|玉囊/i : null;
   return String(value || '').split(',').map(part => part.trim()).filter(part => part && !incompatible?.test(part)).join(', ');
 }
 

@@ -1,7 +1,7 @@
 // Shared manual/assistant image operations. No UI mounting or implicit model request.
-import {buildEntityPortraitPrompt, getEntity, xenoMallPosePromptText} from './core/xeno.js';
+import {buildEntityPortraitPrompt, effectiveEntityView, getEntity, xenoMallPosePromptText} from './core/xeno.js';
 import {filterLowerBodyTags, itemLowerBodyType, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt} from './core/xeno-wear.js';
-import {stripQualityDrawTags} from './core/xeno-wear.js';
+import {applyLowerBodyDrawState} from './core/xeno-wear.js';
 
 async function drawImage(ctx, input) {
   if (ctx.signal?.aborted || ctx.valid && !ctx.valid()) throw Error('操作已取消或聊天已切换');
@@ -71,7 +71,9 @@ export async function generateItemPreview(ctx, item) {
     ? `${poseTags}, ${baseTags}`
     : baseTags;
   const combinedPrompt = [style.artist, style.positive, combinedBase].map(s => String(s || '').trim()).filter(Boolean).join(', ');
-  const prompt = stripQualityDrawTags(item.lowerBodyMode === 'replace' ? filterLowerBodyTags(combinedPrompt, lowerType) : combinedPrompt);
+  const itemState = ['skin_suit', 'flesh_ring'].includes(item.category) && item.lowerBodyMode === 'replace'
+    && ['female', 'none'].includes(lowerType) ? '无' : '';
+  const prompt = applyLowerBodyDrawState(item.lowerBodyMode === 'replace' ? filterLowerBodyTags(combinedPrompt, lowerType) : combinedPrompt, itemState);
   const negative = String(style.negative || 'lowres, bad anatomy, bad hands, text, error').trim();
 
   let result;
@@ -127,7 +129,8 @@ export async function generateEntityPortrait(ctx, targetKey = '__protagonist__',
   const built = buildEntityPortraitPrompt(xeno, entity);
   const baseTags = String(customBaseTags || built.prompt).trim();
   const style = state.draw?.styles?.find(s => s.id === state.draw.activeStyle) || state.draw?.styles?.[0] || {artist: '', positive: '', negative: ''};
-  const prompt = stripQualityDrawTags([style.artist, style.positive, baseTags].map(s => String(s || '').trim()).filter(Boolean).join(', '));
+  const prompt = applyLowerBodyDrawState([style.artist, style.positive, baseTags].map(s => String(s || '').trim()).filter(Boolean).join(', '),
+    effectiveEntityView(xeno, entity, {forDrawing: true}).lowerBodyState);
   const negative = String(style.negative || 'lowres, bad anatomy, bad hands, text, error').trim();
   const entityName = built.entityName || entity.name || (isProt ? '主角' : '角色');
 

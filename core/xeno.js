@@ -6,7 +6,7 @@ import {XENO_RULE_TEXTS, INITIAL_MALL_ITEMS, XENO_PROMPT_DEFAULTS, XENO_TRIGGER_
 import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {encodeBoundVoiceRef, parseBoundVoiceRef} from './xeno-voice.js';
 import {lineEffect} from './voice-fx.js';
-import {stripQualityDrawTags, normalizeCosplayCharacter} from './xeno-wear.js';
+import {normalizeCosplayCharacter, applyLowerBodyDrawState} from './xeno-wear.js';
 import {enforceStatusLocks, normalizeStatusLocks, statusLockText, normalizeOrgans, organRecordText, applyOrganUpdates, migrateLowerBody, lowerBodyStateValue, LEGACY_ORGAN_SYNC_RULE, ORGAN_SYNC_RULE} from './character-status.js';
 import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, wearDrawingAppearance, itemVoiceRef, extensionEnabled, extensionMode, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt, splitItemDrawPrompts, parseItemTextBlock} from './xeno-wear.js';
 export {wearLayers, resolveWear, itemOccupant, itemVoiceRef, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt, splitItemDrawPrompts, parseItemTextBlock};
@@ -2259,7 +2259,7 @@ export function xenoDrawTagsFor(xeno, name) {
       tags.push(normalizeCharacterDrawPrompt(app.drawPrompt));
     }
   }
-  return tags.filter(Boolean).join(', ');
+  return applyLowerBodyDrawState(tags.filter(Boolean).join(', '), effectiveEntityView(xeno, entity, {forDrawing: true}).lowerBodyState);
 }
 
 /** Builds a full-body current-state portrait prompt (Danbooru tags + effective appearance/body/equipment/vore/alienation). */
@@ -2294,7 +2294,7 @@ export function buildEntityPortraitPrompt(xeno, entity) {
   if (!e.outfit.underwearItemId && e.outfit.underwear && !/真空|无/.test(e.outfit.underwear)) tags.push(e.outfit.underwear);
 
   return {
-    prompt: stripQualityDrawTags([...new Set(tags.map(t => String(t || '').trim()).filter(Boolean))].join(', ')),
+    prompt: applyLowerBodyDrawState([...new Set(tags.map(t => String(t || '').trim()).filter(Boolean))].join(', '), view.lowerBodyState),
     summaryLabel: `${view.name || '角色'} · ${view.gender || '当前形态'}`
   };
 }

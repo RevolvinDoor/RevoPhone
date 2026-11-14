@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {editCharacterStatus, lowerBodyStates, LEGACY_ORGAN_SYNC_RULE, ORGAN_SYNC_RULE} from '../core/character-status.js';
-import {normalizeXeno, effectiveEntityView, applyXenoUpdateFromText, extractXenoSession, mergeXenoSession, xenoPromptPlan, defaultXenoPreset, stripXenoUpdate, xenoEquipItem} from '../core/xeno.js';
+import {normalizeXeno, effectiveEntityView, applyXenoUpdateFromText, extractXenoSession, mergeXenoSession, xenoPromptPlan, defaultXenoPreset, stripXenoUpdate, xenoEquipItem, buildEntityPortraitPrompt, xenoDrawTagsFor} from '../core/xeno.js';
 import {TTSBackend} from '../core/backend.js';
 import {freshState} from '../core/state.js';
 import {createXenoHost} from '../host-xeno.js';
@@ -12,6 +12,31 @@ const base = (gender = '扶她') => normalizeXeno({cardKey: 'card:a', protagonis
 const tag = (patch, target = '主角') => `<xeno_organs>${JSON.stringify([{target, ...patch}])}</xeno_organs>`;
 const edit = (xeno, field, value) => editCharacterStatus(xeno.protagonist, {field, value}, effectiveEntityView(xeno, xeno.protagonist));
 const lock = (xeno, field, locked = true) => editCharacterStatus(xeno.protagonist, {field, locked}, effectiveEntityView(xeno, xeno.protagonist));
+
+test('角色当前状态写入英文绘图Tag，无与缩回不残留外露结构Tag，未记录时不猜测', () => {
+  for (const [gender, state, expected] of [['扶她', '勃起', 'erect'], ['男', '疲软', 'flaccid'], ['女', '无', 'female'], ['扶她', '缩回', 'female']]) {
+    const xeno = base(gender); edit(xeno, 'lowerBodyState', state);
+    for (const prompt of [buildEntityPortraitPrompt(xeno, xeno.protagonist).prompt, xenoDrawTagsFor(xeno, '主角')]) {
+      assert.ok(prompt.split(',').map(t => t.trim()).includes(expected));
+      assert.doesNotMatch(prompt, /勃起|疲软|缩回/);
+      if (expected === 'female') assert.doesNotMatch(prompt, /futanari|erect|flaccid/);
+    }
+  }
+  assert.doesNotMatch(buildEntityPortraitPrompt(base(), base().protagonist).prompt, /erect|flaccid|female/);
+});
+
+test('当前与锁定状态覆盖装备旧Tag，按有效下体类型校验后才用于绘图', () => {
+  let xeno = base();
+  xeno.items.push({id: 'state:body', name: '测试躯体', category: 'skin_suit', gender: '扶她', owned: true,
+    lowerBodyMode: 'replace', lowerBodyType: 'dual', drawPrompt: 'silver hair', organDrawPrompt: 'futanari, flaccid'});
+  xeno = xenoEquipItem(xeno, {itemId: 'state:body'}); edit(xeno, 'lowerBodyState', '勃起'); lock(xeno, 'lowerBodyState');
+  xeno.protagonist.lowerBodyState = '疲软';
+  let prompt = buildEntityPortraitPrompt(xeno, xeno.protagonist).prompt;
+  assert.match(prompt, /erect/); assert.doesNotMatch(prompt, /flaccid/);
+  xeno.items.find(i => i.id === 'state:body').lowerBodyType = 'female';
+  prompt = buildEntityPortraitPrompt(xeno, xeno.protagonist).prompt;
+  assert.doesNotMatch(prompt, /erect|flaccid|futanari/);
+});
 function backendFixture() {
   const b = Object.create(TTSBackend.prototype);
   Object.assign(b, {settings: {...freshState(), xeno: base()}, space: {key: 'card:a', members: []},
