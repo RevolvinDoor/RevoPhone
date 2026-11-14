@@ -628,7 +628,7 @@ export function resolveWear(xeno, entity) {
     bodySource: label(body), headSource: label(head), organSource: organ ? label(organ) : '本体',
     headAppearance: head?.item.appearance || entity?.appearance || '',
     organAppearance: organ ? (lowerBodyMode === 'replace'
-      ? `${lowerLabel(lowerBodyType)}${organ.item.lowerBodyDescription ? '：' + organ.item.lowerBodyDescription : ''}`
+      ? [lowerLabel(lowerBodyType), organ.item.lowerBodyDescription || organ.item.forwardExtension || organ.item.physiology].filter(Boolean).join('：')
       : organ.item.forwardExtension || organ.item.physiology || organ.item.summary || organ.item.name)
       : `${lowerLabel(lowerBodyType)}（本体）`,
     extensionText: [

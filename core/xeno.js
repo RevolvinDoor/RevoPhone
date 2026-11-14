@@ -7,7 +7,7 @@ import {roleTypeOf, isValidRoleName, findRoute} from './routes.js';
 import {encodeBoundVoiceRef, parseBoundVoiceRef} from './xeno-voice.js';
 import {lineEffect} from './voice-fx.js';
 import {normalizeCosplayCharacter, applyLowerBodyDrawState} from './xeno-wear.js';
-import {enforceStatusLocks, normalizeStatusLocks, statusLockText, normalizeOrgans, organRecordText, applyOrganUpdates, migrateLowerBody, lowerBodyStateValue, LEGACY_ORGAN_SYNC_RULE, ORGAN_SYNC_RULE} from './character-status.js';
+import {enforceStatusLocks, normalizeStatusLocks, statusLockText, normalizeOrgans, organRecordText, applyOrganUpdates, migrateLowerBody, normalizeLowerBodyRecords, effectiveLowerBodyStatus, LEGACY_ORGAN_SYNC_RULE, ORGAN_SYNC_RULE} from './character-status.js';
 import {normalizeWearMount, syncWearMount, wearLayers, resolveWear, itemOccupant, wearDrawingTags, wearDrawingAppearance, itemVoiceRef, extensionEnabled, extensionMode, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt, splitItemDrawPrompts, parseItemTextBlock} from './xeno-wear.js';
 export {wearLayers, resolveWear, itemOccupant, itemVoiceRef, normalizeCharacterDrawPrompt, normalizeOrganDrawPrompt, splitItemDrawPrompts, parseItemTextBlock};
 export {XENO_PROMPT_DEFAULTS, DEFAULT_XENO_ENTRIES, defaultXenoPreset};
@@ -205,6 +205,7 @@ export function normalizeEntity(raw = {}, isProtagonist = false) {
     organs: normalizeOrgans(raw?.organs),
     lowerBodyAppearance: lowerBody.lowerBodyAppearance,
     lowerBodyState: lowerBody.lowerBodyState,
+    lowerBodyRecords: normalizeLowerBodyRecords(raw?.lowerBodyRecords),
     // === 点击【详情】展示的 8 项 ===
     originalBody: cleanField(raw?.originalBody, 160),
     currentBody: cleanField(raw?.currentBody, 160),
@@ -416,6 +417,7 @@ export function normalizeXeno(raw) {
   }
   for (const ent of [protagonist, ...targets, ...poolMap.values(), ...Object.values(cardProtagonists)]) {
     if (!ent?.livingMount) continue;
+    for (const source of Object.keys(ent.lowerBodyRecords)) if (!byId.has(source.slice(5))) delete ent.lowerBodyRecords[source];
     ent.livingMount.layers = ent.livingMount.layers.filter(layer => byId.has(layer.itemId));
     for (const slot of ['outerwear', 'underwear', 'privacyCover', 'accessories']) {
       if (ent.outfit[slot + 'ItemId'] && !byId.has(ent.outfit[slot + 'ItemId'])) {
@@ -1269,6 +1271,7 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
     }
   }
   if (wear.head && !wear.headVoice) voiceStateText += ' ｜ 当前头部未绑定音色，使用本体音色';
+  const lowerBody = effectiveLowerBodyStatus(e, wear, gender);
 
   return {
     // 6 core fields
@@ -1281,9 +1284,8 @@ export function effectiveEntityView(xeno, entity, {forDrawing = false} = {}) {
     headAppearance: wear.headAppearance,
     headSource: wear.headSource,
     lowerBodyGender: gender,
-    lowerBodyAppearance: e.statusLocks?.lowerBodyAppearance?.value ?? (e.lowerBodyAppearance || wear.organAppearance),
-    lowerBodyState: lowerBodyStateValue(e.statusLocks?.lowerBodyState?.value ?? e.lowerBodyState, gender),
-    organAppearance: wear.organAppearance,
+    ...lowerBody,
+    organAppearance: lowerBody.lowerBodyAppearance,
     organSource: wear.organSource,
     bodySource: wear.bodySource,
     extensionText: wear.extensionText,

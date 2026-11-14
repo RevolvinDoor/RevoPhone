@@ -115,7 +115,9 @@ test('同轮换装完成后再校验下体状态，采用新穿戴的有效类�
   const text = '旅人穿上了女性皮躯。<xeno_action>[{"action":"equip","target":"主角","itemId":"skin","evidence":"旅人穿上了女性皮躯。"}]</xeno_action>' + tag({lowerBodyState: '无'});
   b.applyXenoFloorReply(2, 0, text);
   assert.equal(effectiveEntityView(b.settings.xeno, b.settings.xeno.protagonist).lowerBodyGender, '女');
-  assert.equal(b.settings.xeno.protagonist.lowerBodyState, '无');
+  assert.equal(effectiveEntityView(b.settings.xeno, b.settings.xeno.protagonist).lowerBodyState, '无');
+  assert.equal(b.settings.xeno.protagonist.lowerBodyRecords['item:skin'].lowerBodyState, '无');
+  assert.equal(b.settings.xeno.protagonist.lowerBodyState, ''); // 本体记录保持原值。
 });
 
 test('下体字段与锁随聊天存档和楼层回退恢复，新聊天不继承，隐藏协议不进入正文', () => {

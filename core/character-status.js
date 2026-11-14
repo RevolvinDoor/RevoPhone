@@ -8,6 +8,56 @@ export const ORGAN_SYNC_RULE = '【下体外观与当前状态】只记录下体
 export const LOWER_BODY_FIELDS = Object.freeze(['lowerBodyAppearance', 'lowerBodyState']);
 export const lowerBodyStates = gender => gender === '女' ? ['无'] : gender === '扶她' ? ['勃起', '疲软', '缩回'] : gender === '男' ? ['勃起', '疲软'] : [];
 export const lowerBodyStateValue = (value, gender) => lowerBodyStates(gender).includes(value) ? value : '';
+const itemSource = source => typeof source === 'string' && /^item:[^\n]{1,120}$/.test(source);
+export function normalizeLowerBodyRecords(raw) {
+  return Object.fromEntries(Object.entries(raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}).slice(0, 200)
+    .filter(([source, record]) => itemSource(source) && record && typeof record === 'object' && !Array.isArray(record))
+    .map(([source, record]) => [source, {...(typeof record.lowerBodyAppearance === 'string' ? {lowerBodyAppearance: organText(record.lowerBodyAppearance, 1000)} : {}),
+      ...(['', '勃起', '疲软', '缩回', '无'].includes(record.lowerBodyState) ? {lowerBodyState: record.lowerBodyState} : {})}]));
+}
+export function inferLowerBodyState(value, gender) {
+  if (gender === '女') return '无';
+  const clean = String(value || '').replace(/(?:勃起|疲软)(?:时)?(?:长度|直径|周长|尺寸|长)[^,，;；。\n]*/g, '')
+    .replace(/(?:尚?未|没有|不(?:再|会|能|是)?|禁止|避免|非|未见)(?:出现|处于)?(?:勃起|疲软|缩回)/g, '')
+    .replace(/(?:可以?|能够?|支持|允许|如果|若|当)(?:随时|自由|自行)?(?:勃起|疲软|缩回)(?:时)?/g, '')
+    .replace(/\b(?:not|no)\s+(?:erect|erection|flaccid)\b/gi, '');
+  const states = [/勃起|\b(?:erect|erection)\b/i.test(clean) && '勃起', /疲软|\bflaccid\b/i.test(clean) && '疲软', /缩回/.test(clean) && '缩回'].filter(Boolean);
+  return states.length === 1 ? lowerBodyStateValue(states[0], gender) : '';
+}
+export function effectiveLowerBodyStatus(entity, wear, gender) {
+  const source = wear.organ ? `item:${wear.organ.itemId}` : 'body';
+  const record = source === 'body' ? entity : entity.lowerBodyRecords?.[source] || {};
+  const appearance = entity.statusLocks?.lowerBodyAppearance?.value ?? (record.lowerBodyAppearance || wear.organAppearance);
+  const stated = lowerBodyStateValue(record.lowerBodyState, gender);
+  const hints = wear.organ ? [wear.organ.item.forwardExtension, wear.organ.item.physiology, wear.organ.item.organDrawPrompt] : [entity.physiology];
+  const inferred = inferLowerBodyState(appearance, gender) || (!/勃起|疲软|缩回|\b(?:erect|erection|flaccid)\b/i.test(appearance)
+    ? hints.map(value => inferLowerBodyState(value, gender)).find(Boolean) || '' : '');
+  const locked = entity.statusLocks?.lowerBodyState;
+  return {lowerBodySourceKey: source, lowerBodyAppearance: appearance,
+    lowerBodyState: locked ? lowerBodyStateValue(locked.value, gender) : stated || inferred,
+    lowerBodyStateDerived: !locked && !stated && !!inferred};
+}
+function writeLowerBodyUpdate(entity, patch, view) {
+  const source = view.lowerBodySourceKey || 'body';
+  const previous = itemSource(source) ? entity.lowerBodyRecords?.[source] || {} : entity;
+  const record = {...previous}; let changed = false;
+  const update = {...patch};
+  if (typeof patch.lowerBodyAppearance === 'string' && !entity.statusLocks?.lowerBodyAppearance && !lowerBodyStateValue(patch.lowerBodyState, view.lowerBodyGender)) {
+    const inferred = inferLowerBodyState(patch.lowerBodyAppearance, view.lowerBodyGender);
+    if (inferred) update.lowerBodyState = inferred;
+  }
+  for (const field of LOWER_BODY_FIELDS) {
+    if (typeof update[field] !== 'string' || entity.statusLocks?.[field]) continue;
+    const value = field === 'lowerBodyState' ? lowerBodyStateValue(update[field], view.lowerBodyGender) : organText(update[field], 1000);
+    if (field === 'lowerBodyState' && update[field] && !value) continue;
+    if (previous[field] !== value) {record[field] = value; changed = true;}
+  }
+  if (changed) {
+    if (itemSource(source)) {entity.lowerBodyRecords ||= {}; entity.lowerBodyRecords[source] = record;}
+    else for (const field of LOWER_BODY_FIELDS) if (record[field] !== undefined) entity[field] = record[field];
+  }
+  return changed;
+}
 const lowerBodyOrgan = name => /^(?:下体(?:外观)?|生殖器(?:官)?|阴茎|肉棒|阴道|外阴|阴部|扶她器官)$/.test(name);
 
 export function migrateLowerBody(raw) {
@@ -36,6 +86,7 @@ export function normalizeOrgans(raw) {
 
 export function organRecordText(entity, view = entity) {
   return JSON.stringify({target: entity.id, name: entity.name, lowerBodyType: view.lowerBodyGender || entity.gender,
+    lowerBodySource: view.lowerBodySourceKey || 'body', sourceLabel: view.organSource || '本体',
     lowerBodyAppearance: view.lowerBodyAppearance || '', lowerBodyState: view.lowerBodyState || '',
     locked: LOWER_BODY_FIELDS.filter(field => entity.statusLocks?.[field])});
 }
@@ -55,12 +106,7 @@ export function applyOrganUpdates(source, resolveEntity, viewOf) {
       // Only genital rows from the previous protocol can update these fields.
       const legacy = Array.isArray(update.organs) ? update.organs.find(row => lowerBodyOrgan(row?.name)) : null;
       const patch = {...(legacy ? {lowerBodyAppearance: legacy.appearance, lowerBodyState: legacy.state} : {}), ...update};
-      for (const field of LOWER_BODY_FIELDS) {
-        if (typeof patch[field] !== 'string' || entity.statusLocks?.[field]) continue;
-        const value = field === 'lowerBodyState' ? lowerBodyStateValue(patch[field], view.lowerBodyGender) : organText(patch[field], 1000);
-        if (field === 'lowerBodyState' && patch[field] && !value) continue;
-        if (entity[field] !== value) {entity[field] = value; changed = true;}
-      }
+      changed = writeLowerBodyUpdate(entity, patch, view) || changed;
     }
   }
   return changed;
@@ -75,6 +121,7 @@ export function normalizeStatusLocks(raw) {
     out[field] = {value: lock.value.slice(0, STATUS_OUTFIT_FIELDS.includes(field) ? 500 : 1000)};
     if (!STATUS_OUTFIT_FIELDS.includes(field)) out[field].rawValue = typeof lock.rawValue === 'string' ? lock.rawValue.slice(0, 1000) : out[field].value;
     if (field === 'lowerBodyState') out[field].rawValue = out[field].value;
+    if (LOWER_BODY_FIELDS.includes(field) && itemSource(lock.source)) out[field].source = lock.source;
     if (STATUS_OUTFIT_FIELDS.includes(field)) out[field].itemId = String(lock.itemId || '').slice(0, 120);
     if (field === 'outerwear') out[field].coatPose = lock.coatPose === 'open' ? 'open' : 'cover';
   }
@@ -88,6 +135,9 @@ export function enforceStatusLocks(entity) {
       entity.outfit[field] = lock.value;
       entity.outfit[field + 'ItemId'] = lock.itemId;
       if (field === 'outerwear') entity.outfit.coatPose = lock.coatPose;
+    } else if (LOWER_BODY_FIELDS.includes(field) && itemSource(lock.source)) {
+      entity.lowerBodyRecords ||= {}; entity.lowerBodyRecords[lock.source] ||= {};
+      entity.lowerBodyRecords[lock.source][field] = lock.rawValue;
     } else entity[field] = lock.rawValue;
   }
   return entity;
@@ -110,7 +160,8 @@ export function editCharacterStatus(entity, {field, value, locked}, view) {
     else {
       const outfit = STATUS_OUTFIT_FIELDS.includes(field);
       entity.statusLocks[field] = {value: String(outfit ? entity.outfit[field] || '' : view[field] || ''),
-        ...(!outfit ? {rawValue: entity[field] || ''} : {}),
+        ...(!outfit ? {rawValue: LOWER_BODY_FIELDS.includes(field) ? view[field] || '' : entity[field] || ''} : {}),
+        ...(LOWER_BODY_FIELDS.includes(field) && itemSource(view.lowerBodySourceKey) ? {source: view.lowerBodySourceKey} : {}),
         ...(outfit ? {itemId: entity.outfit[field + 'ItemId'] || ''} : {}),
         ...(field === 'outerwear' ? {coatPose: entity.outfit.coatPose} : {})};
     }
@@ -122,7 +173,8 @@ export function editCharacterStatus(entity, {field, value, locked}, view) {
     if (STATUS_OUTFIT_FIELDS.includes(field)) {
       entity.outfit[field] = text;
       entity.outfit[field + 'ItemId'] = '';
-    } else entity[field] = text;
+    } else if (LOWER_BODY_FIELDS.includes(field)) writeLowerBodyUpdate(entity, {[field]: text}, view);
+    else entity[field] = text;
   }
   return enforceStatusLocks(entity);
 }

@@ -22,7 +22,7 @@ export function characterStatusApp(ctx) {
     const fieldIcons = {appearance: 'person', bodyBuild: 'expand', lowerBodyAppearance: 'person', lowerBodyState: 'person', outerwear: 'layers', underwear: 'layers', privacyCover: 'lock', accessories: 'wand'};
     const lowerState = () => {
       const locked = Boolean(entity.statusLocks?.lowerBodyState);
-      const hint = entity.lowerBodyState && !view.lowerBodyState ? '原状态不适用于当前形态，请重新设置' : '缩回仅限扶她 · 无仅限女性';
+      const hint = view.lowerBodyStateDerived ? '已根据当前有效下体外观同步' : entity.lowerBodyState && !view.lowerBodyState ? '原状态不适用于当前形态，请重新设置' : '缩回仅限扶她 · 无仅限女性';
       return `<div class="status-lower-state"><div class="status-field-head"><h4>当前状态</h4><strong>${esc(view.lowerBodyState || '尚未记录')}</strong>${locked ? '<span class="status-state">已固定</span>' : '<button type="button" class="status-edit" data-edit="lowerBodyState" aria-label="编辑下体当前状态">编辑</button>'}</div><div class="status-field-footer"><span class="status-field-hint">${hint}</span><label class="status-lock"><input type="checkbox" role="switch" data-lock="lowerBodyState" aria-label="锁定下体当前状态" ${locked ? 'checked' : ''}><span class="status-lock-track" aria-hidden="true"></span><span>${locked ? '已锁定' : '锁定状态'}</span></label></div></div>`;
     };
     const row = field => {

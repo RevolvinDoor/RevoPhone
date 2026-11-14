@@ -63,7 +63,7 @@ export function wardrobeApp(ctx) {
           </select>
         </div>
         <p class="xeno-hint">当前显性外貌：<b>${esc(view.gender || '未定')}</b> ｜ 🎙️ 声带音色：<b>${esc(view.voiceStateText)}</b></p>
-        <p class="xeno-hint">身体来源：${esc(view.bodySource)}<br>头部：${esc(view.headSource)} · ${esc(view.headAppearance || '未记录')}<br>下体外观：${esc(view.organAppearance || '本体未记录')} · 来源：${esc(view.organSource)}</p>
+        <p class="xeno-hint">身体来源：${esc(view.bodySource)}<br>头部：${esc(view.headSource)} · ${esc(view.headAppearance || '未记录')}<br>下体外观：${esc(view.lowerBodyAppearance || '尚未记录')}<br>当前状态：${esc(view.lowerBodyState || '尚未记录')} · 来源：${esc(view.organSource)}</p>
         ${view.equipmentAbilities ? `<p class="xeno-hint">装备能力及条件：<br>${esc(view.equipmentAbilities).replace(/\n/g, '<br>')}</p>` : ''}
         ${view.extensionText ? `<p class="xeno-hint">有效延展设定：${esc(view.extensionText)}</p>` : ''}
         <div class="xeno-row-controls">
